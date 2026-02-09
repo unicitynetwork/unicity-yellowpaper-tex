@@ -1,0 +1,52 @@
+%
+% General notation
+%
+
+\newcommand{\uint}[1]{\mathbb{N}_{#1}}
+\newcommand{\bool}{\mathbb{B}}
+
+\newcommand{\bits}[1]{\{0,1\}^{#1}}
+\newcommand{\bitstr}{\bits{\ast}}
+\newcommand{\emptystr}{\lfloor\!\rfloor}
+
+\newcommand{\bytes}[1]{\mathbb{OCT}^{#1}}
+\newcommand{\bytestr}{\bytes{\ast}}
+
+\newcommand{\chars}[1]{\mathbb{CHR}^{#1}}
+\newcommand{\charstr}{\chars{\ast}}
+
+\newcommand{\len}[1]{\left|#1\right|}
+
+% convenience macro to add "or none" to a type to mark a field optional
+\newcommand{\opt}{\cup\{\bot\}}
+
+\newcommand{\hashtype}{\mathbb{H}}
+\newcommand{\zerohash}{\bot}
+
+\newcommand{\idtype}{\mathbb{I}}
+\newcommand{\zeroid}{\bot}
+
+%
+% Platform
+%
+
+\newcommand{\prndsh}{\mathsf{PrndSh}}
+
+\newcommand{\nodeid}{\mathsf{NodeID}}
+\newcommand{\extrtype}{\mathsf{ExtrType}}
+\newcommand{\extrunit}{\mathsf{ExtrUnit}}
+
+\newcommand{\additem}{\mathsf{AddItem}}
+\newcommand{\delitem}{\mathsf{DelItem}}
+
+%
+% Execution Layer
+%
+
+\newcommand{\sthash}{{h_\mathsf{st}}}
+\newcommand{\txhash}{{h_\mathsf{tx}}}
+\newcommand{\auxd}{\mathsf{aux}}
+\newcommand{\predi}{\nu}
+\newcommand{\unisrv}{\mathsf{US}}
+\newcommand{\certver}{{\mathcal{V}_\mathsf{cert}}}
+\newcommand{\pinc}{{\pi_\mathsf{inc}}}

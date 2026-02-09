@@ -1,0 +1,98 @@
+\documentclass{common/template}
+
+\TemplateDefineDocumentVersion{TestNet V1 (\gitbranch /\gitrevision)}
+% \TemplateDefineDocumentSecurity{Draft/Confidential}
+\TemplateDefineDocumentSecurity{\emph{draft}}
+\TemplateDefineDocumentType{Specification}
+
+% Watermark indicator. Delete this, if a version is ready to publish
+% \watermark{Draft}
+% \renewcommand{\todo}{}  % uncomment to hide TODO-s
+
+% The title of the document
+\title{Unicity Yellowpaper}
+
+% Authors
+\author{The Unicity Team}
+
+% Date
+\date{\today}
+
+% Definitions
+\newcommand{\embl}[1]{\textcolor{blue}{#1}}
+
+\usepackage{pgf-umlsd}
+\usetikzlibrary{positioning}
+
+\newenvironment{leveldown}% Demote sectional commands
+  {\let\chapter\section%
+   \let\section\subsection%
+   \let\subsection\subsubsection%
+   \let\subsubsection\paragraph%
+   \let\paragraph\subparagraph%
+   %\let\subparagraph\relax%
+  }{}
+\newenvironment{levelup}% Promote sectional commands
+  {\let\subparagraph\paragraph%
+   \let\paragraph\subsubsection%
+   \let\subsubsection\subsection%
+   \let\subsection\section%
+   \let\section\chapter%
+   %\let\section\relax%
+  }{}
+
+\input{common/definitions}
+
+\begin{document}
+\maketitle
+
+% The page on the turn
+~
+\vfill
+
+\pagebreak
+% Creates the table of contents
+\setcounter{tocdepth}{4}
+% \setcounter{secnumdepth}{4}  % 4th level is not numbered by default
+\makeatletter
+\renewcommand\@pnumwidth{0.7cm} % accommodate 3-digit page numbers
+\makeatother
+\tableofcontents*{}
+
+%\input{common/notation}
+
+\input{intro}
+
+\input{execution-layer}
+
+\input{platform}
+
+\chapter{Consensus Mechanisms}
+\begin{leveldown}
+  \input{bft}
+\end{leveldown}
+
+% \chapter{Governance}
+% \begin{leveldown}
+%   \input{unicity-governance}
+% \end{leveldown}
+
+\appendix
+\input{appendix-bitstrings}
+\input{appendix-encoding}
+\input{appendix-hashtrees}
+\input{appendix-token}
+
+\chapter{Data Structures (illustrative)}
+
+Below is an informal illustration on how Unicity data structures integrate the service layers and to HotStuff consensus primitive; in ABNF format\footnote{\url{https://tools.ietf.org/html/rfc5234}}. (Distributed, dynamic BFT Core.)
+
+\lstinputlisting[language=abnf]{unicity-data-structs.abnf}
+
+
+% index
+\clearpage
+\addcontentsline{toc}{chapter}{Index}
+\printindex
+
+\end{document}

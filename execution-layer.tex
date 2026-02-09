@@ -1,0 +1,541 @@
+\chapter{Execution Layer}
+
+The execution layer handles off-chain transaction processing and business logic. Tokens are self-contained digital assets transferred peer-to-peer between users. Only cryptographic commitments to state transitions are submitted to the Aggregation Layer for double-spending prevention. Transaction execution and verification are performed by the interested parties (recipients), not by consensus participants. This design moves computational overhead off-chain while maintaining trustless guarantees against double-spending.
+
+\section{Execution Model}
+
+In the Unicity execution model, digital assets called \emph{tokens}\index{token} are bearer instruments: whoever holds the token data and can satisfy the spending condition is the owner. Transactions occur directly between parties using any communication channel, with the Unicity Service consulted only to prevent double-spending.
+
+The model relies on three key principles:
+\begin{enumerate}
+	\item \textbf{Off-chain execution}: Transaction creation, validation, and verification happen between sender and recipient without consensus participation.
+	\item \textbf{On-chain uniqueness}: The Unicity Service maintains an append-only registry of spent token states, ensuring each state can be spent at most once.
+	\item \textbf{Recipient verification}: The recipient (relying party) independently verifies the complete token history before accepting a transfer.
+\end{enumerate}
+
+\subsection{Token Lifecycle}\label{sec:token-lifecycle}
+
+A token progresses through the following stages:
+\begin{description}
+\item[Minting]\index{mint transaction} Creates a new token with an initial state. Minting uses a publicly known minting key $\mathsf{pk}_\mathsf{mint}$ (with publicly known private key $\mathsf{sk}_\mathsf{mint}$) to provide a unified interface with the Unicity Service.
+\item[Transfer]\index{transfer transaction} Changes ownership by spending the current state and creating a new state with a new owner predicate.
+\item[Compression]\index{token compression} Compacts the token by replacing a set of transactions with a cryptographic proof of validity of these transactions.
+\item[Split]\index{split transaction} (Fungible tokens only.) Burns the original token and mints new tokens, with a cryptographic value conservation proof ensuring no value is created or destroyed. See Sec.~\ref{sec:token-splitting}.
+\item[Burn]\index{burn transaction} Permanently locks a token by transferring it to a burn predicate that cannot be unlocked. See Sec.~\ref{sec:burn-transaction}.
+\end{description}
+
+\subsection{Token State}\label{sec:token-state}
+
+\index{token!state}
+A \emph{token state} is a pair $(\predi, \sthash)$, where:
+\begin{itemize}
+	\item $\predi$ -- the spending predicate (defines who can spend the token); see Sec.~\ref{sec:predicates}
+	\item $\sthash \in \hashtype$ -- the state hash, linking the token's transaction history
+\end{itemize}
+
+The \emph{state identifier}\index{state identifier}\index{$\mathsf{sid}$ (state identifier)} is the key used in the Unicity Service registry:
+\[
+\mathsf{sid} = H(\predi, \sthash)
+\]
+
+When a transaction with random value $x \gets \{0,1\}^\ell$ is executed, the next state hash is computed as:
+\[
+\sthash' = H(\sthash, x)
+\]
+
+The randomness of $x$ ensures that the next state identifier $H(\predi', \sthash')$ is unpredictable, preventing the Unicity Service from linking consecutive states of the same token.
+
+\subsection{Token Structure}\label{sec:token-structure}
+
+A \emph{token}\index{token!structure} is a self-contained data structure carrying its complete provenance. Any party can independently verify the entire history without consulting external state. Formally, a token is a sequence:
+\[
+\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})
+\]
+where $T_0^\mathsf{cert}$ is a certified mint transaction and $T_i^\mathsf{cert}$ for $i > 0$ are certified transfer transactions.
+
+\subsubsection{Mint Transaction}\label{sec:mint-tx}
+
+\index{mint transaction!structure}
+A \emph{certified mint transaction} is a tuple $(T_0, u_0, \pi_0)$, where $T_0 = (\sthash, D_\mathsf{mint})$:
+\begin{itemize}
+	\item $\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$ -- source state hash, domain-separated from the token identifier
+	\item $D_\mathsf{mint}$ -- mint transaction data, containing:
+	\begin{itemize}
+		\item $\mathsf{id} \in \idtype$ -- token identifier (globally unique)
+		\item $\mathsf{ty}$ -- token type identifier, classifying the token category
+		\item $\predi'$ -- spending predicate of the first owner
+		\item $\auxd'$ -- auxiliary data (application-specific; e.g. mint justification, asset values for fungible tokens)
+	\end{itemize}
+	\item $u_0$ -- unlocking argument (signature with $\mathsf{sk}_\mathsf{mint}$)
+	\item $\pi_0$ -- inclusion proof from the Unicity Service
+\end{itemize}
+
+$\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant (see Appendix~\ref{app:el-constants}). The minting key pair $(\mathsf{sk}_\mathsf{mint}, \mathsf{pk}_\mathsf{mint})$ is publicly known; it serves only to provide a uniform request interface with the Unicity Service.
+
+\paragraph{Certifying a mint transaction} $T_0 = (\sthash, D_\mathsf{mint})$:
+\begin{enumerate}
+	\item $\txhash \gets H(D_\mathsf{mint})$
+	\item $h_T \gets H(\sthash, \txhash)$
+	\item $\sigma \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, h_T)$
+	\item $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, \sigma)$
+	\item $\pi_0 \gets \unisrv(Q)$
+\end{enumerate}
+
+\paragraph{Verifying a certified mint transaction} $(T_0, u_0, \pi_0)$:
+\begin{enumerate}
+	\item $T_0.\sthash = H(T_0.D_\mathsf{mint}.\mathsf{id}, \mathsf{MINT\_SUFFIX})$
+	\item $\mathsf{Verify}(\mathsf{pk}_\mathsf{mint}, H(\sthash, \txhash), u_0) = 1$, where $\txhash = H(D_\mathsf{mint})$
+	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), \txhash, \pi_0) = 1$
+	\item Token type-specific checks on $\auxd'$ (e.g. mint justification validity)
+\end{enumerate}
+
+
+\subsubsection{Transfer Transaction}\label{sec:transfer-tx}
+
+\index{transfer transaction!structure}
+A \emph{certified transfer transaction} is a tuple $(T, u, \txhash, \pi)$, where $T = (\sthash, D)$:
+\begin{itemize}
+	\item $D = (\predi', x, \auxd')$ -- transaction data:
+	\begin{itemize}
+		\item $\predi'$ -- spending predicate of the next owner
+		\item $x \gets \{0,1\}^\ell$ -- random value for state hash derivation
+		\item $\auxd'$ -- auxiliary data for the next state
+	\end{itemize}
+	\item $\txhash = H(D)$ -- transaction data hash
+	\item $u$ -- unlocking argument satisfying the current predicate $\predi$
+	\item $\pi$ -- inclusion proof from the Unicity Service
+\end{itemize}
+
+\paragraph{Certifying a transfer transaction} $T = (\sthash, D)$ in the current state $(\predi, h)$:
+\begin{enumerate}
+	\item $\txhash \gets H(D)$
+	\item $h_T \gets H(\sthash, \txhash)$
+	\item Create $u$ such that $\predi(\tau_\mathsf{exp}, h_T, u) = 1$ for an expected system time $\tau_\mathsf{exp}$
+	\item $Q \gets (\predi, \sthash, \txhash, u)$
+	\item $\pi \gets \unisrv(Q)$
+\end{enumerate}
+
+\paragraph{Verifying a certified transfer transaction} $(T, u, \txhash, \pi)$ in state $(\predi, h)$:
+\begin{enumerate}
+	\item $T.\sthash = h$ \quad (state hash matches expected)
+	\item $\predi(\mathsf{time}(\pi), H(\sthash, \txhash), u) = 1$ \quad (predicate satisfied)
+	\item $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pi) = 1$ \quad (inclusion proof valid)
+	\item Additional token type-specific checks
+\end{enumerate}
+
+\subsection{Token Verification}\label{sec:token-verification}
+
+\index{token!verification}\index{functions!VerifyToken}
+$\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times \mathbb{UB} \to \bool$
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$ -- token
+	\item $\mathcal{T}$ -- trust base
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}[0]
+	\State \Parse $T_0^\mathsf{cert}$ \textbf{as} $(T_0, u_0, \pi_0)$
+	\If {$\neg \Call{VerifyMintTransaction}{T_0, u_0, \pi_0, \mathcal{T}}$} \Return \FALSE \EndIf
+	\State $\predi^0 \gets T_0.D_\mathsf{mint}.\predi'$
+	\State $h^0 \gets H(T_0.D_\mathsf{mint}.\mathsf{id}, \mathsf{MINT\_SUFFIX})$
+	\For {$i \gets 1 \ldots n$}
+		\State \Parse $T_i^\mathsf{cert}$ \textbf{as} $(T_i, u_i, \txhash_i, \pi_i)$
+		\If {$\neg \Call{VerifyTransferTransaction}{T_i, u_i, \txhash_i, \pi_i, \predi^{i-1}, h^{i-1}, \mathcal{T}}$} \Return \FALSE \EndIf
+		\State $\predi^{i} \gets T_i.D.\predi'$
+		\State $h^{i} \gets H(h^{i-1}, T_i.D.x)$
+	\EndFor
+	\State \Return \TRUE
+\end{algorithmic}
+
+
+\section{Programmable Spending Conditions}\label{sec:predicates}
+
+Instead of restricting ownership to a single public key, the Unicity execution layer generalizes ownership to \emph{predicates}\index{predicate} -- programmable boolean functions that define the conditions under which a token state can be spent. This enables smart-contract-like functionality executed off-chain by relying parties rather than by consensus participants.
+
+\subsection{Predicate Framework}\label{sec:predicate-framework}
+
+\index{predicate!framework}
+A \emph{predicate} $\predi_\mathsf{name}(\mathsf{par}; \cdot)$ is a boolean function with:
+\begin{itemize}
+	\item \textbf{Name} $\mathsf{name}$ -- identifies the predicate type
+	\item \textbf{Parameters} $\mathsf{par}$ -- type-dependent configuration (e.g. a public key)
+	\item \textbf{Arguments} $(\tau, m, u)$:
+	\begin{itemize}
+		\item $\tau \in \mathbb{T}$ -- system time, extracted from the Unicity Seal timestamp $C^\mathsf{r}.t_r$
+		\item $m \in \hashtype$ -- message hash $H(\sthash, \txhash)$
+		\item $u$ -- unlocking argument, structure depends on predicate type
+	\end{itemize}
+\end{itemize}
+
+The predicate evaluates to $\predi_\mathsf{name}(\mathsf{par}; \tau, m, u) \in \{0, 1\}$. The Unicity Service evaluates the predicate at the current system time $\tau$ when processing a certification request. Verifiers of certified transactions evaluate the predicate at the system time $\mathsf{time}(\pi)$ extracted from the inclusion proof.
+
+\subsection{Standard Predicates}\label{sec:standard-predicates}
+
+\subsubsection{Signature Predicate}
+
+\index{predicate!signature ($\predi_\mathsf{sig}$)}
+The \emph{signature predicate} $\predi_\mathsf{sig}(\mathsf{pk};\cdot)$ with a single public key $\mathsf{pk}$ as parameter is equivalent to digital signature verification. This is the basic ``pay to public key'' ownership model.
+
+\begin{itemize}
+	\item \textbf{Parameters}: $\mathsf{pk}$ (public key)
+	\item \textbf{Unlocking argument}: $u = \sigma$ (digital signature)
+	\item \textbf{Definition}: $\predi_\mathsf{sig}(\mathsf{pk}; \tau, m, \sigma) = 1$ iff $\mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1$
+\end{itemize}
+
+\subsubsection{P2PKH Predicate}
+
+\index{predicate!P2PKH ($\predi_\mathsf{p2pkh}$)}
+The \emph{Pay-to-Public-Key-Hash} predicate $\predi_\mathsf{p2pkh}(h_\mathsf{pk};\cdot)$ stores only the hash of the public key, requiring the spender to reveal the full public key alongside the signature.
+
+\begin{itemize}
+	\item \textbf{Parameters}: $h_\mathsf{pk} \in \hashtype$ (public key hash)
+	\item \textbf{Unlocking argument}: $u = (\mathsf{pk}, \sigma)$
+	\item \textbf{Definition}: $\predi_\mathsf{p2pkh}(h_\mathsf{pk}; \tau, m, (\mathsf{pk}, \sigma)) = 1$ iff $H(\mathsf{pk}) = h_\mathsf{pk} \;\land\; \mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1$
+\end{itemize}
+
+\subsubsection{P2SH Predicate}\label{sec:p2sh}
+
+\index{predicate!P2SH ($\predi_\mathsf{p2sh}$)}
+The \emph{Pay-to-Script-Hash} predicate $\predi_\mathsf{p2sh}(h_\predi;\cdot)$ generalizes P2PKH by storing the hash of an arbitrary predicate rather than just a public key hash. The recipient is identified by $h_\predi = H(\mathsf{CBOR}(\predi'))$, which provides a uniform-size recipient field regardless of predicate complexity and preserves privacy by hiding the predicate type until the token is spent.
+
+\begin{itemize}
+	\item \textbf{Parameters}: $h_\predi \in \hashtype$ (predicate hash)
+	\item \textbf{Unlocking argument}: $u = (\predi', u')$ where $\predi'$ is the full predicate and $u'$ is its unlocking argument
+	\item \textbf{Definition}: $\predi_\mathsf{p2sh}(h_\predi; \tau, m, (\predi', u')) = 1$ iff $H(\mathsf{CBOR}(\predi')) = h_\predi \;\land\; \predi'(\tau, m, u') = 1$
+\end{itemize}
+
+When spending, the full predicate $\predi'$ is revealed in the lock script field of the transfer transaction, and verifiers check that $H(\mathsf{CBOR}(\predi'))$ matches the recipient hash from the previous transaction.
+
+\subsubsection{Multi-Signature Predicate}
+
+\index{predicate!multi-signature ($\predi_\mathsf{msig}$)}
+The \emph{multi-signature predicate} $\predi_\mathsf{msig}(\mathsf{pk}_1, \ldots, \mathsf{pk}_n;\cdot)$ requires $n$ valid signatures from $n$ specified public keys (all-of-$n$).
+
+\begin{itemize}
+	\item \textbf{Parameters}: $(\mathsf{pk}_1, \ldots, \mathsf{pk}_n)$
+	\item \textbf{Unlocking argument}: $u = (\sigma_1, \ldots, \sigma_n)$
+	\item \textbf{Definition}: $\predi_\mathsf{msig}(\mathsf{pk}_1, \ldots, \mathsf{pk}_n; \tau, m, u) = 1$ iff $\mathsf{Verify}(\mathsf{pk}_i, m, \sigma_i) = 1$ for every $i \in \{1, \ldots, n\}$
+\end{itemize}
+
+
+\subsubsection{Threshold-Signature Predicate}
+
+\index{predicate!threshold-signature ($\predi_\mathsf{tsig}$)}
+The \emph{threshold-signature predicate} $\predi_\mathsf{tsig}(k, \mathsf{pk}_1, \ldots, \mathsf{pk}_n;\cdot)$ requires $k$-of-$n$ valid signatures from distinct public keys.
+
+\begin{itemize}
+	\item \textbf{Parameters}: $(k, \mathsf{pk}_1, \ldots, \mathsf{pk}_n)$ where $k \in \{1, \ldots, n\}$
+	\item \textbf{Unlocking argument}: $u = ((\sigma_1, j_1), \ldots, (\sigma_k, j_k))$ where $j_i$ is the index of the public key used for $\sigma_i$
+	\item \textbf{Definition}: $\predi_\mathsf{tsig}(k, \mathsf{pk}_1, \ldots, \mathsf{pk}_n; \tau, m, u) = 1$ iff:
+	\begin{enumerate}
+		\item $\mathsf{Verify}(\mathsf{pk}_{j_i}, m, \sigma_i) = 1$ for every $i \in \{1, \ldots, k\}$
+		\item All indices $j_i$ are distinct: $j_i = j_{i'}$ implies $i = i'$
+	\end{enumerate}
+\end{itemize}
+
+The distinctness requirement prevents satisfying the predicate by presenting $k$ copies of the same signature.
+
+
+\subsubsection{Burn Predicate}\label{sec:burn-predicate}
+
+\index{predicate!burn ($\predi_\mathsf{burn}$)}
+The \emph{burn predicate} $\predi_\mathsf{burn}(h_\mathsf{reason})$ cannot be unlocked. A token transferred to a burn predicate is permanently spent.
+
+\begin{itemize}
+	\item \textbf{Parameters}: $h_\mathsf{reason} \in \hashtype$ (reason hash, linking the burn to its purpose)
+	\item \textbf{Unlocking argument}: none
+	\item \textbf{Definition}: $\predi_\mathsf{burn}(h_\mathsf{reason}; \tau, m, u) = 0$ for all arguments
+\end{itemize}
+
+The burn predicate is used in token splitting (Sec.~\ref{sec:token-splitting}), where the reason hash references the aggregation root of the split proof.
+
+\bigskip
+
+Predicates can also encode time-dependent conditions, enabling protocols such as atomic swaps via hashed timelock predicates. Such application-level predicates are outside the scope of this specification.
+
+
+\section{Interaction with Unicity Service}\label{sec:el-us-interaction}
+
+\index{Unicity Service!execution layer interaction}
+This section describes how the execution layer interacts with the Unicity Service (Sec.~\ref{sec:request-validation}) for state transition certification.
+
+\subsection{Certification Request}
+
+A certification request from the execution layer is a tuple $Q = (\predi, \sthash, \txhash, u)$, where:
+\begin{itemize}
+	\item $\predi$ -- spending predicate of the current owner
+	\item $\sthash$ -- current state hash
+	\item $\txhash$ -- transaction data hash
+	\item $u$ -- unlocking argument satisfying $\predi$
+\end{itemize}
+
+\subsection{Processing}
+
+The Unicity Service processes the request as follows:
+\begin{enumerate}
+	\item Compute state identifier: $\mathsf{sid} \gets H(\predi, \sthash)$
+	\item Compute message hash: $m \gets H(\sthash, \txhash)$
+	\item Evaluate predicate: verify $\predi(\tau, m, u) = 1$
+	\item Check uniqueness: verify $R[\mathsf{sid}] = \bot$
+	\item If both checks pass: $R[\mathsf{sid}] \gets \txhash$\footnote{The current SDK implementation stores $H(\mathsf{CBOR}(\predi, \sthash, \txhash, u))$ as the leaf value instead of $\txhash$, because of backward compatibility with the legacy SDK.}
+\end{enumerate}
+
+If the request is accepted, the Unicity Service returns an inclusion proof $\pinc$. If the state has already been spent (uniqueness check fails) or the predicate evaluation fails, the request is rejected.
+
+\subsection{System Time}\label{sec:system-time}
+
+\index{system time}
+The system time $\tau$ available during predicate evaluation is the round creation time from the Unicity Seal: $\tau = C^\mathsf{r}.t_r$ (Sec.~\ref{se:unicity-certificate}). The system time can be extracted from inclusion proofs by $\tau \gets \mathsf{time}(\pi)$.
+
+The Unicity Service evaluates predicates at the current round time. Verifiers of certified transactions evaluate predicates using the time extracted from the inclusion proof $\pi$.
+
+
+\section{Transaction Flow}\label{sec:transaction-flow}
+
+Figure~\ref{fi:exec-transaction-flow} illustrates one complete token transfer, from the recipient preparing ownership information through certification to final verification.
+
+\begin{figure}[!htb]
+    \begin{center}
+        \begin{sequencediagram}
+            \newthread{S}{Sender}
+            \newinst[3]{R}{Recipient}
+            \newinst[2]{US}{Unicity Service}
+
+            % Recipient prepares predicate and auxiliary data
+            \begin{call}{R}{Prepare $\predi'$, $\auxd'$}{R}{}
+            \end{call}
+
+            % Recipient sends predicate to sender
+            \begin{messcall}{R}{$\predi'$, $\auxd'$}{S}
+            \end{messcall}
+
+            % Sender creates transaction data
+            \postlevel
+            \postlevel
+            \postlevel
+            \begin{call}{S}{\shortstack[l]{
+                    $x \gets \{0,1\}^\ell$     \\
+                    $D = (\predi', x, \auxd')$ \\
+                    $T = (\sthash, D)$         \\
+                    $\txhash \gets H(D)$ \\
+                    $h_T = H(\sthash, \txhash)$ \\
+                    $u$ such that $\predi(\tau_\mathsf{exp}, h_T, u) = 1$
+                }
+                }{S}{}
+            \end{call}
+
+            % Sender requests certification from Unicity Service
+            \begin{messcall}{S}{$Q = (\predi, \sthash, \txhash, u)$}{US}
+                \postlevel
+                \begin{call}{US}{\shortstack[l]{
+                    $\predi(\tau, H(\sthash, \txhash), u) \stackrel{?}{=} 1$ \\
+                    $R[H(\predi, \sthash)] \stackrel{?}{=} \bot$ \\
+                    $R[H(\predi, \sthash)] \gets \txhash$
+                    }}{US}{}
+                \end{call}
+            \end{messcall}
+            \prelevel
+            \begin{messcall}{US}{$\pinc$ (with $\tau$)}{S}
+            \end{messcall}
+
+            % Sender sends certified transaction to recipient
+            \begin{messcall}{S}{$\mathcal{L} \cup (T, u, \txhash, \pinc)$}{R}
+                \postlevel
+                \postlevel
+                \postlevel
+                \postlevel
+                \begin{call}{R}{\shortstack[l]{
+                    $T.\sthash \stackrel{?}{=} H(h^\textsf{prev}_\mathsf{st}, x_\textsf{prev})$ \\
+                    $\tau \gets \mathsf{time}(\pinc)$ \\
+                    $\predi(\tau, H(\sthash, \txhash), u) \stackrel{?}{=} 1$ \\
+                    $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pinc) \stackrel{?}{=} 1$ \\
+                    Accept if all checks pass
+                    }}{R}{}
+                \end{call}
+            \end{messcall}
+        \end{sequencediagram}
+        \caption{One Unicity transaction. The predicate $\predi$ represents the current ownership condition, and the capability to unlock $\predi'$ defines the new owner. System time $\tau$ is extracted from the inclusion proof and used in predicate evaluation by future verifiers.}\label{fi:exec-transaction-flow}
+    \end{center}
+\end{figure}
+
+
+\section{Fungible Token Payload}\label{sec:fungible-tokens}
+
+For fungible tokens (e.g. digital currency), the execution layer defines additional structure within the token's auxiliary data to support money-like operations: value tracking, splitting, and value conservation proofs.
+
+\subsection{Asset Structure}\label{sec:asset-structure}
+
+\index{asset}
+An \emph{asset} is a pair $(\mathsf{aid}, v)$, where:
+\begin{itemize}
+	\item $\mathsf{aid}$ -- asset identifier, specifying the asset type (e.g. currency)
+	\item $v \in \mathbb{N}$ -- asset value (non-negative integer amount)
+\end{itemize}
+
+A token may carry multiple assets, represented as a collection:
+\[
+\mathcal{A} = \{(\mathsf{aid}_1, v_1), \ldots, (\mathsf{aid}_k, v_k)\}
+\]
+where all asset identifiers $\mathsf{aid}_i$ are distinct.
+
+\subsection{Mint Justification}\label{sec:mint-justification}
+
+\index{mint justification}
+For fungible tokens, the mint transaction's auxiliary data field $\auxd'$ serves as the \emph{mint justification}. It encodes:
+\begin{itemize}
+	\item The asset collection $\mathcal{A}$ -- defining the token's initial value
+	\item Application-specific metadata justifying the minting (e.g. backing proof, authorization data)
+\end{itemize}
+
+The token type identifier $\mathsf{ty}$ in the mint transaction classifies the token (e.g. a specific currency or asset class), while the auxiliary data carries the per-token minting details.
+
+\subsection{Token Splitting}\label{sec:token-splitting}
+
+\index{token!splitting}
+Splitting allows a fungible token to be divided into multiple new tokens while provably preserving total value. The protocol uses \emph{Sparse Merkle Sum Trees}\index{Sparse Merkle Sum Tree} to provide cryptographic value conservation proofs.
+
+\subsubsection{Split Protocol}
+
+Given a token $\mathcal{L}$ with asset collection $\mathcal{A}$, the owner splits it into $k$ new tokens with respective asset allocations $\mathcal{A}_1, \ldots, \mathcal{A}_k$ such that for every asset identifier $\mathsf{aid}$:
+\[
+\sum_{j=1}^{k} v_j(\mathsf{aid}) = v(\mathsf{aid})
+\]
+where $v(\mathsf{aid})$ is the original value and $v_j(\mathsf{aid})$ is the value allocated to token $j$.
+
+The split proceeds as follows:
+\begin{enumerate}
+	\item For each asset identifier $\mathsf{aid} \in \mathcal{A}$, construct a \emph{Sparse Merkle Sum Tree} $\mathcal{S}_\mathsf{aid}$ with leaves keyed by new token identifiers $\mathsf{id}_j$ and valued by the respective asset amounts $v_j(\mathsf{aid})$.
+	\item Construct an \emph{aggregation tree} $\mathcal{G}$ combining the root hashes of all per-asset sum trees.
+	\item \textbf{Burn the original token}: create a transfer transaction from $\mathcal{L}$ to the burn predicate $\predi_\mathsf{burn}(h_\mathsf{agg})$, where $h_\mathsf{agg}$ is the root hash of the aggregation tree $\mathcal{G}$. Certify this burn transaction via the Unicity Service.
+	\item \textbf{Mint each new token} $j \in \{1, \ldots, k\}$: create a mint transaction for token $\mathsf{id}_j$ with a \emph{split reason proof} containing:
+	\begin{itemize}
+		\item The burned token $\mathcal{L}$ (complete history including the burn transaction)
+		\item An aggregation tree path proving that $\mathsf{aid}$ is part of the split
+		\item A sum tree path proving the value allocation $v_j(\mathsf{aid})$ and that the total value is conserved
+	\end{itemize}
+\end{enumerate}
+
+\subsubsection{Split Verification}\label{sec:split-verification}
+
+Given a new token claiming to originate from a split, the verifier checks:
+\begin{enumerate}
+	\item The burned source token is valid and its last recipient is $\predi_\mathsf{burn}(h_\mathsf{agg})$
+	\item The aggregation tree path correctly leads to $h_\mathsf{agg}$
+	\item The sum tree path is valid: the leaf value matches the claimed asset amount, and the root sum equals the original token's value for this asset (value conservation)
+\end{enumerate}
+
+\subsection{Burn Transaction}\label{sec:burn-transaction}
+
+\index{burn transaction}
+A \emph{burn transaction} is a transfer transaction where the recipient predicate is $\predi_\mathsf{burn}(h_\mathsf{reason})$ (Sec.~\ref{sec:burn-predicate}). Since the burn predicate cannot be unlocked, the token is permanently spent and cannot be transferred further.
+
+The reason hash $h_\mathsf{reason}$ links the burn to its purpose. In a split operation, it is the aggregation tree root hash, enabling verifiers of the resulting tokens to trace back to the burned source.
+
+
+\section{Private Transactions}\label{sec:private-transactions}
+
+In the transaction flow described above, Sec.~\ref{sec:transaction-flow}, the Unicity Service learns only the public key and signature (predicate and unlock data in general) of the token spending party; but it is not possible to associate transactions with tokens. Looking at a token it is possible to associate transactions if made by the same party using the same key. In order to achieve perfect privacy it is necessary to generate a fresh predicate $\predi'$ for every transaction. This requires generating and storing a fresh keypair per transaction, which may be impractical when the recipient's secure storage is limited, and forces the transaction sender to obtain recipient's key for every transaction, making the transacting protocol interactive.
+
+This section presents protocols that allow the recipient to derive unlinkable predicates from a single persistent keypair, requiring no persistent state beyond the keypair itself. Also, this persistent keypair can be used as a persistent address (recipient's identifier).
+
+The protocols below are implemented at the ``wallet'' level and need no support by the execution layer and Unicity Service. User can choose selectively wheter to make fully private transactions or not.
+
+The privacy protocols produce a transaction-specific public key $\mathsf{pk}_{tx}$ that the sender embeds in the predicate $\predi' = \predi_\mathsf{sig}(\mathsf{pk}_{tx})$. An ephemeral public key $R$ is included in the auxiliary data $\auxd'$ of the transaction, enabling the recipient to reconstruct the corresponding private key $\mathsf{sk}_{tx}$ when spending.
+
+The protocols below assume an elliptic curve group of order $n$ with generator $G$, and that the signature predicate $\predi_\mathsf{sig}$ uses a compatible scheme (e.g. ECDSA). The persistent keypair is $(\mathsf{sk}, \mathsf{pk})$ where $\mathsf{pk} = \mathsf{sk} \cdot G$.
+
+\subsection{Interactive Protocol}\label{sec:private-interactive}
+
+For each incoming transaction, the recipient generates an ephemeral blinding factor $r$ and derives a transaction-specific public key $\mathsf{pk}_{tx} = (\mathsf{sk} + r) \cdot G$. The protocol is shown in Figure~\ref{fig:private-interactive}.
+
+\begin{figure}[!htb]
+\centering
+\fbox{
+\begin{minipage}{0.9\textwidth}
+
+\underline{Setup:} Recipient holds persistent keypair $(\mathsf{sk}, \mathsf{pk} = \mathsf{sk} \cdot G)$
+
+\vspace{3mm}
+\begin{tabular}{lcl}
+\textbf{Sender} & & \textbf{Recipient}\\
+\hline
+\\[-2mm]
+  & & $r \stackrel{\$}{\gets} \mathbb{Z}_n$ \\
+  & & $\mathsf{pk}_{tx} \gets (\mathsf{sk} + r) \cdot G$ \\
+  & & $R \gets r \cdot G$ \\
+  & $\xleftarrow{\hspace{0.6cm} \predi_\mathsf{sig}(\mathsf{pk}_{tx}),\; R \hspace{0.6cm}}$ & \\[2mm]
+$\predi' \gets \predi_\mathsf{sig}(\mathsf{pk}_{tx})$ & & \\
+$\auxd' \gets \{\ldots, R\}$ & & \\
+Create and certify $T$ & & \\
+  & $\xrightarrow{\hspace{0.8cm} \mathcal{L} \cup T^\mathsf{cert} \hspace{0.8cm}}$ & \\[2mm]
+  & & $r' \gets H(\mathsf{sk} \,\|\, R)$ \\
+  & & $\mathsf{sk}_{tx} \gets \mathsf{sk} + r' \bmod n$ \\
+  & & Sign next transaction using $\mathsf{sk}_{tx}$ \\
+\end{tabular}
+\end{minipage}
+}
+\caption{Interactive protocol for generating unlinkable predicates.}
+\label{fig:private-interactive}
+\end{figure}
+
+The recipient sends $\predi_\mathsf{sig}(\mathsf{pk}_{tx})$ and the ephemeral public key $R$ to the sender, who includes $R$ in the auxiliary data $\auxd'$ of the transfer transaction. When spending the received token, the recipient reconstructs the blinding factor $r' = H(\mathsf{sk} \,\|\, R)$ from the persistent private key and $R$ (read from $\auxd'$), and computes the transaction-specific private key $\mathsf{sk}_{tx} = \mathsf{sk} + r' \bmod n$.
+
+\subsection{Non-Interactive Protocol}\label{sec:private-non-interactive}
+
+For applications where the recipient publishes a persistent public key $\mathsf{pk}$ as an address, the sender can derive unlinkable predicates without interaction using Diffie-Hellman key exchange inspired protocol, shown in Figure~\ref{fig:private-non-interactive}.
+
+The key challenge is protecting against a malicious sender who might choose a predictable ephemeral key $r$ or leak it to compromise unlinkability. The construction addresses this by binding the blinding factor to both the shared secret and public transaction data.
+
+\begin{figure}[!htb]
+\centering
+\fbox{
+\begin{minipage}{0.95\textwidth}
+
+\underline{Setup:} Recipient publishes persistent public key $\mathsf{pk} = \mathsf{sk} \cdot G$
+
+\vspace{3mm}
+\begin{tabular}{lcl}
+\textbf{Sender} & & \textbf{Recipient} \\
+\hline
+\\[-2mm]
+$r \stackrel{\$}{\gets} \mathbb{Z}_n^*$ & & \\
+$R \gets r \cdot G$ & & \\
+$s \gets H(r \cdot \mathsf{pk} \,\|\, R \,\|\, \sthash)$ & & \\
+$\mathsf{pk}_{tx} \gets \mathsf{pk} + s \cdot G$ & & \\
+$\predi' \gets \predi_\mathsf{sig}(\mathsf{pk}_{tx})$ & & \\
+$\auxd' \gets \{\ldots, R\}$ & & \\
+Create and certify $T$ & & \\
+& $\xrightarrow{\hspace{0.6cm} \mathcal{L} \cup T^\mathsf{cert} \hspace{0.6cm}}$ & \\[3mm]
+& & \textbf{if} $R = \mathcal{O}$ \textbf{then abort} \\
+& & $s' \gets H(\mathsf{sk} \cdot R \,\|\, R \,\|\, \sthash)$ \\
+& & \textbf{if} $\mathsf{pk} + s' \cdot G \neq \mathsf{pk}_{tx}$ \textbf{then abort} \\
+& & $\mathsf{sk}_{tx} \gets \mathsf{sk} + s' \bmod n$ \\
+& & Sign next transaction using $\mathsf{sk}_{tx}$ \\
+\end{tabular}
+\end{minipage}
+}
+\caption{Non-interactive protocol for generating unlinkable predicates.}
+\label{fig:private-non-interactive}
+\end{figure}
+
+The sender generates an ephemeral keypair $(r, R = r \cdot G)$ and computes a Diffie-Hellman shared secret $r \cdot \mathsf{pk}$. The blinding factor is derived by hashing the shared secret together with $R$ and the current state hash $\sthash$:
+$$s = H(r \cdot \mathsf{pk} \,\|\, R \,\|\, \sthash)$$
+
+The transaction-specific public key is $\mathsf{pk}_{tx} = \mathsf{pk} + s \cdot G$, and $R$ is included in $\auxd'$. The sender sets $\predi' = \predi_\mathsf{sig}(\mathsf{pk}_{tx})$ in the transaction data. Upon receiving the transaction, the recipient:
+\begin{enumerate}
+\item Verifies $R \neq \mathcal{O}$ (not trivially insecure)
+\item Computes the shared secret $\mathsf{sk} \cdot R = r \cdot \mathsf{pk}$ using the persistent private key
+\item Derives $s' = H(\mathsf{sk} \cdot R \,\|\, R \,\|\, \sthash)$ and verifies $\mathsf{pk} + s' \cdot G = \mathsf{pk}_{tx}$
+\item Computes $\mathsf{sk}_{tx} = \mathsf{sk} + s' \bmod n$
+\end{enumerate}
+
+Including both $R$ and $\sthash$ in the hash input ensures that:
+\begin{itemize}
+\item Even if the sender chooses a predictable $r$, the blinding factor $s$ remains unpredictable to external observers
+\item The recipient can verify that the sender correctly computed $\mathsf{pk}_{tx}$ without learning $r$
+\item Each transaction uses a unique blinding factor, since $\sthash$ is unique by construction (Sec.~\ref{sec:token-state}), preventing linkability even if the sender reuses the same $r$
+\end{itemize}

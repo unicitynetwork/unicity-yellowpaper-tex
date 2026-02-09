@@ -1,0 +1,167 @@
+\chapter{Unicity Token Encoding}\label{app:execution-layer}
+
+This appendix specifies the concrete encodings for the Unicity Token defined in the Execution Layer chapter. All structures are serialized using CBOR (Appendix~\ref{app:encodings}) with deterministic encoding rules.
+
+\section{Constants}\label{app:el-constants}
+
+\begin{itemize}
+	\item $\mathsf{MINT\_SUFFIX} = \mathsf{SHA\text{-}256}(\texttt{"TOKENID"})$ -- a fixed 32-byte domain separator used to derive the source state hash of mint transactions.
+	\item $\mathsf{MINTER\_SECRET}$ = \texttt{0x495f414d5f554e4956455253414c5f4d494e5445525f464f525f} (ASCII: \texttt{"I\_AM\_UNIVERSAL\_MINTER\_FOR\_"}) -- a fixed 26-byte constant used to derive deterministic minting key pairs.
+	\item The minting key pair for a token with identifier $\mathsf{id}$ is derived as:
+	\[
+	\mathsf{sk}_\mathsf{mint} = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{MINTER\_SECRET}, \mathsf{id}))
+	\]
+	The corresponding public key $\mathsf{pk}_\mathsf{mint}$ is the secp256k1 public key for $\mathsf{sk}_\mathsf{mint}$. The private key is intentionally public; the key pair exists solely to provide a uniform request interface with the Unicity Service.
+\end{itemize}
+
+
+\section{Predicate Encoding}\label{app:predicate-encoding}
+
+A predicate $\predi$ is encoded as a CBOR array with three elements:
+
+\begin{longtable}{clp{8cm}}
+\textbf{Index} & \textbf{Type} & \textbf{Description} \\
+\hline
+0 & unsigned integer & Predicate engine identifier. Value $1$ denotes the built-in engine. \\
+1 & byte string & Predicate type code within the engine. \\
+2 & byte string & Serialized parameters. \\
+\end{longtable}
+
+\noindent Built-in predicate type codes:
+\begin{longtable}{cl}
+\textbf{Type Code} & \textbf{Predicate} \\
+\hline
+\texttt{0x01} & Signature predicate ($\predi_\mathsf{sig}$). Parameters: 33-byte compressed public key. \\
+\texttt{0x02} & Burn predicate ($\predi_\mathsf{burn}$). Parameters: 32-byte reason hash. \\
+\end{longtable}
+
+\noindent The \emph{recipient} field in transactions stores a hash of the predicate encoding: $H(\mathsf{CBOR}(\predi'))$.
+
+
+\section{Transaction Encoding}\label{app:transaction-encoding}
+
+\subsection{Mint Transaction}
+
+A mint transaction is encoded as a CBOR array with three elements:
+
+\begin{longtable}{clp{8cm}}
+\textbf{Index} & \textbf{Type} & \textbf{Description} \\
+\hline
+0 & byte string & Recipient: hash of the first owner's predicate encoding \\
+1 & byte string & Token identifier $\mathsf{id}$ (32 bytes) \\
+2 & CBOR array[2] & Auxiliary payload: $[$token type $\mathsf{ty}$ (byte string)$,$ auxiliary data $\auxd'$ (byte string)$]$ \\
+\end{longtable}
+
+
+\subsection{Transfer Transaction}
+
+A transfer transaction is encoded as a CBOR array with five elements:
+
+\begin{longtable}{clp{8cm}}
+\textbf{Index} & \textbf{Type} & \textbf{Description} \\
+\hline
+0 & byte string & Source state hash $\sthash$ (32 bytes) \\
+1 & byte string & Lock script: CBOR-encoded current owner predicate $\predi$ \\
+2 & byte string & Recipient: hash of the next owner's predicate encoding \\
+3 & byte string & Random value $x$ (32 bytes) \\
+4 & byte string & Auxiliary data $\auxd'$ \\
+\end{longtable}
+
+
+\subsection{Certified Transaction}
+
+A certified transaction (mint or transfer) is encoded as a CBOR array with two elements:
+
+\begin{longtable}{clp{8cm}}
+\textbf{Index} & \textbf{Type} & \textbf{Description} \\
+\hline
+0 & CBOR array & The transaction (mint or transfer encoding) \\
+1 & CBOR structure & Inclusion proof $\pi$ \\
+\end{longtable}
+
+
+\subsection{Token}
+
+A token is encoded as a CBOR array with two elements:
+
+\begin{longtable}{clp{8cm}}
+\textbf{Index} & \textbf{Type} & \textbf{Description} \\
+\hline
+0 & CBOR array & Certified mint transaction \\
+1 & CBOR array & Array of certified transfer transactions (may be empty) \\
+\end{longtable}
+
+
+\section{Hash Derivations}\label{app:hash-derivations}
+
+All hash derivations use SHA-256 over CBOR-encoded inputs.
+
+\subsection{State Identifier}
+
+The state identifier is derived from the predicate and state hash:
+\[
+\mathsf{sid} = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi, \sthash))
+\]
+
+\subsection{State Hash}
+
+For mint transactions:
+\[
+\sthash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{id}, \mathsf{MINT\_SUFFIX}))
+\]
+
+For transfer transactions, the next state hash:
+\[
+\sthash' = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, x))
+\]
+
+\subsection{Transaction Hash}
+
+For mint transactions:
+\[
+\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', \mathsf{id}, [\mathsf{ty}, \auxd']))
+\]
+
+For transfer transactions:
+\[
+\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', x, \auxd'))
+\]
+
+where $\mathsf{CBOR}(\ldots)$ denotes the CBOR array encoding of the arguments as specified in Sec.~\ref{app:transaction-encoding}.
+
+
+\section{Signature Format}\label{app:signature-format}
+
+The signature predicate ($\predi_\mathsf{sig}$) uses ECDSA over the secp256k1 curve.
+
+\begin{itemize}
+	\item \textbf{Public keys}: compressed format, 33 bytes (1-byte prefix $\texttt{0x02}$ or $\texttt{0x03}$, followed by 32-byte $x$-coordinate)
+	\item \textbf{Signatures}: 65 bytes ($R \mathbin{\|} S \mathbin{\|} V$), where $R$ and $S$ are 32-byte integers and $V$ is a 1-byte recovery identifier
+	\item \textbf{Signed message}: $\mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, \txhash))$
+\end{itemize}
+
+
+\section{Split Proof Encoding}\label{app:split-proof-encoding}
+
+\subsection{Split Reason}
+
+A split reason is encoded as a CBOR array with two elements:
+
+\begin{longtable}{clp{8cm}}
+\textbf{Index} & \textbf{Type} & \textbf{Description} \\
+\hline
+0 & CBOR structure & The burned source token (complete token encoding) \\
+1 & CBOR array & Array of split reason proofs (one per asset type) \\
+\end{longtable}
+
+\subsection{Split Reason Proof}
+
+A split reason proof is encoded as a CBOR array with three elements:
+
+\begin{longtable}{clp{8cm}}
+\textbf{Index} & \textbf{Type} & \textbf{Description} \\
+\hline
+0 & byte string & Asset identifier $\mathsf{aid}$ \\
+1 & CBOR structure & Aggregation tree path (Sparse Merkle Tree path to the aggregation root) \\
+2 & CBOR structure & Asset sum tree path (Sparse Merkle Sum Tree path proving value allocation) \\
+\end{longtable}

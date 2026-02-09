@@ -1,0 +1,1738 @@
+\chapter{Background}
+
+\section{Definitions}\label{definitions}
+
+\textbf{Block} is a set of requests, grouped together for mostly
+efficiency reasons, to be processed during one round. Unicity BFT Core does not produce an explicit blockchain -- its certificates are persisted
+as proofs within the tokens.
+
+\textbf{UC} is \emph{Unicity Certificate}.
+
+We call UC a \textbf{repeat UC}\index{repeat UC} if it has incremented round number for a particular
+shard, but the certified hash has not changed compared to the UC of the previous round.
+
+All aggregation layer nodes and BFT Core validators operate in \textbf{rounds}.
+
+A round \textbf{extends} another finalized round by including its cryptographic
+hash as the hash of previous round.
+
+The validators of a shard are synchronized based on input
+from the BFT Core. There are some fixed time-outs.
+
+System has one BFT Core and an arbitrary number of
+partitions, which may be split into arbitrary number of shards.
+
+Within a shard, there are $k$ validators with identifier $\nu$, of which
+$f$ might be faulty. For the BFT Core $k > 3f$. For a shard
+$\sigma$, $k_{\beta, \sigma} > 2f$. We assume that all faulty validators may be
+controlled by a coordinated, non-adaptive adversary. We assume trusted
+setup (Genesis) and authenticated data links (signed messages). We assume
+partially synchronous communication model where after unknown time GST
+message delivery time is upper-bounded by known $\Delta$. We assume
+that in every shard, at least one non-faulty validator is able to persist its
+state.
+
+A signature is denoted as $s$. Signed message with message name \texttt{name} is denoted as
+$\langle \texttt{name} \mid a, b, c; s \rangle$.
+Array of message fields is denoted as $\{f\}$.
+
+Clients send \textbf{Unicity Service Requests} (requests).
+
+
+\section{Scope}\label{scope}
+Implementation details of BFT Core's atomic broadcast primitive (implementing the protocol
+\texttt{Ordering}) are not given. This is a modular component. Only safety-critical validation rules are provided.
+
+
+\section{Repeating Notation}\label{notation}
+
+$n_r$ -- round number of the BFT Core\\
+$n_{\beta, \sigma}$ -- round number of shard $\sigma$ of partition $\beta$\\
+$k_{\beta, \sigma}$ -- number of aggregation layer nodes in shard $\sigma$ of partition $\beta$, $k_{\beta, \sigma} = |\mathcal{V}_{\beta, \sigma}| $\\
+$\nu$ -- aggregation layer node identifier, unique within the Unicity System instance; set of a shard's nodes is $\mathcal{V} = \{\nu_i\}_{i\in \{1, \dots, k_\sigma\}}$ \\
+$\nu_l \gets \Call{leaderfunc}{\cdot}$ -- leader identifier for this round \\
+$h$ -- SMT root hash\\
+$h'$ -- previous SMT root hash\\
+
+
+$ensure(\ldots)$ -- function modeled after the Solidity language -- if its argument evaluates to true then nothing happens; if it evaluates to false then execution stops and function returns $0$. Unlike Solidity, should be complemented with returning and logging informative errors. Mostly used in message handlers for input validation. \\
+$function(a, b \gets c)$ -- default value of function arguments, like in Python language. If 2nd argument is not specified by caller then parameter $b$ obtains the value of expression $c$.
+
+\chapter{Aggregation Layer}\label{aggregation-layer}
+
+\section{Timing}\label{HLCdetails-Timing}
+
+An aggregation shard is synchronized using Input Records in returned UCs. For a shard, a UC can have
+the following options:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\item
+  IR has not changed. Our shard can ignore this UC.
+\item
+  UC certifies an input from our shard, this input has never
+  been certified before, and round number is incremented. This UC finalizes a round and starts a new round.
+\item
+  Round number is incremented, but state root hash remains the same (repeat UC). This UC starts another consensus attempt extending the same state as previous (likely failed) one.
+  \item
+  UC is newer, certifying a future state. Indicates to a validator that it is behind the others and must roll back the pending proposal and initiate recovery.
+\end{enumerate}
+
+If the latest UC certifies a state of this shard, then the certification response delivering UC
+determines the leader and starts a new round.  While accepting incoming requests,
+the leader starts assembling his next block proposal, extending the latest finalized round
+(round with a valid UC).
+
+When timer \texttt{t1} runs out the leader stops accepting new requests,
+finishes state updates and broadcasts a block proposal to followers
+and then sends Certification Request to the BFT Core. See Figure~\ref{fi:part-flow}.
+
+BFT Core has a timer \texttt{t2} for every shard within every partition; it is reset when a valid
+UC for this shard is issued. If this timer has run out, then a
+\emph{repeat UC} is issued with incremented round number. This initiates a new consensus attempt for the shard. New round is executed with a different leader. Nodes
+can determine which UC is the latest based on round number. A block proposal, generated by the leader, includes a UC and this UC must point to this leader. Round is finalized when its UC is embedded into the block. The retry mechanism is illustrated by Fig.~\ref{fi:part-exp-flow}.
+
+\begin{figure}[!htbp]
+	\begin{center}
+		\includegraphics[width= 12cm]{pic/part-flow-ok.drawio.pdf}
+		\caption{Successful Shard Round}\label{fi:part-flow}
+	\end{center}
+\end{figure}
+
+\begin{figure}[!htbp]
+	\begin{center}
+		\includegraphics[width= 12.5cm]{pic/part-timing-exp.drawio.pdf}
+		\caption{Shard Round attempt which did not produce a valid
+    UC for this shard}\label{fi:part-exp-flow}
+	\end{center}
+\end{figure}
+
+
+
+\section{Configuration and State}\label{configuration-and-state}
+
+Configuration (managed by the Coordination Process) of every validator includes:
+
+\begin{itemize}
+\item
+  Network Identifier ($\alpha$).
+\item
+  Partition Identifier ($\beta$).
+\item
+  Shard Identifier ($\sigma$); present for multi-shard partitions.
+\item
+  Aggregation Layer Node Identifier ($\nu$). There are $k_{\beta, \sigma}$ nodes in shard $\sigma$ of partition $\beta$.
+\item
+  Timeout value \texttt{t1}: after a node sees a UC which appoints a leader, the leader waits for \texttt{t1} time units before stopping accepting new Unicity Service Requests and creating a block proposal.
+\end{itemize}
+
+Communication layer:
+
+\begin{itemize}
+  \item secret key used to sign messages
+  \item related public key; known to other validators and the BFT Core
+  \item public keys of other validators within the shard
+  \item communication addresses of other validators within the shard
+  \item communication addresses of the BFT Core validators
+\end{itemize}
+
+Data layer:
+
+\begin{itemize}
+  \item Unicity \emph{Trust Base} ($\mathcal{T}$)
+  \item other \emph{partition} defining parameters; refer to Unicity Platform Specification, State of a Shard.
+\end{itemize}
+
+\begin{algorithm}
+  \caption{State and Initialization}\label{alg:init}
+  \begin{algorithmic}[0]
+    \State Constants:
+    \State $\alpha$: Network Identifier
+    \State $\beta$: Partition Identifier
+    \State $\sigma$: Shard Identifier
+    \State $\nu$: Node Identifier
+    \State $k_{\beta, \sigma}$: number of nodes in the shard $\sigma$ of partition $\beta$
+    \State $\mathcal{T}$: Unicity Trust Base, may \emph{evolve}
+    \State Variables:
+    \State $\nu_l \gets \NULL$: leader node identifier of the current round; $\NULL$ if not known
+    \State $N \gets \{\}$: SMT (Sparse Merkle Tree)
+    \State $\mathtt{cp} \gets \bot$: SMT Checkpoint
+    \State $luc \gets \NULL$: latest valid UC
+    \State $lte \gets \NULL$: latest technical record sent with latest UC
+    \State                       \Comment{<\emph{round number to be certified}> $= lte.n$}
+    \State                       \Comment{<\emph{last certified hash}> $= luc.IR.h$}
+    \State $buf \gets \{\}$: input requests buffer
+    \State $log \gets \{\}$: executed requests log for proposal creation
+    \State $pr \gets \NULL$: pending proposal corresponding to a CR request waiting for UC
+    \State $sr$: statistical record data. See \nameref{statistical-record}
+    \State $\ell_B$: number of new SMT leaves added during round
+    \State $\ell_S$: SMT memory usage in bytes
+    \State $\pi_{CP}$: optional consistency proof (hash-based or ZK-compressed)
+    \State $\mathcal{B}$: shared log
+    \State
+    \Function{start\_new\_round}{$uc, te$}
+      \State ensure($\Call{VerifyUnicityCert}{uc, \mathcal{T}}$)
+      \State ensure($uc.h_t = h(te)$)
+      \State ensure($te.n > luc.IR.n$)
+      \State ensure($uc.IR.h' = luc.IR.h$)   \Comment{Double-checking}
+      \State $\mathtt{cp} \gets \Call{Checkpoint}{N}$
+      \State \Call{RInit}{\null}
+      \State $log \gets \{\}$
+      \State $pr \gets \{\}$
+      \State $\nu_l \gets te.\nu_l$
+      \State $luc \gets uc, lte \gets te$
+      \State \Call{reset\_timer}{$\mathtt{t1}$}
+      \If{$\nu_l = \nu$}     \Comment{Leader}
+        \State \Call{process}{$buf$}  \Comment{Process for no longer than until t1 tick}
+        \State $buf \gets \{\}$
+      \Else    \Comment{Follower}
+        \If{$\Call{send\_InputForwardMsg}{l, buf}$}
+          \State $buf \gets \{\}$  \Comment{Clean buffer on successful connection}
+        \EndIf
+      \EndIf
+    \EndFunction
+    \State
+    \Function{leaderfunc}{$uc$}
+      \State \Return $\{ \nu_i  \mid  i \gets \mathsf{integer}(H(uc)) \bmod k_{\beta,\sigma} + 1\}$  \Comment{Simplest example}
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+Variables:
+\begin{itemize}
+  \item $\nu_l$: Current round leader's identifier; $\NULL$ if not known
+  \item $buf$: buffer with pending Unicity Service Requests
+  \item $N$: State Tree
+  \item $\mathtt{cp}$: State Tree checkpoint, helps the State Tree to roll back to previously certified state if a state extending attempt fails. Checkpoints can be released when a following round gets finalized.
+  \item $luc$: latest UC. Importantly, this structure encapsulates the \emph{state hash} of the last certified state, to be extended by the round finalization attempt.
+  \item $lte$: latest Technical Record, certified by $luc$. Carries the required \emph{round number}, leader identifier, epoch of the round finalization attempt.
+  \item $log$: log of verified and executed (but not final) requests; respective changes in State Tree can be rolled  back by reverting it to checkpoint $\mathtt{cp}$.
+  \item $pr$: Pending Certification Request waiting for UC; includes state tree hash and applied requests and round number as the time reference used for request validation. We are avoiding situation where there can be multiple pending requests and speculative validation; fresh UC invalidates all pending requests. \\
+  There may be multiple parallel pending requests in future extensions.
+  \item $\mathcal{B}$: the shared append-only log.
+\end{itemize}
+
+The variables are handled via state transitions like this:
+\begin{enumerate}
+  \item \emph{Initial state}. State tree is certified with `$luc$'; $log$ and $pr$ are empty; $\mathtt{cp}$ points to the current state.
+  \item \emph{After applying any request(s)}: There are changes in the state tree; executed requests are recorded in $proposal$ (that is, $\mathtt{cp}$  is the starting point and $N$ and $log$ are updated in sync). Processing of requests continues.
+  \item \emph{Waiting for UC}. This state is reached on \texttt{t1} click, after sending a BlockProposalMsg message (if being the leader) and sending a Certification Request. There are changes in the state tree on top of snapshot $\mathtt{cp}$; executed requests were recorded in $log$; Now, root hash of the state tree and respective $log$ are saved in $pr$, which extends $luc$. $pr$ must be preserved as long as it is possible that it gets certified by a UC. No new requests are processed in this state.
+  \item \emph{After receiving a CReS message with new UC}:
+  \begin{itemize}
+    \item \emph{UC certifies $pr$}: block is finalized and added to $\mathcal{B}$. OK to clear.
+    \item \emph{UC is `repeat UC'}: state is rolled back to $\mathtt{cp}$; we assume simplified case that consensus for prev. request is not possible any more and clean $pr$.
+    \item \emph{UC certifies any round newer than the latest known UC}: rollback and recovery (independent state, consuming blocks until $N$ is up-to-date with UC).
+    \end{itemize}
+  \item Loop to 1.
+\end{enumerate}
+
+Please refer to Algorithm \ref{alg:init} for initialization.
+
+\section{Subcomponents}\label{sub-components}
+
+\begin{figure}[!htbp]
+	\begin{center}
+		\includegraphics[width=\textwidth]{pic/hlc-partition.drawio.pdf}
+		\caption{Data Flow of the Shard Leader Node}
+	\end{center}
+\end{figure}
+
+
+\subsection{Input Handling}\label{input-handling}
+
+Input Handling prioritizes latency (fast finality). It is optimized for the case where there is enough processing capacity available and Unicity Service Requests do not have to be queued.
+
+All validators accept Unicity Service Requests from clients. It is expected, that clients send Unicity Service Requests to many validators, as some may be byzantine. We assume that clients send Unicity Service Requests to the right shard; Unicity Service Requests sent to wrong shard can be discarded. Optionally, implement QoS / overload protection. There is no guarantee of execution -- the validators may drop Unicity Service Requests to protect the system availability, or when working close to maximum capacity. Synchronized clients may send Unicity Service Requests directly to the expected leader.
+
+Shard validators forward Unicity Service Requests, as they arrive, to respective shard leaders (node producing the next block proposal); while observing time-outs and discarding expired Unicity Service Requests. There can be a light-weight partial validation, referred as \textit{sanity check}, before continuing with the processing. If the leader is not known, or rejects messages, then keep Unicity Service Requests in a buffer and try again when the next leader is known and accepts Unicity Service Requests. If the validator is the current leader, then he processes available Unicity Service Requests immediately. At the moment when a leader can not include transactions into a proposal anymore, or have collected enough transactions to fill a block, it starts rejecting incoming Unicity Service Requests from other validators.
+
+A validator should retain a Unicity Service Request if accepted from a client or other validator; until it is either expired or included into a finalized block. A validator may forget a Unicity Service Request if accepted by another validator. A validator should not forward a Unicity Service Request to a distinct validator more than once.
+
+Validators may limit the number of times a Unicity Service Request is forwarded.
+
+Please refer to Algorithm \ref{alg:input} for an example without optional functionality.
+
+\begin{algorithm}
+  \caption{Input Handling}\label{alg:input}
+  \begin{algorithmic}[0]
+    \Message[TransactionMsg]{$Q$}
+      \If{$\Call{sanity\_check}{Q}$}
+         \If{$\nu_l = \nu$}                \Comment{This process is the leader}
+           \State \Call{process}{$\{Q\}$}  \Comment{Beware of parallel execution}
+         \ElsIf{$\nu_l \ne \NULL$}   \Comment{We know someone else is the leader}
+           \If {$ \lnot \Call{send\_InputForwardMsg}{\nu_l, Q}$} \Comment{Forward to $\nu_l$}
+             \State $buf \gets buf \cup Q$   \Comment{Store on failure}
+           \EndIf
+         \Else               \Comment{Buffer requests until leader is known}
+           \State $buf \gets buf \cup Q$
+         \EndIf
+       \EndIf
+    \EndMessage
+    \State
+    \Message[InputForwardMsg]{$reqs$}
+      \If{$\nu_l = \nu$}                \Comment{This process is the leader}
+        \State \textbf{defer} \Call{process}{$reqs$}
+        \State \Return \textbf{``accepted''}
+      \Else
+        \State \Return \textbf{``reject''}
+      %   \ForAll {$T \in txs$}
+      %     \If{$\Call{sanity\_check}{T}$}
+      %       \State $buf \gets buf \cup T$
+      %     \EndIf
+      %   \EndFor
+      \EndIf
+    \EndMessage
+    \State
+    \Event{next\_leader\_elected}
+      \State \Call{prune\_expired}{$buf$}
+      \If{$\nu_l = \nu$}                \Comment{This process is the leader}
+        \State \Call{process}{$buf$}  \Comment{Beware of parallel execution}
+      \Else
+        \If {$\Call{send\_InputForwardMsg}{\nu_l, buf}$} \Comment{Forward to $\nu_l$}
+          \State $buf \gets \{\}$   \Comment{Forget on successful send}
+          \State   \Comment{\ldots or keep in ``forwarded'' buffer and use when becoming the leader}
+       \EndIf
+    \EndIf
+    \EndEvent
+  \end{algorithmic}
+\end{algorithm}
+
+
+\subsection{Block Proposal}\label{block-production}
+
+\textbf{Summary}: On clock tick, stop immediate validation and execution of incoming Unicity Service Requests. Validate and execute Unicity Service Requests from the Request Buffer, updating the State Tree ($N$) and $log$ for proposal creation. Executed requests from $log$ go into Block Proposal, in the exactly same order they were validated and executed.
+Broadcast Block Proposal to Follower Nodes. Create and send Uniqueness Certificate Request, retaining necessary state in a Pending Block Proposal ($pr$) data structure.
+
+A round must extend a previously certified round. If a party approves a block proposal, then it also approves the entire history. This ensures safety of the protocol.
+
+Pending Block Proposal ($pr$) must be stored in durable way before Certification Request can be sent, by e.g. writing it to persistent storage. Losing all copies of pending block proposals, while obtaining a UC for this round, would be an unrecoverable error.
+
+\begin{algorithm}
+  \caption{Producing a Block Proposal}\label{alg:proposal}
+  \begin{algorithmic}[0]
+    \Event{t1}
+      \If{$\nu_l = \nu$}                \Comment{This validator is the leader}
+        \State $\nu_l \gets \NULL$
+        \State \Call{RCompl}{\null}  \Comment{Request processing must have stopped by now}
+        \State $sr \gets \Call{ProduceStatistics}{\null}$
+        \State \Call{send\_BlockProposalMsg}{$\alpha, \beta, \sigma, \nu, luc, lte, log, sr$} \Comment{Sign and Broadcast}
+        \State \Call{do\_cert\_req}{$log, \nu, sr$}
+      \EndIf
+      \State $\nu_l \gets \NULL$          \Comment{Leader stops accepting new txs}
+    \EndEvent
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+  \caption{Producing a Certification Request}\label{alg:ucrequest}
+  \begin{algorithmic}[0]
+    \Function{do\_cert\_req}{$txs, \nu_l, sr$}
+      \State $h' \gets luc.IR.h$, $n \gets lte.n$, $e \gets lte.e$, $t \gets luc.C^\mathsf{r}.t$
+      \State $h \gets \Call{StateRoot}{N}$
+      \State $\ell_B \gets$ count of new SMT leaves added, $\ell_S \gets$ SMT memory usage
+      \State $pr \gets (n, e, h', h, t, \nu_l, log, sr)$  \Comment{Pending Block Proposal}
+      \If{\Call{store\_in\_durable\_way}{$pr$}}
+        \State $IR \gets (n, e, h', h, t)$
+        \State $\pi_{CP} \gets \Call{GenerateConsistencyProof}{h', h, \text{batch}}$ \Comment{Generate consistency proof}
+        \State \Call{send\_CR}{$\alpha, \beta, \sigma, \nu, IR, \ell_B, \ell_S, \pi_{CP}$}
+                 \Comment {Sign and send}
+      \Else
+        \State \Comment {Do nothing as the current node can not guarantee data availability}
+        \State \Comment {The round may get finalized though thanks to other  partition nodes}
+      \EndIf
+    \EndFunction
+
+    \Function{do\_cert\_req\_against}{$sr$}  \Comment{Voting against the proposal}
+      \State $h' \gets luc.IR.h$, $n \gets lte.n$, $e \gets lte.e$, $t \gets luc.IR.C^\mathsf{r}.t$
+      \State $h \gets \zerohash$
+      \State $IR \gets (n, e, h', h, t)$
+      \State $\ell_B \gets 0$, $\ell_S \gets 0$ \Comment{No additions when voting against}
+      \State \Call{send\_CR}{$\alpha, \beta, \sigma, \nu, IR, \ell_B, \ell_S, \bot$}  \Comment{No consistency proof needed}
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+Please refer to Algorithm~\ref{alg:proposal} for details.
+
+Note that a block can be without any requests; however, this does not necessarily imply $h' = h$, as system-initiated ``housekeeping'' actions may have changed the state.
+
+\subsection{Validation and Execution}\label{validation-state-update}
+
+\emph{Sanity checking} of Unicity Service Requests is quick and lightweight validation, with the main goal of protecting system resources by early detection of obvious garbage. All Unicity Service Requests will be fully verified later before actual execution. Thoroughness of sanity checking is a tuning parameter.
+
+\emph{Validating} Unicity Service Requests is performing their full verification, according to Unicity Platform Specification, section \titleref{sec:request-validation}, and performing partition specific additional checks. The requests must appear in the \emph{proposal} in the same order. Requests without interdependencies (i.e., affecting distinct state) can be executed in parallel. Invalid requests are not executed and not included into produced proposal.
+
+The expiration of Unicity Service Requests is checked relative to shard round number. Validation context includes also the time value $t$ obtained from previous UC and to be recorded as current round's $UC.IR.t$.
+
+Refer to Algorithm~\ref{alg:execute} for details.
+
+\begin{algorithm}[tb]
+  \caption{Validate and Execute Unicity Service Requests}\label{alg:execute}
+  \begin{algorithmic}[0]
+    \Function{sanity\_check}{$Q; t \gets lte.n$}  \Comment{Requests will be fully validated later}
+      \State \Return{ $Q.\mathsf{pk} \ne \NULL$}  \Comment{Basic validation of request structure}
+    \EndFunction
+    \State
+    \Function{validate}{$Q; n \gets lte.n, t \gets luc.C^\mathsf{r}.t$}
+      \State \Comment{Omitted, see Platform Specification, \titleref{sec:request-validation}}
+    \EndFunction
+    \State
+    \Function{process}{$reqs$}   \Comment{Should be implemented as processing queue}
+      \ForAll{$Q \in reqs$}
+        \If{$\Call{validate}{Q}$}
+          \State \Call{execute}{$N, Q$}   \Comment{Can be executed in parallel}
+          \State $log \gets log \cup Q$
+        \EndIf
+      \EndFor
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+
+\subsection{Processing an Unicity Certificate and Finalizing a Round}\label{round-finalization}
+
+\textbf{Summary:} On receiving a UC, round is finalized, and a new round is started.
+
+More specifically,
+\begin{enumerate}
+  \item UC is verified cryptographically according to the Framework Specification. Partition and shard identifiers are checked.
+  \item The time-stamp in UC is checked for sanity: it must not ``jump around'' and it must reasonably match the local time if it can be reliably determined. UC with a suspicious time-stamp must be logged, and processing continues because rejecting a UC may end with a deadlock of the shard.
+  \item UC consistency is checked:
+  \item UC is checked for equivocation, that is, for arbitrary $uc$ and $uc'$, the following must hold:
+        \begin{align*}
+        uc.IR.n = uc'.IR.n  \Rightarrow &\; uc.IR = uc'.IR \\
+        uc.IR.h' = uc'.IR.h' \Rightarrow &\; uc.IR.h = uc'.IR.h\\
+                            &\lor uc.IR.h' = uc.IR.h \lor uc'.IR.h' = uc'.IR.h\\
+        uc.IR.h = uc'.IR.h \Rightarrow &\; uc.IR.h' = uc'.IR.h'  \\
+                            &\lor uc.IR.h' = uc.IR.h \lor uc'.IR.h' = uc'.IR.h\\
+        uc.IR.n = uc'.IR.n+1 \Rightarrow &\; uc.IR.h'  = uc'.IR.h\\
+        uc.IR.n < uc'.IR.n \Rightarrow &\; uc.C^\mathsf{r}.n < uc'.C^\mathsf{r}.n
+        \end{align*}
+        On failing any of these checks, an equivocation proof must be logged with all necessary evidence.
+  \item UC round number and epoch number can not decrement.
+  \item On unexpected case where there is no pending round certification request, recovery is initiated, unless the state is already up-to-date with the UC.
+  \item Alternatively, if UC certifies the pending round certification request then round is finalized.
+  \item Alternatively, if UC certifies the round whose pending proposal tried to extend (`repeat UC') then state is rolled back to the previous state.
+  \item Alternatively, recovery is initiated, after rollback. Note that recovery may end up with newer last known UC than the one being processed.
+  \item Finally, on valid UC (validation reached the 3 alternatives above), a new round is started.
+\end{enumerate}
+
+Please refer to Algorithm~\ref{alg:ver-uc} for details. Round Finalization is presented in Algorithm~\ref{alg:finalize}.
+
+
+\begin{algorithm}[tb]
+  \caption{Processing a received Unicity Certificate}\label{alg:ver-uc}
+  \begin{algorithmic}[0]
+    \Message[CReS]{$\alpha, \beta, \sigma, te; UC$}
+      \State ensure(\Call{VerifyUnicityCert}{$uc, \mathcal{T}$})
+      \State ensure($H(te) = UC.h_t$)
+      \If{ $\Call{got\_new\_uc}{UC}$ }
+        \State $\Call{start\_new\_round}{UC, te}$
+      \EndIf
+    \EndMessage
+
+    \Function{got\_new\_uc}{$uc$}
+      \State ensure($uc.IR \ne luc.IR$)         \Comment{Ignore UC certifying the same}
+      \State ensure($uc.C^\mathsf{r}.\alpha = \alpha$)
+      \State ensure($uc.C^\mathsf{uni}.\beta = \beta$)
+      \If{$\lnot$\Call{CheckSanity}{$uc.C^r.t, uc.C^r.n$, GetUTCDateTime()}}
+          \State \Call{Log}{uc}  \Comment{Rejecting a UC with strange time would break the shard}
+      \EndIf
+      \State ensure(\Call{non\_equivocating\_ucs}{$uc, luc$})
+      \State ensure($uc.IR.n > luc.IR.n$)  \Comment{Check late to catch equivocation}
+      \If{$pr = \NULL$}  \Comment{No pending Certification Request}
+        \If{$uc.IR.h \ne \Call{StateRoot}{N}$}
+          \State \Call{recovery}{$uc$}
+        \EndIf
+      \Else
+        \If{$uc.IR.h = pr.h \land uc.IR.h' = pr.h'$}
+          \State \Call{finalize\_round}{$pr, uc$}
+        \ElsIf{$uc.IR.h = pr.h'$}
+          \State \Call{Revert}{$N, \mathtt{cp}$}
+        \Else
+          \State \Call{Revert}{$N, \mathtt{cp}$}
+          \State \Call{recovery}{$uc$}
+        \EndIf
+      \EndIf
+      \State \Return $1$
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+
+\begin{algorithm}
+    \caption{Checking two UC-s for equivocation}\label{alg:malicious-uc}
+    \begin{algorithmic}[0]
+    \Function{non\_equivocating\_ucs}{$uc, uc'$}
+      \State ensure($uc.IR.n \ge uc'.IR.n$)            \Comment{To simplify, assume that uc is not older than uc'}
+      \State ensure($uc.C^\mathsf{r}.n_r > luc.C^\mathsf{r}.n_r$)
+      \If{$uc.IR.n = uc'.IR.n$}
+          \State ensure($uc.IR = uc'.IR$)              \Comment{On all failures log uc and uc' as proof}
+      \EndIf
+      \If{$uc.IR.h' = uc'.IR.h' \land uc'.IR.h' \ne uc'.IR.h$}
+          \State ensure($uc.IR.h = uc'.IR.h$)          \Comment{A hash can be extended only with one hash}
+      \EndIf
+      \If{$uc.IR.h = uc'.IR.h$}                        \Comment{\ldots and vice versa}
+          \State ensure($uc.IR.h' = uc'.IR.h'$)
+      \EndIf
+      \If{$uc.IR.n = uc'.IR.n + 1$}
+          \State ensure($uc.IR.h' = uc'.IR.h$)
+       \EndIf
+      \State \Return $1$
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[tb]
+  \caption{Finalizing a Round}\label{alg:finalize}
+  \begin{algorithmic}[0]
+    \Function{finalize\_round}{$pr, uc$}
+      \State $\mathcal{B} \gets \mathcal{B} \cup (pr.txs; uc)$ \Comment{Recording a new batch to shard's log}
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+\emph{On arbitrary timeout} / \emph{lost connection}: re-establish connection to the BFT Core.
+
+If a block can not be saved and made available during the finalization, then the round must be not closed. This ensures that a) the block can be restored based on saved proposal and UC during the recovery process, and b) the node can not extend the round with non-persisted block of inputs.
+
+
+\subsection{Processing a Block Proposal}\label{block-input}
+
+\begin{figure}[!htbp]
+	\begin{center}
+		\includegraphics[width=\textwidth]{pic/hlc-partition-follower.drawio.pdf}
+		\caption{Data Flow of a non-leader aggregation shard node}\label{fi:part-follower}
+	\end{center}
+\end{figure}
+
+\textbf{Summary:} Upon receiving a BlockProposalMsg message, create a rollback checkpoint and then validate the signature and header fields, execute Unicity Service Requests from the proposal and updating the State Tree ($N$). Executed requests go into Block Proposal. Create and send Uniqueness Certificate Request message, and retain a Pending Block Proposal data structure.
+
+This procedure is performed by the non-leader validators. There are following steps (See Fig.~\ref{fi:part-follower}):
+
+\begin{enumerate}
+  \item Block proposal is checked: valid signature, correct partition and shard identifier, valid UC, the UC must be not older than the latest known by the validator. Sender must be the leader for the round started by included UC and match the leader identifier field.
+  \item If included UC is newer than latest UC then the new UC is processed; this rolls back possible pending change in state tree. If new UC is `repeat UC' then update is reasonably fast; if recovery is necessary then likely it takes some time and there is no reason to finish the processing of current proposal.
+  \item If the state tree root is not equal to one extended by the processed proposal then processing is aborted and negative vote is delivered.
+  \item All Unicity Service Requests in proposal are validated; on encountering an invalid Unicity Service Request the processing is aborted and negative vote is delivered.
+  \item Transaction orders are executed by applying them to the state.
+  \item Pending certificate request data structure is created and persisted.
+  \item Certificate Request query (CR) is assembled and sent to the BFT Core---that is, positive vote for the proposal.
+\end{enumerate}
+
+As an optimization, it is possible to vote against a proposal by sending a negative vote, where proposed state's hash is $\zerohash$. This helps the BFT Core to determine that convergence to consensus is not possible before waiting until time-out.
+
+Please refer to Algorithm~\ref{alg:ver-proposal} for details.
+
+\begin{algorithm}[tb]
+  \caption{Processing a received Block Proposal}\label{alg:ver-proposal}
+  \begin{algorithmic}[0]
+    \Message[BlockProposalMsg]{$m = (\alpha, \beta, \sigma, \nu, uc, te, txs, sr; s)$}
+      \State ensure(\Call{valid}{$m$})    \Comment{Consistent and authorized message}
+      \State ensure(\Call{VerifyUnicityCert}{$uc, \mathsf{T}$})
+      \State ensure($uc.h_t = h(te)$)
+      \State ensure($m.\nu = te.\nu_l$)  \Comment{Signed by authorized leader}
+      \State ensure($m.\alpha = \alpha \land m.\beta = \beta \land m.\sigma = \sigma$)
+      \State ensure($m.te.n \ge lte.n$)
+      \If{$\lnot\Call{CheckRequestStatistics}{sr}$}
+        \State \Call{do\_cert\_req\_against}{$\NULL$}  \Comment{Invalid data, vote against}
+        \State \Return
+      \EndIf
+      \If{$m.te.n > lte.n$}
+         \State ensure($\Call{got\_new\_uc}{m.uc, m.te}$)  \Comment{Newer UC must be validated and processed}
+         \If{\emph{processing of new UC took too much time (recovering?)}}
+           \State \Return $\Call{start\_new\_round}{m.uc, m.te}$
+         \Else
+           \State $luc \gets m.uc, lte \gets m.te$
+         \EndIf
+      \EndIf
+      \State $h' \gets m.uc.IR.h$
+      \If{$\Call{StateRoot}{N} = h' \land \{\; \forall \; Q \in m.reqs \mid \Call{validate}{Q} \}$}
+        \State $\mathtt{cp} \gets \Call{Checkpoint}{N}$
+        \State \Call{RInit}{\null}
+        \ForAll{$Q \in m.reqs$}
+          \State \Call{execute}{$N, Q$}
+        \EndFor
+        \State \Call{RCompl}{\null}
+        \State \Call{do\_cert\_req}{$m.reqs, m.\nu, sr$}  \Comment{Vote for}
+      \Else
+        \State \Call{do\_cert\_req\_against}{$sr$}  \Comment{Vote against}
+      \EndIf
+    \EndMessage
+  \end{algorithmic}
+\end{algorithm}
+
+\subsection{Ledger Replication}\label{ledger-replication}
+
+Relatively independent subsystem for serving and replicating ledger
+data. Pseudocode of the service is provided in Algorithm~\ref{alg:replicate}.
+
+\begin{algorithm}
+  \caption{Ledger Replication}\label{alg:replicate}
+  \begin{algorithmic}[0]
+    \Message[LedgerReplication]{$\alpha, \beta, \sigma, n_1, n_2 \gets luc.IR.n; s$}
+      \State \Comment{First authorization and sanity check,}
+      \State \Return{$ \{ \mathcal{B}_{\alpha, \beta, \sigma, n} \mid n \in [n_1 \,.\,.\, n_2] \}$}
+    \EndMessage
+  \end{algorithmic}
+\end{algorithm}
+
+On receiving log, the blocks are verified using embedded UC-s and cryptographic links. See Platform Specification, function $\mathsf{VerifyBlock}()$.
+
+\section{Recovery Procedure}\label{recovery-procedure}
+
+If a validator is behind then it must use recovery procedure to sync its state with other validators, and obtain the latest UC for this shard, whose authoritative source is the BFT Core.
+
+\textbf{Summary:} Missing log entries are fetched from other validators, validated, and applied to the state tree. A pending block proposal, if certified but not finalized, is applied and finalized.
+
+\begin{figure}[!htbp]
+	\begin{center}
+		\includegraphics[width= 13cm]{pic/hlc-partition-recovery.drawio.pdf}
+		\caption{Data Flow of an out-of-sync (recovering) Shard Node}
+	\end{center}
+\end{figure}
+
+It is assumed that the state tree is already rolled back by calling $\Call{Revert}{N, \mathtt{cp}}$ if it had requests of a not finalized block applied.
+
+In more details:
+\begin{enumerate}
+  \item Input UC is validated,
+  \item Missing log entries are fetched from other (random) validator(s),
+  \item Each request block is verified: cryptographically using embedded UC, and for correct partition and shard ID;
+  \item Each request within the block is validated,
+  \item Requests are applied to the state tree,
+  \item Last known UC is updated if a block has newer one.
+  \item Then, if there is a pending block proposal which can be finalized using freshly obtained UC then it will be applied to current state and round is finalized.
+\end{enumerate}
+
+Please refer to Algorithm~\ref{alg:recovery} for full details. Recursive recovery is used to mark locations where last-resort failover/retry happens. More intelligent failover and back-off mechanism could be used, with gracious shut-down on unrecoverable situations.
+
+\begin{algorithm}
+  \caption{Shard Node Recovery}\label{alg:recovery}
+  \begin{algorithmic}[0]
+    \Function{recovery}{$uc$}    \Comment{Assuming that Revert() is done by caller}
+      \State ensure(\Call{VerifyUnicityCert}{$uc, \mathcal{T}$})
+      \ForAll {$b \in \Call{send\_LedgerReplicationRequest}{luc.IR.n+1}$}  \Comment{To a random live validator}
+        \If{$\Call{VerifyBlock}{b, \mathcal{T}}$}  \Comment{Assuming request blocks are ordered}
+          \State ensure($b.\alpha = \alpha \land b.\beta = \beta \land b.\sigma = \sigma$)
+           \State ensure($b.UC.IR.n > luc.IR.n$)
+           \State ensure($\Call{StateRoot}{N} = luc.IR.h = b.IR.h'$)
+           \State ensure($\{\; \forall \; T \in b.txs \mid \Call{validate}{T, luc.IR.n+1}\}$)
+           \State $\mathtt{cp} \gets \Call{Checkpoint}{N}$
+           \State \Call{RInit}{\null}
+          \ForAll{$T \in b.txs$}
+            \State \Call{execute}{$N, T$}
+          \EndFor
+          \State \Call{RCompl}{\null}
+          \If{$\Call{StateRoot}{N} \ne b.IR.h$}
+            \State \Call{Revert}{$N, \mathtt{cp}$}
+            \State \Return \Call{recovery}{$uc$}  \Comment{Failover}
+          \EndIf
+          \State $\mathcal{B} \gets \mathcal{B} \cup b$
+          \State $luc \gets b.UC$   \Comment{Respective $lte$ arrives with proposal}
+        \Else
+          \State \Return \Call{recovery}{$uc$}  \Comment{Failover}
+        \EndIf
+      \EndFor
+
+      \If{$uc.IR.h' = \Call{StateRoot}{N}$} \Comment{Apply pending request if possible}
+        \State $pr \gets \Call{fetch\_pr\_from\_persistent\_storage}{pr}$
+        \If{$pr \ne \NULL \land pr.h' = uc.IR.h' \land pr.h = uc.IR.h$}
+          \State ensure($uc.IR.n = pr.n$)
+          \State ensure($\{\; \forall \; T \in pr.txs \mid \Call{validate}{T, pr.n} \}$)
+          \State $\mathtt{cp} \gets \Call{Checkpoint}{N}$
+          \State \Call{RInit}{\null}
+          \ForAll{$T \in pr.txs$}
+            \State \Call{execute}{$N, T$}
+          \EndFor
+          \State \Call{RCompl}{\null}
+          \If{$\Call{StateRoot}{N} = uc.IR.h$}
+            \State \Call{finalize\_block}{$pr, uc$}
+            \State $luc \gets uc$
+          \Else
+            \State \Call{Revert}{$N, \mathtt{cp}$}
+          \EndIf
+        \EndIf
+      \EndIf
+    \EndFunction
+
+  \end{algorithmic}
+\end{algorithm}
+
+
+\section{Protocols -- Shard Validators}\label{protocols-shard-nodes}
+
+\subsection{Protocol TransactionMsg -- Unicity Service Request Delivery}\label{protocol-p0-transaction-order}
+
+Users deliver their Unicity Service Requests to one or more validators (to account for byzantine validators censoring or re-ordering requests).
+
+\textbf{Message}: $\langle \texttt{TransactionMsg} \mid Q\rangle$
+
+
+\subsection{Protocol CR -- Round Certification Request}\label{protocol-p1-block-certification}
+
+This section extends Sec.~\ref{certification-request}, \nameref{certification-request}).
+
+If $h'$ is already `extended' with UC then the latest UC is returned
+immediately via CReS message; otherwise validation and UC generation continues, UC is
+returned via CReS when available.
+
+If $h'$ is unknown to BFT Core then the latest UC is returned
+immediately via CReS.
+
+Returned message has a technical data record, which may trigger a view change: next consensus attempt with incremented round number and different leader.
+An aggregation layer node can have only one pending CR per round number; subsequent messages are ignored. A message with higher round number is always preferred.
+
+This message ``subscribes'' the validator to receive UC messages for a certain period, either a fixed number (e.g. $2$ rounds), or until the shard have successfully proposed a following round, that is, there is another set of BFT Core validators which have received a quorum of CR messages and therefore ``taken over'' the subscription.
+
+\textbf{Message}: $\langle \texttt{CR} \mid \alpha, \beta, \sigma, \nu, IR, sr; s \rangle$
+
+If an aggregation layer node has reasons to suspect that BFT Core have generated a new UC, then he must try to fetch it by trying again. $sr$ stands for \nameref{statistical-record}; a technical data structure sent from aggregation layer nodes to the BFT Core.
+
+\subsection{Protocol RoundCertificationResponse (CReS)}
+
+This section extends Sec.~\ref{certification-response}, \nameref{certification-response}).
+
+CReS is asynchronous response (in the sense of data flow) to Certification Request (CR); there may be many CReS responses to one client request. $\mathsf{TE}$ stands for \nameref{technical-record}, sent from the BFT Core to aggregation layer nodes. Valid if $UC.h_t = h(\mathsf{TE})$.
+
+Optional field RootTrustBaseEntry indicates, that UTB $\mathcal{T}$ have changed, e.g., have grown by the provided entry.
+
+\textbf{Message}: $\langle \texttt{CReS} \mid \alpha, \beta, \sigma, UC, \mathsf{TE}, [\textsf{RootTrustBaseEntry}]\rangle$
+
+
+\subsection{Protocol Subscription -- subscribing to CReS messages}
+
+This message ``subscribes'' the validator to future CReS messages, without presenting a Certification Request in the form of CR message. Synchronous response is the latest UC for requestor.
+
+Subscription ends when the shard have successfully proposed a following round, that is, there is another set of BFT Core validators which have received a quorum of CR messages and therefore serving a subscription.
+% slower validators get UC with the next proposal
+
+\textbf{Query}: $\langle \texttt{SubscriptionMsg} \mid \alpha, \beta, \sigma, \nu; s \rangle$
+
+\textbf{Response}: $\langle \texttt{CReS} \rangle$
+
+
+\subsection{Protocol InputForwardMsg -- Input Forwarding}\label{protocol-pc1-i-input-forwarding}
+
+Forward a set of Unicity Service Requests.
+
+\textbf{Message}: $\langle \texttt{InputForwardMsg} \mid \{Q\}\rangle$
+
+
+\subsection{Protocol BlockProposalMsg -- Block Proposal}\label{protocol-pc1-o-block-proposal}
+
+Leader broadcasts its input block proposal to other partition nodes.
+
+\textbf{Message}: $\langle \texttt{BlockProposalMsg} \mid \alpha, \beta, \sigma, \nu_l, uc, te, txs, sr; s \rangle$ \\
+where $txs = \{T\}$
+
+
+\subsection{Protocol LedgerReplication -- Ledger Replication}\label{protocol-pc1-l-ledger-replication}
+
+Let's assume that we have a separate layer of components implementing the
+ledger storage. Entire ledger can be verified based on latest finalized and available
+round and every block of inputs can be verified based on the Unicity Trust Base.
+
+This protocol is provided by every functional aggregation layer node and dedicated \textit{archive nodes}; arbitrary parties can join the latter.
+
+\textbf{Query}: $\langle \texttt{LedgerReplication} \mid (\alpha, \beta, \sigma n_1, [n_2] \rangle$
+
+\textbf{Response}: $(\{B\})$
+
+If 2nd number is missing then return everything till head. It is possible, that a reply misses some newer rounds, either because the queried node is behind or it prefers to return input blocks by smaller chunks.
+
+
+\subsection{Protocol GetTrustBase -- Unicity Trust Base Distribution}\label{protocol-get-trust-base}
+
+The Unicity Trust Base is a chain of records, one per epoch, containing the BFT Core validator set configuration and forming a verifiable root of trust. This protocol allows nodes to obtain Trust Base entries for a specified epoch range.
+
+Each Trust Base entry corresponds to one epoch and contains validator identities, stakes, quorum requirements, and cryptographic linkage to the previous epoch's entry through hashing and signatures. The chain structure enables verification: given an authentic base entry, subsequent entries can be verified by checking signatures and hash chains.
+
+Nodes request Trust Base entries by specifying an epoch range. The response includes all entries from the starting epoch up to (and including) the ending epoch, or up to the latest available entry if no ending epoch is specified.
+
+\textbf{Query}: $\langle \texttt{GetTrustBase} \mid \alpha, e_1, [e_2] \rangle$
+
+where:
+\begin{itemize}
+	\item $\alpha$ -- network identifier of type $\mathbb{A}$
+	\item $e_1$ -- starting epoch number of type $\uint{64}$
+	\item $[e_2]$ -- optional ending epoch number of type $\uint{64}$
+\end{itemize}
+
+\textbf{Response}: $\langle \texttt{TrustBaseResponse} \mid \mathcal{T} \rangle$
+
+where $\mathcal{T} = \langle T_{e_1}, T_{e_1+1}, \ldots, T_{e_2} \rangle$ is a sequence of Trust Base entries.
+
+Each Trust Base entry $T_e$ (for epoch $e$) is a tuple:
+\[
+T_e = (\alpha, e, n_e, \{\nu, b_\nu\}_e, k_e, r, h_{\mathsf{cr}}, h_{e-1}, s_{e-1})
+\]
+as defined in Table~\ref{ta:t-drc}.
+
+If the ending epoch $e_2$ is omitted, the response includes all entries from $e_1$ up to the latest committed epoch. If the requesting node specifies an epoch range beyond what is currently available, the response includes entries up to the latest committed epoch only.
+
+\textbf{Verification}: Upon receiving Trust Base entries, the requester must verify the chain:
+\begin{enumerate}
+	\item Verify that the first entry $T_{e_1}$ connects to an already-authenticated Trust Base entry (either the genesis entry or a previously verified entry)
+	\item For each subsequent entry $T_{e_{i+1}}$, verify:
+	\begin{enumerate}
+		\item $h_{e_i} = H(T_{e_i})$ (hash chain linkage)
+		\item Signature $s_{e_i}$ is valid over $T_{e_{i+1}}$ using validator set from epoch $e_i$
+		\item Epoch numbers increment correctly: $T_{e_{i+1}}.e = T_{e_i}.e + 1$
+	\end{enumerate}
+\end{enumerate}
+
+This protocol is provided by all active BFT Core validators. Validators maintain the complete Trust Base chain from genesis and serve requests for any epoch range. The protocol supports both initial synchronization (requesting from genesis) and incremental updates (requesting only recent epochs).
+
+
+\chapter{BFT Core State Machine}\label{bft-core}
+
+\section{Summary}\label{summary}
+
+Leader-based BFT consensus based SMR. Roughly, BFT Core validators:
+
+\begin{enumerate}
+  \item
+    Validate incoming Certification Requests: signature correctness, they must extend shard's previous UC, and partition specific checks must pass.
+  \item
+    Forward shard's requests to the BFT Core leader
+  \item
+    BFT Core leader verifies shard's requests (incl.~majority),
+    produces UC tree, signs.
+  \item
+    BFT Core leader sends requests (all Certification Requests including
+    signatures) and trees and signature to BFT Core validators.
+  \item
+    Followers verify shard's requests (incl.~majority), create trees,
+    sign.
+  \item
+    Followers distribute their signatures to other BFT Core validators
+  \item
+    On reaching $k-f$ (there are $k$ validators in the BFT Core) unique
+    signatures all BFT Core validators send \texttt{ack} to others
+  \item
+    On reaching $k-f$ \texttt{ack}-s all BFT Core validators commit and
+    return responses to the aggregation layer nodes.
+\end{enumerate}
+
+
+
+\section{Timing}
+
+BFT Core serves many partitions and shards, each implemented as a logical group of nodes. Operation cycles work like this:
+
+\begin{enumerate}
+  \item Shards operate in parallel:
+  \begin{itemize}
+    \item Shard validators send RoundCertificationRequest requests.
+    \item Once there is a quorum of requests for a shard, the BFT Core updates an entry in the array of input records.
+  \end{itemize}
+  \item \emph{Eventually}, BFT Core starts Unicity Certificate generation. Fills data structure. Computes root. Signs. In distributed case this all takes some time.
+  \item Individual tree certificates and UCs are generated for participating partitions. Responses are returned to individual validators.
+\end{enumerate}
+
+`Eventually' above is a compromise: 1) there is no sense to start a new round too fast, it is necessary to collect some input requests to certify; 2) input requests with quorum should be served as fast as possible to improve latency; 3) no need for further wait if all inputs are present; 4) some inputs might struggle with quorum; no need to wait for the long tail; 5) in order to generate `repeat UCs' a round must be restarted after \texttt{t2} time units even when there are no requests.
+
+Configuration parameters are: target round rate $t_b$ and shard wait \texttt{t1}.\\
+System parameters are: average root Certificate generation time  $t_r$;
+average shard round processing time from receiving UC to sending Certification Request, including \texttt{t1} wait: $t_p$; with standard deviation $\sigma_p$. There are $k$ shards.
+
+Let $m$ -- how many BFT Core rounds fit into one shard round; $m \approx (t_r + t_p) / t_b$.
+
+Let's denote cumulative (normal) distribution of RoundCertificationRequest query messages with $\Phi_\sigma(x)$. Assume $m=1$, let's find a minimum of $(2-\Phi_\sigma(t_b - (t_r+t_p))(t_b)$ by adjusting $t_b$ and \texttt{t1}.
+
+Practical rule for optimizing the average latency (Fig.~\ref{fi:root-timing}):\\
+Start BFT Core round when completed quorum ratio is $t_b / \Delta \approx t_b / m(t_b - (t_r+t_p))$. Note that $t_b$ measures time from the moment when UC generation starts, thus it is circular and a rolling average must be used Median can be found by ignoring overflow from previous round and then waiting for completion of half of the quorums. Time from round start to next median is roughly $t_r+t_p$. Adjust \texttt{t1} if $t_b$ needs to be changed.
+
+Even more practically:
+\begin{enumerate}
+  \item Maintain a rolling average of $t_b$ and $\Delta$
+  \item Do not count the pending overflow from previous round
+  \item After counting half of expected quorums ($k/2$) start timer for measuring $\Delta$ and re-start timer for measuring $t_b$
+  \item After counting $k t_b / \Delta$ unique quorums stop timer $\Delta$ and start UC generation.
+\end{enumerate}
+
+
+\begin{figure}[!htbp]
+	\begin{center}
+		\includegraphics[width=\textwidth]{pic/root-timing.drawio.pdf}
+		\caption{Optimal average latency is achieved when $\frac{A_1}{A_2} \approx \frac{t_b}{\Delta}$, where $A$ represents the respective area (number of messages). $t_b - \Delta \approx t_r+t_p$.}\label{fi:root-timing}
+	\end{center}
+\end{figure}
+
+If the distribution gets too large it makes sense to increase $m$, that is, have more than one core round per one average shard's round.
+
+
+\section{State}\label{root-state}
+
+Please refer to Platform Configuration, State of the BFT Core, and Algorithm~\ref{alg:globals}.
+
+Configuration is provided by the Governance and other management processes. State must be persisted and synchronized (recoverable from other BFT Core validators).
+
+Time-outs and timers:
+\begin{itemize}
+\item
+  \texttt{t2} -- BFT Core waits for \texttt{t2} time units before re-issuing a UC for a shard. This triggers a new round retrying certification of a block of inputs, with another leader. There is one timer instance per shard, referred as $\texttt{t2}_{\beta, \sigma}$ for the shard $\sigma$ of the partition $\beta$.
+\item
+  \texttt{t3} -- Triggers Unicity Tree re-calculation and UC response generation (monolithic BFT Core only);
+  Target Round Rate ($t_b$) -- Distributed BFT Core specific parameter
+\end{itemize}
+
+Communication layer:
+\begin{itemize}
+  \item Validator's secret key used to sign its messages
+  \item related public key; known to other BFT Core validators via the Governance Records, and to other parties via the $\mathcal{T}$
+  \item public keys of other BFT Core validators (used by the underlying communication layer)
+  \item public keys of Shard Validators (usage captured by the opaque function $\Call{valid}{\null}$)
+  \item communication addresses of other BFT Core validators
+  \item $conn[][]$ -- Connection contexts to return responses to validators which sent a RoundCertificationRequest request
+\end{itemize}
+
+\section{Analysis}
+
+\subsection{Safety}
+BFT Core enforces that each round is `extended' by one round only. This excludes conflicting rounds (forks). BFT Core must not generate ``equivocating'' UCs (see Section \ref{round-finalization} and Algorithm~\ref{alg:malicious-uc}).
+
+\subsection{Liveness}
+Usual properties of a partially synchronous communication model apply.
+
+\subsection{Data Availability}
+If a validator issues a RoundCertificationRequest call then it must not lose the block proposal (request data) until the block is finalized and committed to persistent storage.
+
+The mechanism of `repeat UCs' presents a challenge: one block may receive multiple waves of extending attempts, initiated by subsequent `repeat UCs'. There are following options:
+\begin{enumerate}
+  \item Latest UC use is enforced strictly. If the BFT Core have issued a repeat UC, then all RoundCertificationRequest requests must be based on round number suggested by this response. Arriving and pending RoundCertificationRequest requests, referring to different round numbers, are dropped.
+  \item All RoundCertificationRequest requests extending the current state are considered; if there is a pending request from a validator then it is replaced by later request from this validator, with larger round number.
+  \item All RoundCertificationRequest requests extending the current state are considered, no matter the proposed round number, and included into pending request buffer; if one proposed new state achieves majority then it wins; this state does not have to be the latest one.
+\end{enumerate}
+
+On second and third option it is possible, that an aggregation layer node have issued multiple RoundCertificationRequest requests and eventually an older one gets certified. Thus, validators must retain all pending block proposals until one is committed.
+
+These options provide somewhat better liveness of the protocol; in reality, if it is the case we can safely assume that time-out \texttt{t2} has too low value relative to system latencies. The rest of this specification assumes option 1.
+
+Active aggregation layer nodes must retain their state until successfully---demonstrated by the ability to produce subsequent blocks---replaced by another set of validators after some epoch change. The long-term availability is provided by interested parties like RPC nodes, archive nodes, client middleware; these components must be able to replicate blocks with reasonable effort from the active validators.
+
+\section{Monolithic Implementation}
+
+\index{BFT Core!monolithic}
+This section (Algorithms \ref{alg:globals}, \ref{alg:P1-req}, \ref{alg:uc-gen}) defines a monolithic, non-distributed BFT Core implementation. It serves distributed shards.
+
+For a deployable implementation, please refer to Distributed BFT Core (Section~\ref{sec:distributed-bft-core}); it provides the same functionality to shards without being a single point of failure, and can provide necessary level of decentralization.
+
+\begin{algorithm}
+  \caption{Global Parameters and Variables}\label{alg:globals}
+  \begin{algorithmic}[0]
+    \State \emph{Configuration}:
+    \State $\alpha$: Network Instance identifier
+    \State $\mathcal{T}$: Unicity Trust Base
+    \State $\mathcal{C}[]$: Partition Identifiers
+    \State $\mathcal{CD}[]$: Partition Description Records
+    \State \emph{State}:
+    \State $n \gets 0$ : BFT Core's Round number
+    \State $e \gets 0$ : BFT Core's Epoch number
+    \State $r_- \gets \NULL$: Previous round's Unicity Tree root hash
+    \State $\mathcal{SI}[][]$ - shard info of every $\sigma\in\mathcal{SH}_\beta$ of every $\beta\in\mathcal{C}$
+    \State \emph{Variables}:
+    \State $\forall \ \beta\in\mathcal{C}, \sigma\in\mathcal{SH}_\beta \colon \mathcal{IRT}_\beta[\sigma] \gets (\zerohash)$
+    \State $\chi_\beta$: the shard tree for every $\beta\in\mathcal{C}$  (Sec.~\ref{se:shard-tree})
+    \State $\upsilon$: unicity tree (Sec.~\ref{se:unicity-tree-certificate})
+    \State $changes[][] \gets \bot$ Changes to IR, applied at the end of round, indexed by partition ID and shard number
+    \State $req[][][] \gets \bot$: RoundCertificationRequest requests, indexed by partition ID, shard number and validator ID
+    \State $conn[][][] \gets \bot$: Shard validator connections
+    \State \emph{Timers}:
+    \State $\Call{reset\_timer}{\texttt{t3}}$
+    \State $\forall \ \beta\in\mathcal{C}, \ \forall \ \sigma\in\mathcal{SH}_\beta \colon  \Call{reset\_timer}{\texttt{t2}_{\beta, \sigma}}$
+  \end{algorithmic}
+\end{algorithm}
+
+
+\subsection{Certification Request Processing}
+
+
+Certification Request (CR) processing starts with sanity checking of the message. Then, checking if a newer UC is available; if yes then it is returned immediately. This would initiate shard recovery if necessary, and start a new shard round.
+
+If a request tries to extend an unknown state, then the latest UC is returned immediately.
+
+Next, the request is retained in request buffer if it is the first valid message; if the message is a repeating message then processing stops.
+
+Equal requests (comparing entire IR to make sure that other fields also match) from the same shard are counted. If a request achieves simple majority then respective $IR$ gets added to the changes array waiting for certification, at position indexed by shard ID. If it is clear, that a shard can not converge to a majority agreement, then the slot in changes array is filled with $IR$ from the certified IR array, with incremented round number and previous certified hash set the same as the certified hash. This produces a `repeat UC' which, once delivered downstream, initiates a new shard consensus attempt.
+
+See Algorithm~\ref{alg:P1-req}.
+
+\begin{algorithm}
+  \caption{CR Message Handling.}\label{alg:P1-req}
+  \begin{algorithmic}[0]
+    \Message[CR]{$m=(\alpha, \beta, \sigma, \nu, IR, \ell_B, \ell_S; s; [\pi_{CP}]); context$}
+      \State ensure(\Call{valid}{$m$})
+      \State ensure($m.\alpha = \alpha$)                           \Comment{Right network id}
+      \State ensure($\beta \in \mathcal{C}$)                       \Comment{Valid part. id}
+      \State ensure($\sigma \in \mathcal{CD}[\beta].\mathcal{SH}$) \Comment{Valid shard id}
+      \State ensure($\nu \in \mathcal{SI}[\beta, \sigma].\mathcal{V}$) \Comment{Authorized validator}
+      \State $conn[\beta][\sigma][\nu] \gets context$         \Comment{Network connection for returning messages}
+      \If{$IR.n \ne \mathcal{SI}[\beta, \sigma].n+1$            \Comment{Round is behind/ahead}
+        \State $\;\;\lor\; IR.e \ne \mathcal{SI}[\beta, \sigma].e$  \Comment{Epoch can be incremented by RP only}
+        \State $\;\;\lor\; IR.h' \ne \mathcal{SI}[\beta, \sigma].h$ \Comment{Extending of unknown state}
+        \State $\;\;\lor\; \lnot\mathcal{CD}[\beta].\gamma_{CP}(IR.h', IR.h, \ell_B, \pi_{CP})$  \Comment{Consistency proof verification}
+        \State $\;\;\lor\; IR.t \ne \mathcal{SI}[\beta, \sigma].UC_-.C^\mathsf{r}.t$}   \Comment{Time not set as expected}
+        \State \Call{send\_CReS}{$context; \beta, \sigma, \mathcal{SI}[\beta, \sigma].UC_-, \Call{get\_te}{\mathcal{SI}[\beta, \sigma]}$}
+        \State \Return
+      \EndIf
+      \If{$req[\beta, \sigma][\nu]$}   \Comment{Reject duplicate request}
+        \State \Return
+      \EndIf
+      \State ensure(\Call{tx-system-specific-checks}{$\mathcal{CD}[\beta], IR)$})
+      \State $req[\beta, \sigma][\nu] \gets IR$  \Comment {Add the new message}
+      \State $c \gets \max_{r \in req[\beta][\sigma]} \sum_{p \in  req[\beta][\sigma]}[r=p \land r.h \ne \zerohash]$  \Comment{Number of the max. matching votes,}
+      \State    \Comment{Ignoring $\zerohash$, the ``negative vote''}
+      \State $k \gets  |\mathcal{SI}[\beta, \sigma].\mathcal{V}|$ \Comment{Number of validators}
+      \If{$c > k / 2 \land \lnot changes[\beta, \sigma]$}            \Comment{Consensus}
+        \State $changes[\beta, \sigma] \gets \Call{certify}{IR, \mathcal{SI}[\beta, \sigma]}$
+      \ElsIf{$\len{req[\beta, \sigma]} - c \ge k / 2$} \Comment{Consensus not possible}
+        \State     \Comment{If max.match + |yet missing votes| < threshold }
+        \State $changes[\beta, \sigma] \gets \Call{repeat\_cert}{\mathcal{SI}[\beta, \sigma]}$    \Comment{Produce `repeat UC'}
+      \EndIf
+    \EndMessage
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+  \caption{Certification helper functions}\label{alg:cert-helpers}
+  \begin{algorithmic}[0]
+    \Function{certify}{$ir:\mathbb{IR}, si:\mathbb{SI}$}
+      \State $si \gets \Call{update\_shard\_info}{ir, si}$\Comment{Update caller's Shard Information record $si$}
+      \State \Comment{According to Platform Specification, functional description of BFT Core}
+      \State $te: \mathbb{TE} \gets \Call{get\_te}{si}$
+      \State \Return $(ir, te)$
+    \EndFunction
+
+    \Function{repeat\_cert}{$si:\mathbb{SI}$}
+      \State $si.n \gets si.n+1$  \Comment{Changing the parent's data structure as well}
+      \State $si.\nu_l \gets \Call{leaderfunc}{si.UC_-, si.\mathcal{V}}$
+      \State $rir: \mathbb{IR} \gets (si.UC_-.IR)$  \Comment{Repeat the previous UC's IR}
+      \State $te: \mathbb{TE} \gets \Call{get\_te}{si}$
+      \State \Return $(rir, te)$
+    \EndFunction
+
+    \Function{get\_te}{$si:\mathbb{SI}$}
+      \State \Return $(si.n+1, si.e, si.\nu_l, h(si.\mathsf{SR}_-, si.\mathsf{SR}), h(si.\mathsf{VF}_-, si.\mathsf{VF}))$
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+  \caption{``SubscriptionMsg'' subscribes to UC feed}\label{alg:ping}
+  \begin{algorithmic}[0]
+    \Message[SubscriptionMsg]{$(\alpha, \beta, \sigma, \nu; s); context$}
+      \State ensure(\Call{valid}{$(\alpha, \beta, \sigma, \nu; s)$})
+      \State $conn[\beta, \sigma][\nu] \gets context$         \Comment{Network connection for returning subsequent messages}
+      \State \Return $\Call{get\_uc}{\beta, \sigma}$
+    \EndMessage
+  \end{algorithmic}
+\end{algorithm}
+
+% \begin{algorithm}
+%   \caption{``GetUCMsg'' returns the latest UC where $UC.IR.h \ne UC.IR.h'$}\label{alg:ping}
+%   \begin{algorithmic}[0]
+%     \Message[GetUCMsg]{$(\beta, \sigma; s); context$}
+%       \State ensure(\Call{valid}{$(\beta, \sigma; s)$})
+%       \State \Return $UC_\beta[\sigma]$
+%     \EndMessage
+%   \end{algorithmic}
+% \end{algorithm}
+
+\subsection{Unicity Certificate Generation}
+
+Periodically, do the following:
+\begin{enumerate}
+  \item In case a shard has not shown progress for a period \texttt{t2} since the last UC was delivered then respective slot is  populated with the field content of previous certified IR array, with incremented round number. This produces a `repeat UC'.
+
+  \item The pending changes in $changes$ array are applied to $IR$. If there are no new changes then the previous value is used.
+
+  \item Based on the array of Shard Input Records, build the Shard Trees.
+
+  \item Based on the roots of Shard Trees, build the Unicity Tree. Extract root hash value. Obtain wall clock time. Create the Unicity Certificate.
+
+  \item For every record in IR changes array, respond to the shard based on request context from the request buffer. Then, clean up $req$ buffer, and reset respective \texttt{t2} timer.
+
+  \item Finally, reset $changes$, update the previous root hash used for linking\footnote{Note that linear hash-linking using $r_-$  illustrates the idea that some sort of cryptographic linking is present; actual mechanism depends on the BFT Core implementation and used linking scheme.}, increment BFT Core round number and reset the timer $\mathtt{t3}$ which triggers the Unicity Certificate Generation (Algorithm~\ref{alg:uc-gen}).
+\end{enumerate}
+
+\begin{algorithm}
+  \caption{Unicity Certificate Generation}\label{alg:uc-gen}
+  \begin{algorithmic}[0]
+    \Event{t3}  \Comment{Simplified, see section ``Timing''}
+      \ForAll{$\beta \in \mathcal{C}$}   \Comment{Process partition timeouts}
+        \ForAll{$\sigma \in \mathcal{SH}_\beta$}
+          \If{$\lnot changes[\beta,\sigma] \land \Call{expired\_timer}{\texttt{t2}_{\beta, \sigma}}$}
+            \State $changes[\beta,\sigma] \gets \Call{repeat\_cert}{\mathcal{SI}[\beta, \sigma]}$    \Comment{Produce `repeat UC'}
+          \EndIf
+        \EndFor
+      \EndFor
+      \ForAll{$(\beta, \sigma, ir, te) \in changes$}   \Comment{Apply changes}
+         \State $\mathcal{IRT}_\beta[\sigma] \gets (ir, h(te))$
+      \EndFor
+      \ForAll{$\beta \in \mathcal{C}$}
+        \State $\chi_\beta\gets\mathsf{CreateShardTree}(\mathcal{SH}_\beta,\mathcal{IRT}_\beta)$        \Comment{Sec.~\ref{se:create-shard-tree}}
+        \State $\mathcal{IH}[\beta]\gets \chi_\beta(\emptystr)$
+      \EndFor
+      \State $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{CD}, \mathcal{IH})$ \Comment{Sec.~\ref{se:create-unicity-tree}}
+      \State $t \gets \Call{GetUTCDateTime}$
+      \State $C^\mathsf{r} \gets \Call{CreateUnicitySeal}{\alpha, n, e, t, r_-, r; \mathsf{sk}_r}$
+      \ForAll{$(\beta, \sigma, ir, te) \in changes$}
+        \State $req[\beta][\sigma] \gets []$
+        \State $C^\mathsf{shard} \gets \Call{CreateShardTreeCert}{\sigma, \chi_\beta}$
+        \State $C^\mathsf{uni} \gets \Call{CreateUnicityTreeCert}{\beta, \mathcal{C}, \mathcal{CD}, \mathcal{IH}}$
+        \State $uc \gets (\mathcal{IRT}_\beta[\sigma].IR, \mathcal{IRT}_\beta[\sigma].h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
+        \State $\mathcal{SI}[\beta, \sigma].UC_- \gets uc$
+        \ForAll{$connection \in conn[\beta][\sigma]$} \Comment{To all validators of the shard, in parallel}
+          \State \Call{send\_CReS}{$connection; \alpha, \beta, \sigma, uc, te$} \Comment{Subscriptions expire -- see protocol desc.}
+        \EndFor
+        \State $\Call{reset\_timer}{\texttt{t2}_{\beta, \sigma}}$
+      \EndFor
+      \State $changes \gets \{\}$
+      \State $r_- \gets r$
+      \State $n \gets n+1$
+      \State $\Call{reset\_timer}{\texttt{t3}}$
+      \State \Comment{Note that $IRT$ retains its current value for the next round}
+    \EndEvent
+  \end{algorithmic}
+\end{algorithm}
+
+
+\section{Distributed Implementation}\label{sec:distributed-bft-core}
+
+\index{BFT Core!distributed}
+Distributed BFT Core is bisimilar to monolithic BFT Core in the sense that they provide the same service implementing the same business logic. Distributed BFT Core is Byzantine fault tolerant. It uses the SMR (State Machine Replication) concept.
+
+\begin{figure}[htb]
+	\begin{center}
+		\begin{sequencediagram}
+			\newthread{P1}{$\nu_1$}
+			\newthread{P2}{$\nu_2$}
+			\newinst[1]{R1}{$\nu^r_1$}
+			\newinst{R2}{$\nu^r_l$}
+			\begin{messcall}{P1}{\qquad CR}{R1}
+        \begin{messcall}{P2}{CR}{R1}
+          \begin{messcall}{R1}{\qquad IRChangeReq}{R2}
+          \begin{sdblock}{atomic broadcast}{}
+            \prelevel
+            \mess{R2}{}{R1}
+          \end{sdblock}
+          \begin{call}{R1}{\!\!\!\!validation}{R1}{}
+          \end{call}
+          \prelevel\prelevel
+          \begin{call}{R2}{\!\!\!\!validation}{R2}{}
+          \end{call}
+        \end{messcall}
+        \prelevel
+        \begin{messcall}{R1}{\qquad CReS}{P1}
+        \end{messcall}
+        \prelevel
+        \mess{R1}{CReS}{P2}
+      \end{messcall}
+      \prelevel
+    \end{messcall}
+		\end{sequencediagram}
+		\caption{Message flow (simplified)}\label{fi:rootflow}
+	\end{center}
+\end{figure}
+
+The messaging between a shard and the BFT Core is illustrated by Figure~\ref{fi:rootflow}, where a shard with two validators $\nu_1$ and $\nu_2$ requests a UC. BFT Core is also depicted with two validators, the next leader after reaching a quorum of shard requests is $\nu^r_l$.
+
+\subsection{Summary of Execution}
+
+The summary follows the processing flow of a Certification Request by a BFT Core validator. The flow is illustrated in Fig.~\ref{fig:drc}; loosely moving counter-clockwise.
+
+\begin{figure}[!htbp]
+	\begin{center}
+		\includegraphics[width=.8\textwidth]{pic/hlc-droot.drawio.pdf}
+		\caption{Data-flow of a Distributed BFT Core Validator}\label{fig:drc}
+	\end{center}
+\end{figure}
+
+\subsubsection{Peer Node Selection}
+
+In order to use the distributed BFT Core, aggregation layer nodes must choose an appropriate subset of BFT Core validators to communicate with. The set must be shared by all aggregation shard nodes during one shard round; on receiving a ``repeat UC'', the validators must communicate with a different subset. The number of validators in this set is a tuning parameter: balances between availability and overhead. 2-3 validators is a good starting point. This number (in the sense of delivering messages in parallel) does not have security implications, as produced quorum sets retain aggregation layer nodes' signatures which can be verified independently. UC responses must be checked for equivocation.
+
+If an aggregation layer node haven't received a UC-s from chosen BFT Core validators within $2 \times \texttt{t2}$ then it sends SubscriptionMsg requests to random other BFT Core validators. This ensures eventual synchronization if the firstly chosen validators happen to be faulty.
+
+\subsubsection{CR Validation}
+
+No difference from Monolithic Implementation, please refer to Algorithm~\ref{alg:P1-req} for details. If available, or on invalid request, UC is returned immediately by the same BFT Core validator.
+
+\subsubsection{Shard Quorum Check}
+
+Shard Quorum Check is the same as on Monolithic case (Alg.~\ref{alg:P1-req}). If a quorum is achieved or considered impossible, then a message is assembled (IRChangeReq), which includes all CR messages, and forwarded to the next BFT Core leader, using the Atomic Broadcast submodule.
+
+\subsubsection{IR Change Request Validation}
+
+The request must be validated analogously to the Algorithm~\ref{alg:ver-proposal}.
+
+\subsubsection{Proposal Generation}
+
+Leader collects all unique IR change requests and assembles the block proposal, which includes changed IR-s and a justification for each IR change request.
+Next, if a particular IR has not been changed during \texttt{t2} timeout for this shard then the leader initiates ``repeat UC'' generation by including a specific record into the block proposal. There is no explicit justification, followers can validate timeouts based on their own timers.
+
+In a proposal there can be up to one change request per shard.
+
+Due to the pipe-lined finality, a proposal should not include IR change requests for slots with a valid IR change request in immediately preceding round. % should: proposal would be rejected, does not break anything.
+
+Finally, the leader signs the proposal and broadcasts it to other BFT Core validators.
+
+\subsubsection{Proposal Validation}
+
+On receiving a proposal, validator validates it. There are consensus-specific checks. Every IR change request is validated based on its kind; base rules are presented by Algorithm~\ref{alg:ver-proposal}. Summary of the cases:
+
+\begin{description}
+  \item [Quorum achieved] The justification must prove the achievement of consensus by an aggregation shard. More than half of the shard nodes must have coherent votes.
+  \item [Quorum not possible] The justification proves that there are enough conflicting votes to render the consensus impossible.
+  \item [t2 timeout] The message states, that its timer have reached the timeout; all validators can confirm the timeout based on their own clocks, allowing a little drift.
+\end{description}
+
+After validating the proposal and checking the Voting Rule, the validator signs its vote data structure and sends it to the next leader in pipeline.
+
+On encountering unexpected state hash the recovery process is initiated (see Section~\ref{root-recovery-procedure}).
+
+\subsubsection{State Signing}
+
+On assembling a Quorum Certificate (QC) with enough votes and verifying the Commit Rule the leader modifies state: for every newly certified IR element it updates its last UC array.
+
+\subsubsection{UC Generation}
+
+If a leader updates the last UC array element then it returns CReS responses to all pending aggregation shard nodes.
+
+QC is included to HotStuff message pipeline, so it is broadcast to other validators (together with the new proposal produced by this validator). On seeing new QC and knowing re-certified IRs, other validators update their last UC arrays (the state).
+
+
+\subsection{Proposal}
+
+Proposal is a signed set of IR change requests, supplemented with proofs--the necessary number of signed partition nodes' messages (\textit{justification}). There are following options:
+\begin{itemize}
+  \item Change requests with justifications.
+  \item Repeat Certification Request where consensus is considered impossible.
+  \item Repeat Certification Request on \texttt{t2} timeout of a shard.
+\end{itemize}
+
+
+\subsubsection{State Synchronization}\label{root-recovery-procedure}
+
+A BFT Core validator must have up-to-date vector of Input Records of all shards. There is no persistent blockchain. Returned Unicity Certificates, certifying IRs, are possibly persisted by the underlying layers.
+
+The state includes necessary meta-data like the round number. This is provided by including the Unicity Seal, which also authenticates the IR vector.
+
+State may include atomic broadcast module specific data, e.g. uncommitted round information.
+
+
+\subsection{Atomic Broadcast Primitive}
+
+The Atomic Broadcast primitive is instantiated using an adaptation of HotStuff consensus protocol. The adaptation is optimized towards better latency on good conditions. Therefore, a ``2-chain commit rule'' is used. Changes and tweaks wrt. the original HotStuff paper are:
+
+\begin{itemize}
+  \item ``2-chain commit rule''
+  \item Timeout Certificates for view change. This induces quadratic communication complexity on faulty leader, but enables the 2-chain rule instead of 3-chain.
+  \item QC component votes go to the next leader directly and the next leader assembles QC.
+  \item Use of aggregated signatures (instead of threshold signatures)
+\end{itemize}
+
+More formally, critical elements of the operation of a HotStuff-derived algorithm are specified by the following rules.
+
+Let $n$ denote round number, $B$ -- block of inputs, $QC$ -- Quorum Certificate, $TC$ -- Timeout Certificate.
+
+\begin{ruledef}{Voting Rule} \\
+  $B.n > $ last vote round \\
+  $B.n = B.QC.n + 1 \lor (B.n = TC.n + 1 \land B.QC.n \ge max(\text{TC.tmo\_high\_qc\_round}))$
+\end{ruledef}
+
+\begin{ruledef}{Timeout Rule} \\
+    $n \ge $ last vote round \\
+    $(n = QC.n + 1 \lor n = TC.n + 1) \land QC.n \ge $ 1-chain round
+\end{ruledef}
+
+\begin{ruledef}{Commit Rule} \\
+    It is safe to commit block $B$ if there exist a sequential 2-chain $B \leftarrow QC \leftarrow B' \leftarrow QC$ such that $B'.n = B.n + 1$.
+\end{ruledef}
+
+Please refer to the following papers for more details:
+
+\begin{enumerate}
+  \item \href{https://arxiv.org/abs/1803.05069}{HotStuff: BFT Consensus in the Lens of Blockchain}
+  \item \href{https://developers.diem.com/papers/diem-consensus-state-machine-replication-in-the-diem-blockchain/2021-08-17.pdf}{DiemBFT v4: State Machine Replication in the Diem Blockchain}
+\end{enumerate}
+
+The concepts used in this specification map to the concepts used in the HotStuff and DiemBFT papers as follows:
+
+\begin{description}
+  \item[State:] Vector of Input Records
+  \item[State Authenticator:] State is identified by the root hash of Unicity Tree.
+  \item[Block Proposal:] List of changes to Input Records, with justifications; or a proposal to switch epochs.
+  \item[Block:] There are no (explicit) blocks. The set of Input Records can be seen as the cumulative state after applying all previous (virtual) blocks. Unicity Certificates are propagated downstream to shards where they could be saved as part of shard blocks. Validator implementation is encouraged to produce an audit log with all the block proposal payloads.
+  \item[Blockchain:] There is no such thing as the BFT Core Blockchain. However, Unicity Trust Base is somewhat blockchain-like: it gets a new entry added once per BFT Core epoch, and similarly to block headers, it can be interpreted as the Root of Trust.
+\end{description}
+
+\subsubsection{Round Pipeline}
+
+Committing the payload happens across many rounds due to the pipe-lined nature of HotStuff. In consecutive rounds, the flow is like this:
+\begin{enumerate}[nosep]
+  \item vector of IR change requests (payload of the proposal message)
+  \item updated IR-s (node block-tree) and Unicity Tree root (exec\_state\_id of a vote message)
+  \item committed Unicity Tree Root (commit\_state\_id of a vote message).
+\end{enumerate}
+
+The output is commit\_state\_id from a Quorum Certificate which was formed by combining vote messages. QC is used to produce the Unicity Seal.
+
+\subsubsection{Pacemaker}
+
+Pacemaker is a module responsible for advancing rounds, thereby providing liveness. Pacemaker sees votes from other validators and processes local time-out event.
+
+Pacemaker either advances rounds on seeing a QC from the leader or on no progress, on seeing a TC. On local timeout or seeing $f+1$ timeout messages a validator broadcasts signed TimeoutMsg message. TC is built from $2f+1$ distinct TimeoutMsg messages. All messages must apply to currently known HighestQC.
+
+The BFT Core should not tick faster than configured Target Round Rate. In order to throttle the speed, there is deterministic wait performed by leaders at every round.
+
+The wait must be reasonably small to not trigger TimeoutMsg messages from other validators.
+
+
+\subsubsection{Leader Election}
+
+Initially, a round-robin selection algorithm is used. In the roadmap there is stake weighted, unpredictable leader schedule.
+
+Reputation is taken into account while producing per-epoch validator set assignments, for lowering the chance of inactive or unstable validator becoming a leader. One validator should not be the leader in two consecutive rounds.
+
+Example: Take all validators. Remove one or more (fixed number) of the previous leaders. Remove all validators who did not participate in creation of the latest QC or TC. Pick one pseudo-randomly, and deterministically across all the validators, from the remainder.
+
+
+\chapter{Dynamic System}
+
+This section describes mechanisms making Unicity a dynamic system, by re-configuring partitions, shards and the BFT Core on the fly during execution. This introduces \emph{epochs}\index{epoch} -- time periods where the configuration is stable. Configuration changes are executed at the switch of epoch. Partitions, shards and the BFT Core are not synchronized with each other, they have independent rounds and epochs.
+
+Also, the changing nature of some global data structures is discussed below.
+
+\section{Configuration Changes}
+
+Table~\ref{ta:when-epoch} provides a non-exhaustive list of configuration changes and the event synchronizing the change.
+
+\begin{table}[!htbp]
+	\begin{center}
+		\caption{Synchronizing configuration changes.}\label{ta:when-epoch}
+		\begin{tabular}{|p{0.7cm}|p{9cm}|p{2cm}|p{2.3cm}|}\hline
+			No & Change                                     & RP epoch  & Shard epoch       \\\hline\hline
+			1. & Adding, removing aggregation layer nodes          &        & \checkmark\\\hline
+			2. & Adding, removing BFT Core validators & \checkmark &       \\\hline
+			3. & Communication address change of validators &         &       \\\hline
+			4. & Splitting (sharding) shards                &         & \checkmark \\\hline
+			5. & Adding, removing partitions                &         & \checkmark \\\hline
+			6. & RP's globally visible data structure changes (also increments versions of $\mathcal{T}$, $C^\mathtt{r}$, see Sec~\ref{sec:rp-versions})
+                                                      & \checkmark & \\\hline
+			7. & RP's operation rules          & \checkmark & \\\hline
+			8. & Shard's data structure version changes resulting in changes in log content &         & \checkmark \\\hline
+			9. & Shard's data structure version changes resulting in changes in proofs &         & \checkmark \\\hline
+			10. & Changes in validation algorithms (ledger rules) &         & \checkmark      \\\hline
+
+		\end{tabular}
+	\end{center}
+\end{table}
+
+Adding and removing of validators may incur changes in the respective quorum sizes. Communication layer changes are entirely handled by the communication layer. By ``adding or removing a validator'' we mean a change in actively participating validator identifier sets.
+
+\section{BFT Core Epoch Change}
+
+In order to facilitate a dynamic, responsive BFT Core, it is necessary to adjust its parameters on the fly. In particular, it is necessary to add new validators and retire some existing ones to maintain a healthy validator set, due to changing requirements and operating conditions.
+
+The configuration can be changed once per epoch. The source information comes from an Governance Process whose output is change records called Validator Assignment Records (Table~\ref{ta:var}).
+
+Any BFT Core protocol leader can initiate an epoch change, given it has received the change record. The procedure works as follows:
+
+\begin{enumerate}
+  \item The leader produces a proposal where the usual payload is replaced by the Change Request justifying the increment of Epoch (Table~\ref{ta:rc-ecr});
+  \item Validators who approve the epoch change continue with execution flow and do not include usual payload until the epoch change proposal gets committed.
+  \item Next round after committing an epoch change is the first round of this epoch: Epoch in BlockData is incremented; and execution continues by the updated set of validators.
+\end{enumerate}
+
+\begin{table}[!htbp]
+	\begin{center}
+		\caption{BFT Core Epoch Change Request.}\label{ta:rc-ecr}
+		\begin{tabular}{|p{0.5cm}|p{8cm}|p{1.7cm}|p{3.5cm}|}\hline
+			No & Field                          & Notation  & Type                  \\\hline\hline
+			1. & Epoch number                   & $e$       & $\uint{64}$           \\\hline
+			2. & Validator identifiers and stakes& $\{\nu, b_\nu\}_e$ & $\{ (\bytestr, \uint{64}) \}$  \\\hline
+			3. & Quorum size (Voting power)     & $k_e$     & $\uint{64}$           \\\hline
+			4. & Hash of state summary          & $r$       & $\hashtype$          \\\hline
+			5. & Hash of Change Record         & $h_{\mathsf{cr}}$ & $\hashtype$ \\\hline
+			6. & Hash of the previous record    & $h_{e-1}$ & $\hashtype$          \\\hline
+			7. & (attached) Change Record      &           & (Table~\ref{ta:var})  \\\hline
+		\end{tabular}
+	\end{center}
+\end{table}
+
+Fields 1, 2, 3 are copied from the Validator Assignment Records. The change record is a ``justification'': it is used as helper data for validators, but not included into the finalized record and resulting entry in the Unicity Trust Base. An implementation may choose to rely on alternative channels for distributing change records.
+
+BFT Core's epoch change updates the Unicity Trust Base. On record-oriented Unicity Trust Base, the new record becomes part of Root Validator's state (see section~\ref{sec:ddrc}); and the new record gets propagated to Shard validators together with the next Unicity Certificate, as an extra field of the UCResp message.
+
+\begin{ruledef*}{BFT Core Epoch Change} \\
+  For every proof, the Epoch Number in its Unicity Certificate's Unicity Seal must point to the entry in Unicity Trust Base which can be used for this proof's verification.
+\end{ruledef*}
+
+Validators must not execute invalid change records and approve proposals with invalid Change Requests. Instead, the latest valid change record must be used, whenever available; skipping over of some if necessary.
+
+
+\section{Shard Epoch Change}
+
+Shard Epoch Change is triggered by the BFT Core, by incrementing the Epoch number field in Technical Record, returned with a UC.
+
+The next shard round after finalizing a round with UC with incremented Epoch value is processed according to the configuration of the next epoch. Leader and validators are selected according to next epoch configuration.
+
+\begin{ruledef*}{Shard Epoch Change} \\
+  UC with incremented Epoch number in IR can be extended by a quorum of validators of the next epoch.
+\end{ruledef*}
+
+\section{Controlling Shard Epochs}
+
+BFT Core triggers shard epoch changes. This happens in the following steps:
+
+\begin{enumerate}
+  \item BFT Core validators obtain the Change Record for the next epoch of a shard.
+  \item If a BFT Core Leader includes an Input Record Change Request of a shard into a proposal and there is a pending epoch change of this shard, then the Change Record is included to the Request.
+  \item Presence of Change Record is the signal that Epoch should be incremented. Included Change Record decision is validated, and if valid then epoch number in Technical Record (TE) is incremented. All other IR, TE changes are validated and applied as well.
+  \item IR, TE-s get certified.
+  \item New CReS message is returned to the shard.
+  \item Shard's configuration is updated: quorum size (voting power needed for consensus), list of validators. This changes BFT Core's validation rules: the next Certification Request must be presented by a valid quorum of next epoch's aggregation shard nodes.
+\end{enumerate}
+
+\begin{ruledef*}{Shard Epoch Change Control} \\
+  If a shard's state is certified by a UC with incremented Epoch number in certified TE, then the next shard round's requests get validated by the new epoch's configuration.
+\end{ruledef*}
+
+For the clarity of presentation, epoch handling is not present in the provided pseudocode. It supports the lower layer functionality of dynamic configuration changes.
+
+
+\section{Validator's life cycle}
+
+This section describes epoch changes from the viewpoint of an individual node, in particular, how a node joins and leaves shards.
+
+Node accepts configuration updates through the Config API. The message is a set of change records, one per epoch. The records should cover the range from node's view of the current epoch to the epoch where node's status changes. The possible status changes (in respect to the current factual state of the node) are covered below.
+
+It is assumed that the node have made itself already findable via the node discovery service.
+
+\subsection{Shard Validator, joining} \label{sec:shard-node-joining}
+
+Initially, a shard node is not an active validator. It receives a configuration message which indicates, that starting from epoch $e_{\beta, \sigma}$, this node is a validator in shard $\sigma$ of partition $\beta$. Following procedure is executed:
+
+\begin{shaded}
+  \begin{enumerate}[nosep]
+    \item Reset \\
+          Clean up state and storage, unless already synchronized to the required shard
+    \item Start accepting proposals \\
+          On incoming proposal message:
+          \begin{itemize}[nosep]
+            \item Extract the UC and update the last known UC if newer
+          \end{itemize}
+    \item Start accepting client requests \\
+          On incoming client transaction:
+          \begin{itemize}[nosep]
+            \item If it is possible to determine the leader then forward client requests to the leader.
+            \item Reject otherwise.
+          \end{itemize}
+    \item Obtain the latest UC for the shard $(\beta, \sigma)$ from the BFT Core.
+    \item Launch recovery if behind
+    \item Subscribe to log feed of the shard $(\beta, \sigma)$.\\
+          On arrival of a new block of inputs:
+          \begin{itemize}[nosep]
+            \item Verify the inputs, apply the inputs to state and store in ledger
+            \item If block's UC indicates that the expected epoch arrives:
+            \begin{itemize}[nosep]
+                \item Starting from the next round, this node is full validator
+                \item Execution and message handling continues as a full validator
+            \end{itemize}
+          \end{itemize}
+  \end{enumerate}
+\end{shaded}
+
+If the input block log streaming protocol is not available the procedure is as follows:
+
+\begin{shaded}
+  \begin{enumerate}[nosep]
+    \item Reset \\
+          Clean up state and storage, unless already synchronized to the required shard
+    \item Start accepting proposals \\
+          On incoming proposal message:
+          \begin{itemize}[nosep]
+            \item Extract the UC and update the last known UC if newer
+          \end{itemize}
+    \item Start accepting client requests \\
+          On incoming client transaction:
+          \begin{itemize}[nosep]
+            \item If it is possible to determine the leader then forward client requests to the leader.
+            \item Reject otherwise.
+          \end{itemize}
+    \item \textbf{loop:}
+    \begin{itemize}[nosep]
+      \item Obtain the latest UC from the BFT Core
+      \item Launch recovery if the node is behind
+      \item If the UC indicates that the epoch where node is a full validator have started:
+      \begin{itemize}[nosep]
+        \item this node is now a full validator,
+        \item exit loop.
+      \end{itemize}
+    \end{itemize}
+  \end{enumerate}
+\end{shaded}
+
+The state graph is depicted at Figure~\ref{fi:node-state-graph}.
+
+\begin{figure}[!htbp]
+	\begin{center}
+    \begin{tikzpicture}[node distance=3cm]
+      \tikzset{every node/.append style={font=\tiny}}
+      \node[state, initial, accepting] (q1)  {free};
+      \node[state, right of=q1] (q2) {staked};
+      \node[state, right of=q2] (q3) {pooled};
+      \node[state, right of=q3] (q4) {assigned};
+      \node[state, right of=q4] (q5) {active};
+      \path[->] (q1) edge [bend left] node [above]  {staking proof} (q2)
+                (q2) edge [bend left] node [below]  {unstaking tx}  (q1)
+                (q2) edge             node [above]  {joining tx}    (q3)
+                (q3) edge             node [below, label={[align=left]change \\ record}] {} (q4)
+                (q4) edge             node [below, label={[align=left]joining \\ epoch}] {} (q5)
+                     edge [loop above] node         {synchronize} ()
+                (q5) edge [loop above, dashed] node {unassign tx} ()
+                     edge [bend left] node [above]  {leaving epoch} (q2);
+    \end{tikzpicture}
+    \caption{Node state graph (node's view)}\label{fi:node-state-graph}
+  \end{center}
+\end{figure}
+
+\subsection{Shard Node, leaving}
+
+If the node is an active validator and it receives indication that from an epoch $e$ this node is not any more a member of shard $(\beta, \sigma)$, then the following procedure is executed:
+
+\begin{shaded}
+  On receiving a UC indicating the expected epoch update:
+  \begin{enumerate}[nosep]
+    \item Starting from the next round, this node is not a validator.
+    \item Stop accepting proposals.
+    \item Stop accepting client request messages.
+    \item OK to reset the state.
+    \item Continue serving the log replication protocol; it is mandatory to retain the storage until the next quorum have committed at least one round.
+    \item OK to reset the log.
+  \end{enumerate}
+\end{shaded}
+
+The node (more specifically the node operator) can initiate the leaving process by sending an ``unassign transaction'' to the Governance Body. Processing may take arbitrary time, and the unassignment may happen for other reasons as well. Validators are encouraged to not drop off without executing the unassignment process.
+
+Now, the node may submit a request to the Governance Body to be assigned again as an active node, possibly at another shard. The node is encouraged to keep its identity.
+
+\begin{ruledef*}
+  Every Shard Node must ensure the availability of generated ledger until the next validator set takes over.
+\end{ruledef*}
+
+\subsection{Shard Node, ambiguous records}
+
+If there is a double assignment before leaving then the validator must continue at the current shard. When eventually the validator gets dismissed, it must join according to the latest valid change record.
+
+
+\subsection{BFT Core Node, joining}
+
+\begin{shaded}
+  On receiving a change record:
+  \begin{enumerate}[nosep]
+    \item Obtain the current BFT Core configuration via the GetUnicityTrustBase RPC call
+    \item Validate the updated Unicity Trust Base
+    \item Make itself findable via the node discovery service
+    \item Start listening to BFT Core proposal messages.\\
+          On receiving a proposal where ProposalMsg.BlockData.Epoch is incremented and the epoch includes the node:
+          \begin{itemize}[nosep]
+            \item Use the BFT Core recovery protocol (GetStateMsg / StateMsg) to synchronize the state,
+            \item Process the proposal,
+            \item Start processing shard Certification Requests,
+            \item Continue as full BFT Core validator.
+          \end{itemize}
+  \end{enumerate}
+\end{shaded}
+
+\subsection{BFT Core Node, leaving}
+
+A BFT Core node may leave the active validator set after performing a successful epoch change, where this node is not a member of the new validator set anymore. The node is responsible for successful hand-over: by making its state available to the new joining nodes briefly after the beginning of the next epoch, and offering the Unicity Trust Base distribution service without limitations to all current and near-future validators.
+
+A BFT Core node (more specifically, the operator of the node) can initiate the leaving process by sending a specific ``unassign transaction'' to the Governance Body. Processing may take arbitrary time, and the unassignment may happen for other reasons as well. BFT Core validators are strongly encouraged to not drop off without executing the unassignment process.
+
+\begin{ruledef*}
+  BFT Core Node must keep running until the next epoch's Unicity Trust Base entry gets committed.
+\end{ruledef*}
+
+
+\section{Dynamic Data Structures}
+
+\subsection{Versioning}\label{sec:rp-versions}
+
+The content of Unicity Seal and Unicity Trust Base\index{$\mathcal{T}$ (unicity trust base)}, globally used data structures across the Unicity Platform, depend on Distributed BFT Core implementation details. These data structures must be versioned to accommodate necessary iterative changes while the BFT Core implementation roadmap is being executed. That is, $\mathcal{T} = (v, \cdot)$ and $C^\mathsf{r} = (v, \cdot)$, where $v$ is the version number and the rest depends on the version. In the following sections, we assume that a section shares the same version number and it is omitted for brevity.
+
+Accordingly, the function $\mathsf{VerifyUnicitySeal}$ must be able to verify a recent subset of Unicity Seal versions, based on an authentic copy of the up-to-date Unicity Trust Base. This can be imagined as a wrapper, where the version number of input chooses the right implementation.
+
+\subsection{Evolving}
+
+Unicity Trust Base itself evolves (e.g., new records are added, while format/version stays the same) when the BFT Core validator set changes. Every evolved copy of Unicity Trust Base is cryptographically verifiable based on an older authentic copy of the Unicity Trust Base.
+
+We denote the initial, authentic\footnote{Authenticity is guaranteed by e.g., off-band verification of the Genesis Block and embedding the newest possible Unicity Trust Base into the verifier code during release management process, analogously to \emph{certificate pinning}.} Unicity Trust Base as $\mathcal{T}_\mathsf{base}$ and updated Unicity Trust Base as $\mathcal{T}$, and for each version of data structures define the function
+
+\[ \mathsf{VerifyUnicityTrustBase}_{\mathcal{T}_\mathsf{base}}(\mathcal{T})  \; .
+  \]
+
+For every supported version of proofs an implementation of $\mathsf{VerifyUnicitySeal}$ and the relevant Trust Base must be provided. Only the latest version of Unicity Trust Base can evolve.
+
+At the launch, the system is bootstrapped to a genesis state where the content of Unicity Trust Base, together with Genesis Blocks, are created via some off-chain social consensus process. The relevant data structures are the same, while references to previous states and signatures created by previous states are hard-coded to zero values.
+
+
+\subsection{Monolithic, Static BFT Core}
+
+We start with one BFT Core validator, which does not change (and can not change its keys).
+
+\begin{itemize}
+  \item $\mathcal{T} = (\alpha, \mathsf{pk})$\,, \\
+  where $\alpha$ is the system identifier and $\mathsf{pk}$ is the public key of the BFT Core.
+  \item $C^\mathsf{r} = (\alpha, n_r, t_r, r_-, r; s)$\,, \\
+  as defined in the Platform Specification; $s$ is a digital signature created using BFT Core's secret key.
+\end{itemize}
+
+\begin{algorithmic}[0]
+  \Function{VerifyUnicitySeal}{$r, C^\mathsf{r}, \mathcal{T}$}
+    \State \Return $(\mathcal{T}.\alpha = C^\mathsf{r}.\alpha \land r = C^\mathsf{r}.r  \land \mathsf{Ver}_{\mathcal{T}.\mathsf{pk}}(C^\mathsf{r}, C^\mathsf{r}.s))$  \Comment{Calculated over all fields except signature}
+  \EndFunction
+\end{algorithmic}
+
+\begin{algorithmic}[0]
+  \Function{VerifyUnicityTrustBase}{$\mathcal{T}_\mathsf{base}, \mathcal{T}$}
+    \State \Return $(\mathcal{T}_\mathsf{base} = \mathcal{T})$  \Comment{No changes are allowed}
+  \EndFunction
+\end{algorithmic}
+
+
+\subsection{Monolithic, Dynamic BFT Core}\label{ch:m-rc}
+
+In the case of dynamic BFT Core the validator(s) can change at epoch boundaries. The identifier (public key) of new validator is signed by the current one, and this signed record is appended to the Unicity Trust Base.
+
+\begin{itemize}
+  \item $T_e = (\alpha, e, \mathsf{pk}_e; s)$ \\
+  is Unicity Trust Base Record, where $s = \mathsf{Sig}_{\mathsf{sk}_{e-1}}(T_e)$ is a cryptographic signature over verification record of epoch $e$ (calculated over all fields except signature), signed by the previous epoch's secret key of the BFT Core.
+  \item $\mathcal{T} = (T_j, T_{j+1}, \ldots, T_k)$\,, \\
+  where $j$ is the first epoch and $k$ is the latest epoch covered. In the pseudocode below, we use notation $\mathcal{T}[j] := (T \in \mathcal{T}\colon \; T.e = j )$, that is, the element pointing to the epoch number $j$. System instance identifier of every epoch is invariant: $\forall\ i, j \colon T_i.\alpha = T_j.\alpha$.
+  \item $C^\mathsf{r} = (\alpha, n_r, t_r, r_-, r; (s, e))$  \\
+  as defined in the Platform Specification; $s$ is a cryptographic signature created using BFT Core's secret key of the epoch $e$.
+\end{itemize}
+
+\begin{algorithmic}[0]
+  \Function{VerifyUnicitySeal}{$r, C^\mathsf{r}, \mathcal{T}$}
+    \If{$(\mathcal{T}.\alpha \ne C^\mathsf{r}.\alpha \lor r \ne C^\mathsf{r}.r$}
+        \State \Return $0$
+    \EndIf
+    \If{$\mathcal{T}[C^\mathsf{r}.e] = \bot$}
+      \State \Return \textbf{error}  \Comment{No record in trust base for the epoch}
+    \EndIf
+    \State \Return $(\mathsf{Ver}_{T.\mathsf{pk}}(C^\mathsf{r}, C^\mathsf{r}.s) = 1)$  \Comment{Calculated over all fields except signature}
+  \EndFunction
+\end{algorithmic}
+
+Note that the caller must ensure that a relevant record is present in Unicity Trust Base, that is, $\mathcal{T}[C^\mathsf{r}.e] \ne \bot$. Obtaining a fresh Unicity Trust Base is covered by the Chapter Unicity Anterior.
+
+\begin{algorithmic}[0]
+  \Function{VerifyUnicityTrustBase}{$\mathcal{T}_\mathsf{base}, \mathcal{T}$}
+
+    \State $bmax = \max_{T \in \mathcal{T}_\mathsf{base}} T.e$  \Comment{Last epoch in trust base}
+    \State $tmin = \min_{T \in \mathcal{T}} T.e$ \Comment{First epoch number to be verified}
+    \If{$tmin > bmax+1$}
+        \State \Return \textbf{error}  \Comment{Not a continuous chain}
+    \EndIf
+    \For{$T \in \mathcal{T}$}
+       \If {$\mathcal{T}_\mathsf{base}[bmax].\alpha \ne T.\alpha$}
+          \State \Return \textbf{error}  \Comment{Non-invariant system id}
+       \EndIf
+    \EndFor
+    \For{$j \in \{tmin \,.\,.\,bmax+1\}$}   \Comment{Verify based on available trust base}
+       \If{ $\mathsf{Ver}_{\mathcal{T}_\mathsf{base}[j-1].\mathsf{pk}}(\mathcal{T}[j], \mathcal{T}[j].s) = 0$}
+          \State \Return $0$
+       \EndIf
+    \EndFor
+    \For{$j \in \{tmin+1 \,.\,.\,\max_{T \in \mathcal{T}} T.e\}$} \Comment{Verify consistency of new}
+       \If{ $\mathsf{Ver}_{\mathcal{T}[j-1].\mathsf{pk}}(\mathcal{T}[j], \mathcal{T}[j].s) = 0 $}
+          \State \Return $0$
+       \EndIf
+    \EndFor
+    \State \Return $1$
+  \EndFunction
+\end{algorithmic}
+
+For efficiency, the user must cache the verification results. For example: 1) at the startup, the bundled trust base is checked for consistency, and 2) each time an evolved trust base is encountered, a) it is checked for equivocation, b) if the trust base is newer than the base and verified using the function $\mathsf{VerifyTrustBase}$, then the base trust base is updated with new records from the new trust base (or substituted with the latest version if the implementation is accumulator-like).
+
+This version is illustrative and not for implementation.
+
+
+\subsection{Distributed, Static BFT Core}
+
+Unicity Trust Base is a map of BFT Core validator identifiers to validator public keys, and a number $q$ which specifies the required quorum size, i.e.,
+\begin{itemize}
+    \item $\mathcal{T} = (\alpha, \{ (i, \mathsf{pk}_i)  \mid i \gets 1 \ldots \nu_r  \}, q) \quad\text{ where }\quad q \ge \nu_r - f \,,$
+    \item $C^\mathsf{r} = (\alpha, n_r, t_r, r_-, r; s) \quad \text{where} \quad s = \{(i, s_i) \mid i \in (1 \,.\,.\, \nu_r)  \}  \quad \text{and} \quad \lvert s \rvert \ge q$\,. \\
+\end{itemize}
+
+Unicity Trust Base does not change as the BFT Core configuration is static.
+
+\begin{algorithmic}[0]
+  \Function{VerifyUnicitySeal}{$r, C^\mathsf{r}, \mathcal{T}$}
+    \If{$\mathcal{T}.\alpha \ne C^\mathsf{r}.\alpha \lor r \ne C^\mathsf{r}.r$}
+        \State \Return $0$
+    \EndIf
+    \If{$\lnot ( \forall\ m, n \in 1 \,.\,.\, \lvert C^\mathsf{r}.s \rvert \colon C^\mathsf{r}.s[m].i \ne C^\mathsf{r}.s[n].i )$}
+      \State \Return 0 \Comment{Duplicate signers}
+    \EndIf
+    \If{$\lvert C^\mathsf{r}.s \rvert \le \mathcal{T}.q$}
+      \State \Return 0 \Comment{No quorum}
+    \EndIf
+    \For{ $(i, s) \in  C^\mathsf{r}.s $ }
+      \If{$(\mathsf{Ver}_{\mathcal{T}.\mathsf{pk}_i}(C^\mathsf{r}, s) = 0) $}\Comment{Calculated over all fields except signature}
+         \State \Return 0   \Comment{Invalid signature}
+      \EndIf
+    \EndFor
+    \State \Return 1   \Comment{Success}
+  \EndFunction
+\end{algorithmic}
+
+
+\subsection{Distributed, Dynamic BFT Core}\label{sec:ddrc}
+
+The Unicity Trust Base Record is defined by Table~\ref{ta:t-drc}.
+
+\begin{table}[!htbp]
+	\begin{center}
+		\caption{Unicity Trust Base Record of Dynamic Distributed BFT Core.}\label{ta:t-drc}
+		\begin{tabular}{|p{0.5cm}|p{8cm}|p{1.7cm}|p{3.5cm}|}\hline
+			No & Field                           & Notation       & Type                       \\\hline\hline
+			1. & Network instance identifier     & $\alpha$       & $\mathbb{A}$ (invariant)   \\\hline
+			2. & Epoch number                    & $e$            & $\uint{64}$                \\\hline
+			3. & Epoch starting round            & $n_e$          & $\uint{64}$                \\\hline
+			4. & Validator identifiers and stakes& $\{\nu, b_\nu\}_e$& $\{ (\bytestr, \uint{64}) \}$\\\hline
+			5. & Quorum size (voting power)      & $k_e$          & $\uint{64}$                \\\hline
+			6. & Hash of state summary           & $r$            &  $\hashtype$              \\\hline
+			7. & Hash of related change record   & $h_{\mathsf{cr}}$& $\hashtype$             \\\hline
+			8. & Hash of previous record         & $h_{e-1}$      & $\hashtype$               \\\hline
+			9. & Signature of previous epoch validators & $s_{e-1}$& \textit{version-dependent}\\\hline
+		\end{tabular}
+	\end{center}
+\end{table}
+
+Fields 1, 2, 4 and 5 are copied from the referenced Governance Record. Initially, the stakes are fixed to $1$. When appropriate orchestrating processes implementing (delegated) Proof of Stake mechanisms are in place, the stakes reflect the epoch's locked stake amounts of each particular validator.
+
+Unicity Trust Base is a chain of records defined by Table~\ref{ta:t-drc}.
+
+Unicity Seal is a record signed by the validator set of the respective epoch as defined in \ref{ch:m-rc}, with an additional requirement of using the required multi-party signature scheme.
+
+The verification functions are as defined in \ref{ch:m-rc}, where the signatures are interpreted in broader sense as multi-party signatures, created by respective quorums of validators.
+
+
+\subsection{Signature Aggregation}
+
+This is an optimization of Distributed BFT Core data structures, reducing the sizes of produced proofs and the trust base. It is based on a cryptographic primitive implementing the ``non-interactive, accountable subgroup multi-signature'', allowing identification of all parties whose (part-) signatures are aggregated into a final, aggregate signature. On the case of aggregatable signature schemes, the m-of-n aggregation of public keys is non-trivial though\footnote{See e.g., \url{https://eprint.iacr.org/2018/483}}, thus, it may be implemented further down the roadmap.
+
+Unicity Trust Base is a tuple of aggregate public key and a numeric parameter ($q$) specifying the necessary quorum size. Signature on Unicity Seal is an aggregate signature, produced by combining at least $q$ partial signatures, and a bit-field identifying the signers. Partial signatures are created by individual BFT Core validators using their private keys.
+
+A standardization attempt of the closest appropriate signature scheme is available from IETF --- \url{https://datatracker.ietf.org/doc/draft-irtf-cfrg-bls-signature/}.
+
+Specifically, threshold signature schemes are avoided because of 1) accountability requirement 2) complicated and security-critical key setup, and 3) missing support of non-equal voting powers.
+

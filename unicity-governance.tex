@@ -1,0 +1,172 @@
+\chapter{Introduction}
+
+By \emph{governance}\index{governance}, we mean the operational management and re-configuration of a dynamic Unicity Platform instance. Governance processes manage the validators and other nodes, manage the lifecycle of partitions and govern sharding, manage incentives to the participants, and manage updates to the system.
+
+Governance\index{governance} is an organizational process run by the Unicity Foundation, and potentially involving on-chain community voting (``coinvote'') to make high-level governance decisions, which become binding to the Foundation. Governance parameters and algorithms can be changed only through the Governance.
+
+
+\section{Governance of the Dynamic Distributed Machine}
+
+The sections so far document a blockchain system which is entirely bootstrapped and managed by a centralized entity. This includes both administrative management and technical management, in the form of system administrators implementing requested changes. For example, if a validator wants to join the Unicity platform, the entity must give it explicitly a permit, and this is executed as a change made by system administrators. Analogously, in order to add a new partition, the change must be approved and executed by trusted entities. This may include restarting of the system.
+
+This section is about implementing Unicity as a continuously running, decentralized and permission-less system. In the final form, it relies on algorithmic, on-chain governance implementing delegated proof of stake mechanisms and the economic security layer.
+
+The launch as a permission-less, PoS controlled, decentralized blockchain is a fragile affair, due to initial instability (low number of validators, low locked stake, unpredictable usage patterns). Therefore, the system launches under the support and control of Unicity Foundation, and a gradual roadmap to full decentralization follows. While executing the roadmap, automated, on-chain governance processes, briefly described in the following sections, are taking over.
+
+The governance is architected in a modular way. The Governance Body is an abstract entity, possibly implementing different mechanisms, like Proof of Authority, Proof of Stake, Delegated Proof of Stake.
+
+The Governance Body implements a number of modular Governance Processes.
+
+
+
+\chapter{Data Flow}
+
+This section describes the ``control plane'' of Unicity Distributed Machine, complementing the ``data plane'' of user transaction processing.
+
+
+\section{Governance Body}
+
+The Governance Body is an abstract entity which manages the configuration of Unicity Network. It produces \emph{change records}\index{change record}. Change record formats of different governance processes are documented in the following subsections.
+
+
+\subsection{How a Validator joins a Partition}
+
+Validators rely on configuration agents for performing any steps involving user-level communication with other partitions and shards. The process works like this:
+
+\begin{itemize}
+	\item Configuration Agent detects a new Change Record it is involved with, learns the partition identifier and shard number
+	\item Configuration Agent obtains the current epoch number from the shard
+	\item Configuration Agent obtains the Change Records from current to the joining one (if not known)
+	\item Configuration Agent activates the node process by making config API call providing necessary information
+	\item Node continues as described in Section~\ref{sec:shard-node-joining}.
+\end{itemize}
+
+
+\section{BFT Core}
+
+The BFT Core plays active role in enforcing and synchronizing the Governance. It initiates epoch changes and accepts UC Requests only from valid members of partitions/shards. In order to do so, it must have access to authentic change requests.
+
+It is assumed, that the party who runs a BFT Core validator authenticates the change requests off-band.
+
+\chapter{Governance Mechanisms}
+
+\section{Proof of Authority}
+
+In the Proof of Authority mechanism, a permissioned, \emph{authorized} entity provides the governance information by sending signed transactions to the governance partition.
+
+\section{Proof of Stake}
+
+Proof of Stake mechanisms provide decentralization, permissionlessness and \emph{Sybil attack}\footnote{An entity generates an arbitrary number of identities in order to obtain unfair representation strength in a distributed algorithm}\index{Sybil attack} protection.
+
+Proof of Stake mechanism\index{PoS (Proof of Stake)} is based on the fact that there is a finite amount of certain backing asset, in Unicity's case it is the native currency, ALPHA. When each validator presents a proof of locking a certain amount of ALPHA, it is guaranteed, that there is a real capital cost involved and hard economical limits of potential power grab.
+
+Also, the staking mechanism provides a commitment and shared ownership structure for the Unicity Community.
+
+Validator's voting power in consensus correlates to its staked amount. That is, votes have weights, and the quorum size is defined as the arithmetic sum of stakes of agreeing validators which is necessary to reach a consensus.
+
+The leader election algorithm may use stake amounts as an input, so that the probability of becoming a leader correlates to the stake amount (assuming PoS).
+
+\section{Proof of Work}
+% TODO write me
+
+\section{Tokenomics Toolbox}
+
+Tokenomics is the economic security layer of the Unicity Platform. It extends the security beyond traditional assumptions of distributed systems, e.g., a certain ratio of honest nodes.
+
+Governance implements the tokenomics layer. In order to do so, there are certain tools and levers.
+
+\begin{description}
+	\item[Incentives] are payouts in ALPHA currency to incentivize validator participation in the Unicity System. There are incentives for staking (reward for capital cost) and incentives for providing secure and highly available validation service (reward for computation effort).
+	\item[Reputation] system improves the stability of the system, by incentivizing long-term identities and stable and high-quality behavior of validators.
+	\item[Slashing] is a mechanism enabled by staking: to disincentivize malicious behavior, it is possible to forfeit part or all of the stake as a punitive measure.
+	\item[Stake Limits] per validator allow the system to influence the number of participating physical validator machines; e.g., when there is an upper limit of staking rewards per machine, the stakers are incentivized to bring in more machine instances.
+	\item[Liquid Staking] is a mechanism where otherwise locked stake can be used for other purposes, for example used for staking in multiple partitions. This allows stakers to achieve better yield at the cost of higher risks.
+	\item[Delegated Proof of Stake] is an extension to PoS where external parties can delegate their state to specific validator nodes. Crucially, this democratizes the staking, so that non-sophisticated parties can participate, and also brings in external knowledge about the trustfulness of validators: delegators choose which validators they are placing their stakes on.
+\end{description}
+
+
+\chapter{Governance Processes}
+
+Governance is divided logically to a set of independent processes. Following subsections detail the interface between Unicity Platform and the Governance: expectations on Governance Processes and their output data structures. This standardized interface allows Governance Body to be a plug-in replaceable component, for example to use either Proof of Authority or Delegated Proof of Stake implementations; or to change tokenomics mechanisms.
+
+\section{Validator Assignment}
+
+% note: there are more operational parameters which may need per-epoch management, so it may be more general than "validator assignment"
+The process produces change records (called Validator Assignment Records), which assign validators to specific partitions and shards, as shown in Table~\ref{ta:var}.
+
+\begin{table}[!htbp]
+	\begin{center}
+		\caption{Change Record: Validator Assignment Record}\label{ta:var}
+		\begin{tabular}{|p{0.5cm}|p{8cm}|p{1.7cm}|p{3.5cm}|}\hline
+			No & Field                      & Notation      & Type                        \\\hline\hline
+			1. & Network Identifier         & $\alpha$      & $\mathbb{A}$                \\\hline
+			1. & Partition Identifier       & $\beta$       & $\mathbb{P}$                \\\hline
+			2. & Shard Identifier           & $\sigma$      & $\bits{\le \mathcal{SH}.k}$ \\\hline
+			3. & Epoch Number               & $e$           & $\uint{64}$                 \\\hline
+			4. & Epoch Switching Condition  & $\varphi_e$   & $\mathbb{L}$               \\\hline
+			5. & Validator identifiers and stakes& $\{\nu, b_\nu\}_e$ & $\{ (\bytestr, \uint{64}) \} \opt$ \\\hline
+			6. & Quorum Size (Voting power) & $k_e$         & $\uint{16} \opt$                 \\\hline
+			7. & Hash of Previous Record    & $h_{e-1}$     & $\hashtype$                \\\hline
+		\end{tabular}
+	\end{center}
+\end{table}
+
+The assignment of a particular validator is revoked by issuing a new record, which does not include the validator into the shard any more.
+
+If a shard or entire partition stops working at the start of an epoch, the corresponding change record will have empty values for the validator identifiers and stakes as well as for the quorum size ($\{\nu, b_\nu\}_e = \bot \land k_e = \bot$). At all other times the values must not be empty.
+
+The exact content of Epoch Switching Condition is left open to optimizations: it can be a suggested or mandatory time or round number, or an arbitrary predicate. For example, a Switching Condition may be a BFT Core round number range with soft enforcement: the responsible validators will not receive any fees for their work outside the expected epoch.
+
+Initially, the Epoch Switching Condition is a fixed shard's round number: $\varphi_e = (n_{\beta,\sigma} > \mathtt{constant})$
+
+Quorum Size is measured in number of validators or total amount of stake behind validator votes to reach consensus. For the BFT Core, $k > 2/3 \sum{b_v}$. For shards, $k > 1/2 \sum{b_v}$.
+
+Hash of Previous Record may be implemented inexplicitly if the underlying base partition provides hash linking of records.
+
+
+\section{Aggregation Layer Partition Lifecycle Management}
+
+This process creates, modifies and deletes partitions. The output is Partition Update Record with System Description Records and the configuration of consensus layer, as illustrated by Table~\ref{ta:pcr}.
+
+\begin{table}[!htbp]
+	\begin{center}
+		\caption{Change Record: Partition Update}\label{ta:pcr}
+		\begin{tabular}{|p{0.6cm}|p{8cm}|p{1.7cm}|p{3.5cm}|}\hline
+			No & Field                 & Notation & Type \\\hline\hline
+			1. & Network Identifier    & $\alpha$ & $\mathbb{A}$       \\\hline
+			2. & Partition Identifier  & $\beta$  & $\mathbb{P}$      \\\hline
+			3. & Partition Description & $\mathcal{PD}[\beta]$ & $\mathbb{PD}$ \\\hline % includes sharding scheme
+			4. & Operation: \{\textsc{create|change|destroy}\} & $op$   &  \\\hline
+			5. & Hash of Genesis       & $h_g$    &  $\hashtype$ (optional)\\\hline
+			6. & Switching Condition   & $\varphi_e$ & $\mathbb{L}$   \\\hline
+			7. & Number of Nodes       & $k$      & $\uint{32}$       \\\hline
+			8. & Target Round Rate     & $\mathtt{t}$ & $\uint{32}$(ms)    \\\hline
+			9. & Time-outs             & $\mathtt{t2}, \mathtt{t3}$ & $\uint{32}$(ms)    \\\hline
+			10. & Hash of previous record & $h_{e-1}$& $\hashtype$  \\\hline
+		\end{tabular}
+	\end{center}
+\end{table}
+
+The set of required fields depends on operation. Switching condition may be either aggregation shard or BFT Core round number, or aggregation shard epoch number switch.
+
+\section{Shard Management}
+
+This process creates and updates Sharding Schemes for partitions. The switch to a new sharding scheme is executed at epoch change; see Table~\ref{ta:ssu}.
+
+\begin{table}[!htbp]
+	\begin{center}
+		\caption{Change Record: Sharding Scheme Update}\label{ta:ssu}
+		\begin{tabular}{|p{0.5cm}|p{8cm}|p{1.7cm}|p{3.5cm}|}\hline
+			No & Field                      & Notation       & Type          \\\hline\hline
+			1. & Network Identifier         & $\alpha$       & $\mathbb{A}$  \\\hline
+			2. & Partition Identifier       & $\beta$        & $\mathbb{P}$  \\\hline
+			3. & Sharding Scheme            & $\mathcal{SH}$ & $\mathbb{SH}$ \\\hline
+			4. & Switching Epoch Number     & $e$            & $\uint{64}$   \\\hline
+			5. & Hash of previous record    & $h_{e-1}$      & $\hashtype$  \\\hline
+		\end{tabular}
+	\end{center}
+\end{table}
+
+The Input data for shard management process is collected by the BFT Core. It maintains a rolling statistics record for every shard for the ongoing shard epoch; and keeps the aggregates of the previous epoch. The rolling amount is modified based on reported measurements in UC Requests, as sent by the aggregation layer nodes.
+
+Each shard is responsible for fetching the record certifying the previous epoch's aggregate statistics record, and submitting it as a transaction to the Governance Body. The aggregate fee record is certified by any UC of the following epoch.

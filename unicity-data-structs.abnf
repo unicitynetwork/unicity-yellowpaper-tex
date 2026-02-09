@@ -1,0 +1,174 @@
+; Unicity Protocol Data Structures (ABNF)
+
+; ============================================================================
+; 1. BFT CORE (shared data structures)
+
+  UC = IR TechRecordHash ShardTreeCertificate UnicityTreeCertificate UnicitySeal  ;~$UC = (IR, h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
+  IR = RoundNumber Epoch PreviousHash Hash Time  ;~$IR = (n, e, h', h, t)$
+  ShardTreeCertificate = ShardIdentifier *SiblingHash  ;~$C^\mathsf{shard} = (\sigma;h^s_1, \ldots, h^s_{|\sigma|})$
+  UnicityTreeCertificate = PartitionIdentifier PartitionDescriptionHash *HashStep
+  HashStep = PartitionIdentifier SiblingHash  ;~$C^\mathsf{uni} = (\beta, \mathsf{dhash}; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell)))$
+
+  UnicitySeal = Version NetworkIdentifier RootPartitionRoundNumber Epoch Timestamp PreviousHash Hash *Signatures  ;~$C^\mathsf{r} = (\alpha, n_r, e_r, t_r, r_-, r; s)$
+                      ;~where |Signatures| = quorumThreshold > 2f
+
+; --- Statistical and Technical Records ---
+  StatisticalRecord = NumRounds SumRoundSize SumStateSize MaxRoundSize MaxStateSize ;~$\mathsf{SR}=(n_e, \overline{\ell}_B, \overline{\ell}_S, \hat{\ell}_B, \hat{\ell}_S)$
+  TechRecord = Round Epoch LeaderID SRHash  ;~$\mathsf{TE}=(n_r, e_r, \nu_\ell, h_\mathsf{sr})$
+
+  ShardInfo = Round PreviousHash PrevStatisticalRecord StatisticalRecord *ValidatorIdentifier LeaderIdentifier PrevUC ;~$(n,h_-, \mathsf{SR}_-, \mathsf{SR}, \mathcal{V}, \nu_\ell, UC_-)$
+
+  ; Evolving trust base:
+  UnicityTrustBase = Version *UnicityTrustBaseEntry
+  UnicityTrustBaseEntry = NetworkIdentifier Epoch *(NodeID Pubkey Stake) QuorumThreshold StateHash ChangeRecordHash PreviousEntryHash *Signatures
+
+; ============================================================================
+; BFT CORE (internal data structures)
+
+; --- Internal Consensus Structures ---
+  LedgerCommitInfo = UnicitySeal | UnicityTrustBaseEntry ; seal without signatures
+  QC = VoteInfo LedgerCommitInfo *Signatures
+
+  VoteInfo = RoundInfo
+  RoundInfo = RoundNumber Epoch Timestamp ParentRoundNumber CurrentRootHash | UnicityTrustBaseEntryHash
+
+; --- BFT Core Messages ---
+  VoteMsg = VoteInfo LedgerCommitInfo HighQC Author Signature
+
+  ProposalMsg = BlockData [LastRoundTc] Signature
+  BlockData   = Author Round Epoch Timestamp Payload AncestorQC
+  Payload     = *IRChangeReq | RPEpochChangeReq
+  IRChangeReq = PartitionIdentifier CertReason *CR [EpochChangeJustification] SenderSignature
+              ; presence of justification ==> epoch++
+  RPEpochChangeReq = Epoch *(NodeID Pubkey Stake) QuorumThreshold StateHash ChangeRecordHash PreviousEntryHash SenderSignature [ChangeRecord]
+
+  TimeoutMsg = Timeout Author Signature [LastTC]
+      ;~If HighQC is not from prev. round then there must be TC of prev,
+      ;~justifying the incremented round number
+  Timeout = Epoch Round HighQC   ;~HighQC - highest known Quorum Certificate to the validator
+  TC = Timeout *Signatures ;~2f+1 Signatures  ;~TC - Timeout Certificate
+
+  CertReason    = 'quorum' | 'quorum-not-possible' | 't2-timeout'  ;~flags in appropriate encoding
+
+; --- Recovery Messages ---
+  GetStateMsg = NodeId   ; id of the validator requesting the state
+  StateMsg = *UC CommittedHead BlockNode UnicityTrustBaseEntry
+  CommittedHead = BlockNode = RecoveryBlock
+  RecoveryBlock = BlockData *InputData QC CommitQC
+  InputData = PartitionIdentifier Shard IR Sdrh
+
+; ============================================================================
+; 3. BFT CORE (protocols)
+
+  CR = NetworkIdentifier PartitionIdentifier Shard NodeIdentifier IR BatchSize StateSize Signature [ConsistencyProof]
+  ; Certification Request $CR = \langle \alpha, \beta, \sigma, \nu; \mathcal{IR},\ell_B,\ell_S; s; [\pi_{CP}]\rangle$
+  ;  Returned UC can be repeated cert for prevStateTreeHash which triggers next attempt using different leader
+  ;  a validator can have multiple pending requests extending the same hash; latest one is identified using IR.n
+
+  CReS = NetworkIdentifier PartitionIdentifier ShardIdentifier UC TechRecord [UnicityTrustBaseEntry]
+        ;~Certification~Response
+
+  ; Subscription - Subscribe to CReS message feed in order to obtain the latest UC for synchronization
+  SubscriptionMsg = NetworkIdentifier PartitionIdentifier Shard NodeIdentifier signature
+        ; this request provides or updates validator connection parameters at
+        ; transport layer so that Root can return CReS messages
+
+  ; Trust Base Distribution protocol
+  GetTrustBaseMsg = NetworkIdentifier EpochStart [EpochEnd]
+  TrustBaseResponse = *UnicityTrustBaseEntry
+
+; ============================================================================
+; 4. AGGREGATION LAYER
+
+  StateIdentifier = Hash  ;~$\mathsf{sid} = H(\nu, h_{\mathsf{st}})$
+  LeafData = TransactionHash    ;~value of key-value store
+  SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, h_{\mathsf{tx}})$
+
+  InclusionCertificate = *InclusionStep  ;~$C^\mathsf{inc} = \langle (p_1, d_1), (p_2, d_2), \ldots, (p_n, d_n) \rangle$
+  InclusionStep = PathSegment (LeafData | SiblingHash)
+      ;~First step contains LeafData, subsequent steps contain sibling hashes
+      ;~Concatenated path segments equal the full StateIdentifier
+
+  ConsistencyProof = Batch ProofSiblings | ZKProof
+      ;~$\pi_{\mathsf{CP}}$ - proves correct SMT manipulation (append-only)
+      ;~Hash-based: batch and sibling hashes for verification
+      ;~ZK-compressed: SNARK/STARK proof with public params
+
+  Batch = *SMTLeaf  ;~Batch of new SMT leaves
+  ProofSiblings = *DepthLayer  ;~Sibling hashes organized by tree depth
+  DepthLayer = *SiblingHashPair
+  SiblingHashPair = StateIdentifier Hash
+  ZKProof = Bytes  ;~Opaque ZK proof (SNARK/STARK)
+
+  InclusionProof = InclusionCertificate UC  ;~$\pi^\mathsf{inc} = (C^\mathsf{inc}, UC)$
+      ;~Complete proof from SMT leaf through UC to trust base
+      ;~Proves that a StateID EXISTS in the SMT
+      ;~SMT Leaf L = (sid, htx) can be extracted from InclusionCertificate:
+      ;~  sid = concatenation of all path segments p1 || p2 || ... || pn
+      ;~  htx = d1 (leaf data from first pair)
+
+  NonInclusionProof = InclusionCertificate UC  ;~$\pi^\mathsf{exc} = (C^\mathsf{inc}, UC)$
+      ;~Exclusion proof - proves that a StateID does NOT exist in the SMT
+      ;~Uses same structure as InclusionProof but with different validation
+      ;~Valid for queried sid if:
+      ;~  1. VerifyInclusionProof returns TRUE
+      ;~  2. p1 is a prefix of sid (queried StateID)
+      ;~  3. d1 = empty (position is unoccupied)
+
+; ============================================================================
+; 5. EXECUTION LAYER
+
+; --- Predicates ---
+  Predicate = Engine Code Params  ;~$\nu = (\mathsf{engine}, \mathsf{code}, \mathsf{params})$ -- CBOR array[3]
+      ;~Engine: unsigned integer (1 = BUILT\_IN)
+      ;~Code: byte string (\texttt{0x01} = PayToPublicKey, \texttt{0x02} = Burn)
+      ;~Params: byte string (predicate-specific parameters)
+
+  PayToScriptHash = Hash  ;~$H(\mathsf{CBOR}(\nu'))$ -- hash of CBOR-encoded predicate
+
+; --- Transactions ---
+  MintTransaction = Recipient TokenId AuxPayload  ;~$T_0$ -- CBOR array[3]
+  AuxPayload = TokenType Data  ;~$[\mathsf{ty}, \auxd']$ -- CBOR array[2]
+
+  TransferTransaction = SourceStateHash LockScript Recipient X Data  ;~$T = (h_\mathsf{st}, \nu, \nu', x, \auxd')$ -- CBOR array[5]
+
+  CertifiedMintTransaction = MintTransaction InclusionProof  ;~$(T_0, \pi)$ -- CBOR array[2]
+  CertifiedTransferTransaction = TransferTransaction InclusionProof  ;~$(T, \pi)$ -- CBOR array[2]
+
+  Token = CertifiedMintTransaction *CertifiedTransferTransaction
+      ;~$\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$ -- CBOR array[2]: [genesis, [transfers...]]
+
+; --- Fields ---
+  TokenId = Bytes32  ;~$\mathsf{id}$ -- globally unique token identifier
+  TokenType = Bytes  ;~$\mathsf{ty}$ -- token type classifier
+  SourceStateHash = Hash  ;~$h_\mathsf{st}$ -- current state hash (32 bytes)
+  LockScript = Bytes  ;~$\mathsf{CBOR}(\nu)$ -- CBOR-encoded current owner predicate
+  Recipient = PayToScriptHash  ;~$H(\mathsf{CBOR}(\nu'))$ -- hash of next owner's predicate
+  X = Bytes32  ;~$x \gets \{0,1\}^\ell$ -- random value for state derivation
+  Data = Bytes  ;~$\auxd'$ -- auxiliary data
+  TransactionHash = Hash  ;~$h_\mathsf{tx} = H(D)$ -- hash of transaction data
+  UnlockScript = Bytes  ;~$u$ -- unlocking argument (e.g. signature)
+
+; --- State ---
+  StateId = Hash  ;~$\mathsf{sid} = H(\mathsf{CBOR}(\nu, h_\mathsf{st}))$ -- key in Unicity Service registry
+
+; --- Certification ---
+  CertificationData = LockScript SourceStateHash TransactionHash UnlockScript
+      ;~$Q = (\nu, h_\mathsf{st}, h_\mathsf{tx}, u)$ -- CBOR array[4], submitted to Unicity Service
+
+; --- Hash Derivations (computed, not wire format) ---
+  ; $h_\mathsf{st} = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$~-- mint source state hash
+  ; $h_\mathsf{st}' = H(h_\mathsf{st}, x)$~-- next state hash
+  ; $h_\mathsf{tx} = H(\mathsf{recipient}, \mathsf{id}, [\mathsf{ty}, \auxd'])$~-- mint transaction hash
+  ; $h_\mathsf{tx} = H(\mathsf{recipient}, x, \auxd')$~-- transfer transaction hash
+  ; $H(h_\mathsf{st}, h_\mathsf{tx})$~-- signed message
+
+; --- Fungible Token Structures ---
+  Asset = AssetId Value  ;~$(\mathsf{aid}, v)$ -- CBOR array[2]
+  AssetId = Bytes  ;~asset type identifier
+  Value = Bytes  ;~non-negative integer (bigint-encoded)
+
+  SplitReason = Token *SplitReasonProof  ;~CBOR array[2]: [burned source token, [proofs...]]
+  SplitReasonProof = AssetId AggregationPath AssetTreePath  ;~$(\mathsf{aid}, \pi_\mathsf{agg}, \pi_\mathsf{sum})$ -- CBOR array[3]
+  AggregationPath = SparseMerkleTreePath   ;~SMT path to aggregation root $h_\mathsf{agg}$
+  AssetTreePath = SparseMerkleSumTreePath  ;~SMST path proving value allocation

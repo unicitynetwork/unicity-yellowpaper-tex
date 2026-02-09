@@ -1,0 +1,57 @@
+\chapter{Encodings}\label{app:encodings}
+
+\section{CBOR}
+
+Most data structures on the Unicity platform are serialized in the Concise Binary Object Representation (CBOR), as defined in the IETF~RFC~8949\footnote{\url{https://www.rfc-editor.org/rfc/rfc8949}}.
+
+For data to be hashed or signed, the deterministic encoding rules (as defined in Sec.~4.2 of the RFC~8949) must be used.
+
+\section{Tuples}
+
+Tuples are encoded as CBOR arrays in the natural way: a tuple $T$ consisting of $n$ elements, denoted $(T_1, T_2, \ldots, T_n)$ or $\langle T_1, T_2, \ldots, T_n \rangle$ in the specification, is encoded as $n$-element CBOR array with $T_1$ the first elment, $T_2$ the second element, and so on.
+
+An optional element with no value, denoted $\bot$ in the specification, is not omitted from the array, but encoded as the CBOR simple value \texttt{null}.
+
+\section{Bit-strings}
+
+Bit-strings are not directly supported in CBOR. On the Unicity platform, a bit-string is encoded as follows:
+\begin{enumerate}
+\item First, one $1$-bit followed by zero to seven $0$-bits are appended to the original bit-string so that the total number of bits is a multiple of $8$.
+\item Then, the padded result is encoded as a CBOR byte-string in the left-to-right, highest-to-lowest order.
+\end{enumerate}
+
+For example, the 12-bit string '0101\,1010\,1111' is first padded to the 16-bit string '0101\,1010\,1111\,1000', which is then encoded as the 3-byte sequence 0x425af8: \
+\begin{tabular}{ll}
+	\quad 0x42 & byte-string, length 2 \\
+	\quad\quad 0x5a & the bits '0101\,1010' \\
+	\quad\quad 0xf8 & the bits '1111' and the padding '1000'
+\end{tabular}
+
+\section{Hash Values}
+
+Hash values, although frequently defined as general bit-strings in cryptographic theory, in practice always have bit-lengths divisible by 8 and are encoded as simple CBOR byte-strings with no padding.
+
+\section{Unit Identifiers}
+
+Unit identifiers are encoded as CBOR byte-strings.
+
+\section{Time}
+
+Time is expressed as the number of milliseconds since 1970-01-01 00:00:00 UTC, encoded as an unsigned integer: the time value for 1970-01-01 00:00:00.000 UTC is 0, the value for 1970-01-01 00:00:01.000 UTC is 1000, etc. All days are considered to be exactly 86\,400 seconds long, ignoring any leap seconds that have occurred in the past.
+
+During a leap second, the part corresponding to full seconds (up from the fourth digit in decimal notation) is kept the same as during the previous second, but the part corresponding to fractions of a second (the three lowest digits in decimal notation) is reset to zero and counted up from there again. In other words, the value recorded for a time within a leap second is the same as the value recorded for the time exactly one second earlier.
+
+\section{Identifiers}
+
+\textbf{Identifiers of Nodes} (validators) are expressed as hashes of compressed ECDSA public keys;
+respective private key is controlled by the Node.
+
+\textbf{Identifiers of Transaction Systems} are expressed as integers.
+
+\section{Cryptographic Algorithms}
+
+``ECDSA'' denotes the Elliptic Curve Digital Signature Algorithm using secp256k1 curve
+
+``SHA-256'' denotes the SHA-2 hash algorithm with 256-bit output and ``SHA-512'' denotes the SHA-2 hash algorithm with 512-bit output; both are specified by NIST FIPS 180-4.
+
+The list is non-exhaustive.

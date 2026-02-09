@@ -1,0 +1,721 @@
+\chapter{Unicity Certificate Framework}
+
+\section{Sharding Schemes}\label{sec:sharding}
+
+\emph{Sharding scheme}\index{shard!$\mathcal{SH}$ (sharding scheme)} $\mathcal{SH}$ of type $\mathbb{SH}$ is an irreducible prefix-free code (Appendix~\ref{app:ordering}).
+
+If $\mathscr{SH} = \{\emptystr\}$, then there is a single shard.
+
+In the description of a sharding scheme, the shard identifiers are listed in the topological order $\sigma_1 \prec \sigma_2 \prec \ldots \prec \sigma_n$ (Appendix~\ref{app:ordering}).
+
+Every sharding scheme $\mathcal{SH}$ induces a sharding function $f_\mathcal{SH}\colon \idtype\to \mathcal{SH}$. The shard $f_\mathcal{SH}(\mathsf{sid})$ responsible for recording a token state with identifier $\mathsf{sid}$ is the shard whose identifier $\sigma_i$ is a prefix of $\mathsf{sid}$. With $\mathcal{SH}$ an irreducible prefix-free code, there is exactly one such $\sigma_i$.
+
+\section{Networks}
+
+In practice, there may be several instances of Unicity networks, each consisting of its own Consensus Layer and its own set of partitions. Each such network will have an identifier $\alpha$\index{$\alpha$ (network identifier)}:
+
+\begin{itemize}
+\item $\alpha = 1$ is the public mainnet instance;
+\item $\alpha = 2$ is the public testnet instance;
+\item $\alpha = 3$ is a local development instance;
+\item the identifiers $4 \ldots 8$ are reserved for future extensions;
+\item any additional instances of Unicity networks should use identifiers starting from $9$.
+\end{itemize}
+
+To reduce the risk of confusion, it is recommended for each major deployment to use a unique identifier. However, there is no central registry to enforce this constraint.
+
+It is strongly recommended to avoid using the identifier $0$, so that an uninitialized identifier (which defaults to $0$ in many programming languages) would not match any actual network.
+
+\section{Partitions and Shards}
+
+Unicity network's aggregation layer consists of multiple \emph{partitions}\index{partition}. Each partition is identified by a partition identifier $\beta \in \mathbb{C}$\index{$\beta$ (partition identifier)}\index{$\mathbb{C}$ (partition identifier type)}. Each partition runs an unicity proving service instance (Unicity Service), or some other utility service instance\footnote{Roughly, this is similar to Layer 1, Layer 2 division of Ethereum type blockchains}.
+
+A partition may be divided into one or more \emph{shards}\index{shard} according to a sharding scheme (Sec.~\ref{sec:sharding}). Each shard is implemented by one or more \emph{aggregation layer nodes}\index{aggregation layer node} that maintain the SMT for their portion of the key space.
+
+\section{Partition Type and Partition Type Descriptor}
+
+Every partition in the Unicity Framework with partition identifier $\beta$ has a type that is either:
+\begin{enumerate}
+\item a \emph{standard type} (SMT), or
+\item a \emph{defined type} that is described as a data structure of type $\mathbb{SD}$.
+\end{enumerate}
+
+\subsection{Partition Type Descriptor}
+
+A \emph{partition type descriptor} is a tuple $\mathcal{SD} = (\mathsf{hf}, \mathbb{CP}, V_{CP}, \gamma_{CP}) \in \mathbb{SD}$, where:
+\begin{itemize}
+\item $\mathsf{hf}$ -- hash function identifier (e.g., SHA-256)  % or version number
+%\item $\mathsf{enc}$ -- encoding scheme identifier (e.g., CBOR for SMT serialization)
+\item $\mathbb{CP}$ -- consistency proof type
+\item $V_{CP} \colon \mathbb{IR} \to \mathbb{CP}$ -- consistency proof computation function
+\item $\gamma_{CP} \colon \mathbb{IR} \times \mathbb{CP} \to \bool$ -- consistency proof verification predicate
+\end{itemize}
+
+For the SMT-based aggregation, the partition maintains a sparse Merkle tree mapping state identifiers to transaction hashes. The hash function $\mathsf{hf}$ is used for all cryptographic operations, and the encoding scheme $\mathsf{enc}$ specifies how data structures are serialized before hashing (see Sec.~\ref{sec:smt} for SMT structure).
+
+The \emph{consistency proof}\index{consistency proof} is an opaque data structure that allows BFT Core nodes to verify that aggregation layer shard nodes correctly performed SMT manipulations during a round. The actual mechanism and content of consistency proofs will be defined separately for each partition type.
+
+\subsection{Standard Partition Types}
+
+\textbf{Unicity SMT} ($\mathsf{st} = 1$) -- Sparse Merkle Tree based unicity prover
+
+\textbf{EVM} ($\mathsf{st} = 2$) -- Enshrined EVM runtime
+
+\subsection{Partition Description Record}
+
+A \emph{partition description record}\index{$\mathcal{CD}$ (partition description)}\index{partition description} is a tuple $\mathcal{CD} = (\alpha, \beta, \mathsf{st}, \mathcal{SD}, \mathcal{SH}) \in \mathbb{CD}$, where:
+\begin{itemize}
+\item $\alpha \in \mathbb{A}$ is the network identifier;
+\item $\beta \in \mathbb{C}$ is the partition identifier;
+\item $\mathsf{st} \in \mathbb{ST}$ is the system type identifier (for standard types, $\mathsf{st} > 0$);
+\item $\mathcal{SD} \in \mathbb{SD}\opt$ is the system type descriptor (exists if $\mathsf{st} = 0$);
+\item $\mathcal{SH} \in \mathbb{SH}$ is the sharding scheme.
+\end{itemize}
+
+Instead of $\mathcal{CD}.\mathcal{SD}.x$ (where $x$ is any field of $\mathcal{SD}$), we use the shorthand notation $\mathcal{CD}.x$.
+For standard type partitions, the field $\mathcal{CD}.\mathcal{SD}$ does not exist. In this case, the notation $\mathcal{CD}.x$ will mean the constant value of $x$ of the standard type $\mathsf{st}$.
+
+\section{Unicity Service Request}
+
+A \emph{Unicity Service Request}\index{$Q$ (unicity service request)} is a request to the Unicity Service for state transition certification. It is a tuple $Q = (\predi, \sthash, \txhash, u)$, where:
+\begin{itemize}
+	\item $\predi$ -- current owner's spending predicate (Sec.~\ref{sec:predicates})
+	\item $\sthash \in \hashtype$ -- current state hash
+	\item $\txhash \in \hashtype$ -- transaction data hash
+	\item $u$ -- unlocking argument satisfying $\predi$
+\end{itemize}
+
+The Unicity Service processes the request by:
+\begin{enumerate}
+	\item Evaluating the predicate: $\predi(\tau, H(\sthash, \txhash), u) = 1$
+	\item Computing the state identifier: $\mathsf{sid} = H(\predi, \sthash)$
+	\item Checking uniqueness: the state has not been spent before (i.e., $\mathsf{sid}$ does not already exist in the SMT)
+	\item If all checks pass: setting the SMT leaf $(\mathsf{sid}, \txhash)$ in the tree
+\end{enumerate}
+
+The request is accepted without returning a synchronous response. The detailed validation algorithm will be specified in Sec.~\ref{sec:request-validation}.
+
+\section{Unicity Service Request Validation}\label{sec:request-validation}
+
+The aggregation layer nodes process Unicity Service Requests by validating them and, if valid, updating their SMT. Each shard maintains an SMT for its portion of the key space.
+
+\subsection{Validation and Processing Algorithm}
+
+Given a Unicity Service Request $Q = (\predi, \sthash, \txhash, u)$, the aggregation layer node performs the following checks:
+
+\begin{enumerate}
+	\item \textbf{Predicate evaluation}: Verify that the unlocking argument satisfies the predicate:
+	\[
+	\predi(\tau, H(\sthash, \txhash), u) = 1
+	\]
+
+	\item \textbf{Uniqueness check}: Compute the state identifier and check that it does not already exist as a leaf in the SMT:
+	\[
+	\mathsf{sid} = H(\predi, \sthash)
+	\]
+	Verify that the SMT does not contain a leaf with key $\mathsf{sid}$ (i.e., the state has not been spent before).
+\end{enumerate}
+
+If both conditions are satisfied, the request is accepted and the aggregation layer node sets the SMT leaf:
+\[
+\text{Set SMT leaf: } (\mathsf{sid}, \txhash)
+\]
+This updates the SMT by inserting the new leaf.
+
+If either check fails, the request is rejected:
+\begin{itemize}
+	\item If predicate evaluation fails: the request is invalid and must be rejected
+	\item If uniqueness check fails (leaf with key $\mathsf{sid}$ already exists): the state has already been spent (double-spend attempt) and the request must be rejected
+\end{itemize}
+
+After processing a batch of requests, the aggregation layer nodes compute the new SMT root hash $h$ and send a certification request to the BFT Core. The BFT Core verifies the consistency proof $\pi_{CP}$ and that last state is extended correctly and certifies the new root hash $h$ via the Unicity Certificate.
+
+
+\section{Certificates}
+
+\emph{Certificates} are compact proofs of inclusion (or sometimes uniqueness, or exclusion) of some data item in an authenticated data structure. Certificates may be chained. Combining certificates, it is possible to put together \emph{proofs} (Sec.~\ref{se:proofs}) proving e.g. inclusion, non-inclusion or uniqueness of transactions.
+
+\begin{figure}[ht]
+	\begin{minipage}[h]{0.45\linewidth}
+		\centering
+		\begin{tikzpicture}[every path/.append style={draw, thick},rectangle/.style = {draw,minimum size=1cm}]
+			\node (L)  at (0, 0) [rectangle]  {$L$};
+			\node (Csmt)  at (0, 2) [rectangle]  {$C^\mathsf{inc}$};
+			\draw      [->] (L) -- (Csmt);
+			\node (UC) at (0, 4) [rectangle]   {$UC$};
+			\draw      [->] (Csmt) -- (UC);
+			\node (t)  at (0, 5.5)              {$\mathcal{T}$};
+			\draw      [-o] (UC) -- (t);
+			\draw[dashed] +(-1.5, -0.8) rectangle +(1.5, 4.8) +(1.3, 5) node {$\pi^\mathsf{inc}$};
+		\end{tikzpicture}
+		\caption{Inclusion Proof: SMT leaf $L$ with certificate chain through $UC$ to trust base $\mathcal{T}$} \label{fi:inc-proof}
+	\end{minipage}
+	\hfill
+	\begin{minipage}[h]{0.45\linewidth}
+		\centering
+		\begin{tikzpicture}[every path/.append style={draw, thick},rectangle/.style = {draw,minimum size=1cm}]
+			\node (IR)  at (0, 0) [rectangle,minimum width=2.6cm]  {$IR$\ \ \ \ \ };
+			\node (h)  at (1, 0) [rectangle,minimum width=.6cm]  {$h^t$};
+			\node (Cs)  at (0, 2) [rectangle]  {$C^\mathsf{shard}$};
+			\draw      [->] (IR) -- (Cs);
+			\node (Cu) at (0, 4) [rectangle]   {$C^\mathsf{uni}$};
+			\draw      [->] (Cs) -- (Cu);
+			\node (Cr) at (0, 6) [rectangle]  {$C^\mathsf{r}$};
+			\draw      [->] (Cu) -- (Cr);
+			\node (t)  at (0, 7.5)              {$\mathcal{T}$};
+			\draw      [-o] (Cr) -- (t);
+			\draw[dashed] +(-2, -0.8) rectangle +(2, 6.8) +(1.8, 7) node {$UC$};
+		\end{tikzpicture}
+		\caption{Unicity Certificate is a chain of certificates and a certified input data record $IR$} \label{fi:uc}
+	\end{minipage}
+\end{figure}
+
+See Fig.~\ref{fi:inc-proof} for the Inclusion Proof structure and Fig.~\ref{fi:uc} for the Unicity Certificate. The Inclusion Proof contains an SMT leaf $L = (\mathsf{sid}, \txhash)$ where $\mathsf{sid} = H(\predi, \sthash)$ is a state identifier and $\txhash$ is a transaction hash. The Inclusion Certificate $C^\mathsf{inc}$ connects the leaf to the SMT root hash $h$ in the Input Record. The Unicity Certificate then chains through the shard tree, unicity tree, and unicity seal to the global root of trust: Unicity Trust Base $\mathcal{T}$.
+
+
+\subsection{Sparse Merkle Tree}\label{sec:smt}
+
+\index{sparse merkle tree}\index{SMT}
+The aggregation layer maintains a \emph{Sparse Merkle Tree} (SMT) in compressed paths form. The SMT maps state identifiers to transaction hashes and provides compact inclusion proofs. Refer to Appendix \ref{app:smt} for details.
+
+
+\subsubsection{SMT Leaf Structure}
+
+An SMT leaf contains a key-value pair:
+\begin{itemize}
+	\item \textbf{Key}: State identifier $\mathsf{sid} = H(\predi, \sthash)$ where:
+	\begin{itemize}
+		\item $\predi$ -- spending predicate of the token owner (Sec.~\ref{sec:predicates})
+		\item $\sthash$ -- state hash representing the current state of a token
+	\end{itemize}
+	\item \textbf{Value}: Transaction data hash $\txhash$.
+\end{itemize}
+
+The SMT effectively maintains a mapping $\mathsf{sid} \mapsto \txhash$ that proves a state transition from state identifier $\mathsf{sid}$ was authorized via transaction with hash $\txhash$. This prevents double-spending: once a state identifier is registered in the SMT with a transaction hash, that state cannot be spent again.
+
+\subsubsection{Inclusion Certificate}\label{InclusionCert}
+
+\index{$C^\mathsf{inc}$ (Inclusion Certificate)}\index{Inclusion Certificate}
+An \emph{Inclusion Certificate} $C^\mathsf{inc}$ for a leaf with key $\mathsf{sid}$ is a sequence of pairs:
+\begin{equation*}
+C^\mathsf{inc} = \langle (p_1, d_1), (p_2, d_2), \ldots, (p_n, d_n) \rangle
+\end{equation*}
+where each pair $(p_i, d_i)$ consists of:
+\begin{itemize}
+	\item $p_i \in \bitstr$ -- a path segment (bit-string)
+	\item $d_i \in \hashtype \cup \bytes{\ast}$ -- for $i=1$ this is the leaf data, for $i>1$ this is a sibling hash value
+\end{itemize}
+
+The first pair $(p_1, d_1)$ contains the leaf's path segment and data. Each subsequent pair $(p_i, d_i)$ for $i > 1$ represents a step up the tree where $p_i$ is the path segment from the current node to its parent, and $d_i$ is the sibling hash value.
+
+The concatenated path $p_1 \| p_2 \| \ldots \| p_n$ equals the full key $\mathsf{sid}$. The respective value $d_1$ records $\txhash$.
+
+The verification function $\Call{smt\_verify\_inclusion}$ is provided in Appendix~\ref{sec:smt-verify-inclusion}.
+
+\subsection{Shard Tree Certificate}\label{se:shard-tree-cert}
+
+\emph{Shard Tree Certificate}\index{$C^\mathsf{shard}$ (shard tree certificate)}\index{shard tree certificate} connects the SMT root hash from a shard aggregator to a leaf of unicity tree. It is a tuple $C^\mathsf{shard} = (\sigma; h^s_1, \ldots, h^s_{|\sigma|})$, where:
+\begin{enumerate}
+	\item $\sigma=\sigma_1\sigma_2\ldots \sigma_{|\sigma|}$ is a shard identifier of type $\{0,1\}^\ast$
+	\item $h^s_1, \ldots, h^s_{|\sigma|}$ -- sibling hashes of type $\hashtype$
+\end{enumerate}
+
+For the single shard case, the sharding scheme is $\{\emptystr\}$ and the certificate is $(\emptystr, \bot)$.
+
+\subsubsection{Sharded SMT Structure}
+% TODO: no hierarchy of aggregator nodes
+In a sharded setting, each shard aggregator node maintains an SMT for its portion of the key space. The parent aggregator maintains a non-sparse tree (with all leaves present) where each leaf corresponds to a shard's SMT root hash.
+
+To facilitate integration, each shard aggregator computes its root hash as $h_{\mathsf{root}} = H(p, h_L, h_R)$ where $p$ is a 1-bit path consisting of the leftmost bit of the shard identifier. This ensures the shard root hash can be directly used as a leaf value in the parent aggregator's tree.
+
+\subsubsection{Creation: $\mathsf{CreateShardTreeCert}$}\label{se:create-shard-tree-cert}
+
+\textbf{Input}:\index{functions!CreateShardTreeCert}
+\begin{enumerate}
+	\item $\sigma$ -- shard identifier
+	\item $\chi$ -- shard tree of type $\chi \colon \overline{\mathcal{SH}}\to \hashtype$
+\end{enumerate}
+
+\textbf{Output}: shard tree certificate $C^\mathsf{shard}=(\sigma; h^s_1, \ldots , h^s_{|\sigma|})$
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\State $C \gets ()$
+	\For{$i \gets  |\sigma|$ downto $1$}
+		\State $C \gets C \mathbin{\|} \chi(\sigma_1\sigma_2\ldots\sigma_{i-1}\overline{\sigma_i})$
+	\EndFor
+	\State \Return $(\sigma; C)$
+\end{algorithmic}
+
+where $\sigma_1\sigma_2\ldots\sigma_m$ is the binary representation of $\sigma$, and $\overline{\sigma_i}$ is the binary complement of $\sigma_i$.
+
+For the single shard case, the shard certificate is $(\emptystr,\bot)$.
+
+\subsubsection{Computation: $\mathsf{CompShardTreeCert}$}\index{functions!CompShardTreeCert}
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $(\sigma;h^s_1, \ldots, h^s_{|\sigma|})$ -- shard tree certificate, where $\sigma=\sigma_1\sigma_2\ldots \sigma_{|\sigma|}$ is a shard identifier
+	\item $IR$ -- Shard Input Record
+	\item $h_t$ -- hash value of type $\hashtype$
+\end{enumerate}
+\textbf{Output}: Root hash $r$ of type $\hashtype$
+
+\textbf{Computation}:
+
+\begin{algorithmic}[0]
+	\State $r \gets H(IR \mathbin{\|} h_t)$
+	\For {$i \gets |\sigma|$ downto $1$ }
+		\State \textbf{if} $\sigma_i = 0$ \textbf{then} $r \gets  H(r, h^s_i)$
+		\State \textbf{if} $\sigma_i = 1$ \textbf{then} $r \gets  H(h^s_i, r)$
+	\EndFor
+	\State \Return $r$
+\end{algorithmic}
+
+For the single shard case, $\mathsf{CompShardTreeCert}((\emptystr, \bot), IR, h_t)$ returns $H(IR \mathbin{\|} h_t)$.
+
+\subsection{Unicity Tree Certificate}\label{se:unicity-tree-certificate}
+
+\emph{Unicity Tree Certificate}\index{$C^\mathsf{uni}$ (unicity tree certificate)}\index{unicity tree certificate} (Fig.~\ref{fi:uc}) is a tuple $C^\mathsf{uni} = (\beta, \mathsf{dhash}; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$, where:
+\begin{enumerate}
+	\item $\beta$ -- partition identifier of type $\mathbb{C}$
+	\item $\mathsf{dhash}$ -- partition description hash of type $\hashtype$
+	\item $(\beta_2, h_2), \ldots, (\beta_\ell, h_\ell)$ -- a sequence of partition identifier and sibling hash pairs
+\end{enumerate}
+
+\subsubsection{Creation: $\mathsf{CreateUnicityTreeCert}$}\label{se:create-unicity-tree-cert}\index{functions!CreateUnicityTreeCert}
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\beta$ -- partition identifier of type $\mathbb{C}$
+	\item $\mathcal{C}$ -- set of partition identifiers of type $\mathbb{C}$
+	\item $\mathcal{CD}$ -- partition description of type $\mathbb{CD}[\mathcal{C}]$
+	\item $\mathcal{IH}$ -- input hashes of type $\hashtype[\mathcal{C}]$
+\end{enumerate}
+
+\textbf{Output}: unicity tree certificate $(\beta, \mathsf{dhash}; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\State $n \gets \len{\mathcal{C}}$ \Comment{Number of partitions}
+	\State $C \gets \mathsf{sorted}(\mathcal{C})$ \Comment{Sorted list}
+	\For{$i \gets 1 \ldots n$}
+		\State $x_i \gets H(\mathcal{IH}[C_i] \mathbin{\|} H(\mathcal{CD}[C_i]))$
+	\EndFor
+	\State $\langle (\beta_1, h_1), (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell) \rangle \gets \Call{\textsc{index\_tree\_chain}}{(C_1, x_1), (C_2, x_2), \ldots, (C_n, x_n), \beta}$ %\Comment{Sec.~\ref{sec:index-tree-chain}}
+	\State \Return $(\beta, H(\mathcal{CD}[\beta]); (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$ \Comment{Drop redundant first hash step}
+\end{algorithmic}
+
+\subsubsection{Computation: $\mathsf{CompUnicityTreeCert}$}
+\index{unicity tree certificate!computation}
+\textbf{Input}:
+\begin{enumerate}
+	\item $(\beta, \mathsf{dhash}; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$ -- unicity tree certificate
+	\item $x$ -- input hash (output of the $\mathsf{CompShardTreeCert}$ function)
+\end{enumerate}
+\textbf{Output}: Root hash $r$ of type $\hashtype$
+
+\textbf{Computation}:
+\begin{algorithmic}[0]
+	\State $L \gets \langle (\beta, H(x, \mathsf{dhash})), (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell) \rangle$ \Comment{Restore the first hash step}
+	\State \Return $\Call{\textsc{index\_tree\_output}}{L; \beta}$ \Comment{Sec.~\ref{sec:index-tree-output}}
+\end{algorithmic}
+
+
+\subsection{Unicity Seal}
+
+\emph{Unicity Seal}\index{$C^\mathsf{r}$ (unicity seal)}\index{unicity seal} is a tuple $C^\mathsf{r} = (\alpha, n_r, e_r, t_r, r_-, r; s)$, where:
+\begin{enumerate}
+	\item $\alpha$ -- Network identifier
+	\item $n_r$ -- BFT Core's Round number
+	\item $e_r$ -- BFT Core's Epoch number
+	\item $t_r$ -- Round creation time (wall clock value specified and verified by the BFT Core), with one-second precision. See Appendix~\ref{app:encodings} for encoding
+	\item $r_-$ -- Root hash of previous round's Unicity Tree
+	\item $r$ -- Root hash of the Unicity Tree (denoted as $r^{\text{root}}$ if necessary for clarity)
+	\item $s$ -- Signature, computed by the BFT Core over preceding fields ($s = \mathsf{Sign}_{\mathsf{sk}_r}(n_r, e_r, t_r, r_-, r)$). The formulation of signature field depends on underlying consensus mechanism and its parameters. Here we assume an opaque data structure which can be verified based on the Unicity Trust Base, i.e., there is an implementation of an abstract function $\mathsf{Verify}_{\mathcal{T}}((n_r, e_r, t_r, r_-, r), s)$, encapsulated into the implementation of $\mathsf{VerifyUnicitySeal}$.
+\end{enumerate}
+
+$\mathsf{VerifyUnicitySeal}$ -- unicity seal verification function of type $\hashtype \times \mathbb{US} \times \mathbb{UB} \to \bool$\;. This function also verifies, if Unicity Seal's network identifier matches with the Unicity Trust Base.
+
+\subsection{Unicity Certificate}\label{se:unicity-certificate}\index{$UC$ (unicity certificate)}
+
+\emph{Unicity Certificate} is a tuple $UC = (IR, h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$, where:
+\begin{enumerate}
+    \item $\mathcal{IR}$ is a shard input record of type $\mathbb{IR}$ (Sec.~\ref{shard-input-record}),
+    \item $h_t$ is the hash (of technical record) of type $\hashtype$,
+    \item $C^\mathsf{shard}$ is a shard tree certificate,
+    \item $C^\mathsf{uni}$ is a unicity tree certificate, and
+    \item $C^\mathsf{r}$ is a unicity seal
+\end{enumerate}
+
+Elements of the tuple form an authenticated chain, see function \nameref{VerifyUnicityCert}.
+
+
+\subsubsection{Verication: $\mathsf{VerifyUnicityCert}$}\label{VerifyUnicityCert}\index{functions!VerifyUnicityCert}
+
+Verifies if unicity certificate is valid, based on unicity trust base as the root of trust.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $UC = (IR, h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$ -- Unicity Certificate
+	\item $\mathcal{T}$ -- Unicity Trust Base
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+
+\begin{algorithmic}[0]
+	\State $r\gets \mathsf{CompShardTreeCert}(UC.C^\mathsf{shard}, UC.IR, UC.h_t)$
+	\State $r\gets \mathsf{CompUnicityTreeCert}(UC.C^\mathsf{uni}, r)$
+	\State \Return $\mathsf{VerifyUnicitySeal}(r, C^\mathsf{r}, \mathcal{T}) = 1$
+\end{algorithmic}
+
+
+\section{Proofs}\label{se:proofs}
+
+\subsection{Inclusion Proof}
+
+\emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state transition (mapping from state identifier to transaction hash) has been registered in the SMT and certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (L, C^\mathsf{inc}, UC)$, where:
+\begin{enumerate}
+	\item $L$ -- SMT leaf containing the state transition
+	\item $C^\mathsf{inc}$ -- Inclusion Certificate (Sec.~\ref{InclusionCert})
+	\item $UC$ -- unicity certificate (Sec.~\ref{se:unicity-certificate})
+\end{enumerate}
+
+\subsubsection{SMT Leaf}
+
+An SMT leaf $L$ is a tuple $L = (\mathsf{sid}, \txhash)$, where:
+\begin{itemize}
+	\item $\mathsf{sid} = H(\predi, \sthash)$ -- state identifier, computed as the hash of the token owner's spending predicate and state hash
+	\item $\txhash$ -- transaction data hash
+\end{itemize}
+
+SMT Leaf can be extracted from Inclusion Certificate like this:
+
+\textbf{Input}: $C^\mathsf{inc} = \langle (p_1, d_1), (p_2, d_2), \ldots, (p_n, d_n) \rangle$ -- Inclusion Certificate
+
+\textbf{Output}: $L = (\mathsf{sid}, h_{\mathsf{tx}})$ -- SMT Leaf
+
+\textbf{Computation}:
+\begin{algorithmic}[0]
+	\State $\mathsf{sid} \gets p_1 \| p_2 \| \ldots \| p_n$ \Comment{Concatenate all path segments}
+	\State $h_{\mathsf{tx}} \gets d_1$ \Comment{Extract leaf data from first pair}
+	\State \Return $(\mathsf{sid}, h_{\mathsf{tx}})$
+\end{algorithmic}
+
+\subsubsection{Verification: $\mathsf{VerifyInclusionProof}$}\label{VerifyInclusionProof}\index{functions!VerifyInclusionProof}
+
+$\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type $\mathbb{IP} \times \mathbb{UB} \times \mathbb{CD} \to \bool$
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\pi^\mathsf{inc} = (C^\mathsf{inc}, UC)$ -- inclusion proof
+	\item $\mathcal{T}$ -- trust base
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}[0]
+	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
+	\If {$\neg \Call{smt\_verify\_inclusion}{\mathsf{sid}, h_{\mathsf{tx}}, C^\mathsf{inc}, h}$} \Return \FALSE \EndIf
+	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
+	\State \Return \TRUE
+\end{algorithmic}
+
+The inclusion proof applies to the leaf which matches the leaf extracted from the Inclusion Certificate.
+
+\subsection{Non-Inclusion Proof}
+
+\emph{Non-Inclusion Proof}\index{$\pi^\mathsf{exc}$ (non-inclusion proof)}\index{non-inclusion proof}\index{exclusion proof} proves that a state identifier does NOT exist in the SMT. It cryptographically demonstrates that a StateID is absent from the tree by showing the path to where it would be located if it existed.
+
+A non-inclusion proof uses the same data structure as the inclusion proof but with different interpretation. The non-inclusion proof $\pi^\mathsf{exc} = (C^\mathsf{inc}, UC)$ of $\mathsf{sid}$ is valid if $\mathsf{VerifyInclusionProof}(\pi^\mathsf{exc}, \mathcal{T}) = \TRUE$ and $p_1$ is a prefix of $\mathsf{sid}$ and $d_1 = \emptyset$.
+
+
+\subsection{Consistency Proof}\label{sec:consistency-proof}
+
+\index{consistency proof}\index{$\pi_{CP}$ (consistency proof)}
+A \emph{Consistency Proof} (also called \emph{non-deletion proof}) is a cryptographic construction that validates one round of operation of the append-only SMT maintained by aggregation layer nodes. It proves that the state transition from previous SMT root hash $h'$ to current SMT root hash $h$ was performed correctly: only new leaves were added, and no pre-existing leaves were removed or modified.
+
+The consistency proof enables the BFT Core to verify the integrity of the Aggregation Layer's operations in a trustless manner.
+
+For a batch of state transitions processed in a single round, the consistency proof $\pi_{CP}$ of type $\mathbb{CP}$ is a tuple $(B, \Pi)$ where $B$ is the batch of new SMT leaves and $\Pi$ contains the sibling hashes needed for verification (see Appendix~\ref{app:smt-consistency-proof} for detailed structure).
+
+\subsubsection{Verification Function}\label{VerifyConsistencyProof}\index{functions!VerifyConsistencyProof}
+
+$\mathsf{VerifyConsistencyProof}$ -- consistency proof verification function of type $\mathbb{CP} \times \hashtype \times \hashtype \to \bool$
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\pi_{CP} = (B, \Pi)$ -- consistency proof where $B = \langle (\mathsf{sid}_1, h_{\mathsf{tx},1}), \ldots, (\mathsf{sid}_j, h_{\mathsf{tx},j}) \rangle$
+	\item $h'$ -- previous SMT root hash (before the round)
+	\item $h$ -- current SMT root hash (after the round)
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+The verification algorithm is defined in Appendix~\ref{sec:smt-verify-consistency-proof}.
+
+A valid consistency proof guarantees: (1) \textbf{Append-only property}: No existing leaves were deleted or modified; (2) \textbf{Correctness}: All new leaves in batch $B$ were correctly inserted at positions determined by their state identifiers; (3) \textbf{Completeness}: The state transition from $h'$ to $h$ includes exactly the leaves in $B$ and no others.
+
+
+%%%%%%%% BFT Core
+
+\chapter{BFT Core}
+
+\section{Data Structures of the BFT Core}
+
+\subsection{Shard Input Record}\label{shard-input-record}
+
+\emph{Shard input record} ($IR$)\index{$IR$ (input record)} of a shard of a partition (of type $\mathbb{IR}$) is a tuple $(n, e, h', h, t)$, where:
+\begin{enumerate}
+	\item $n$ -- shard's round number of type $\uint{64}$
+	\item $e$ -- shard's epoch number of type $\uint{64}$
+	\item $h'$ -- previous round's SMT root hash of type $\hashtype$
+	\item $h$ -- current round's SMT root hash of type $\hashtype$
+	\item $t$ -- reference time for request validation of type $\uint{64}$
+\end{enumerate}
+
+%The consistency proof $\pi_{CP}$ allows the BFT Core to verify that the state transition from $h'$ to $h$ was computed correctly by the aggregation layer nodes maintaining the SMT for this shard.
+
+%Shard input record is created by the BFT Core in response to a certification request. The fields $n, e, h', h, v, h_B, f_B$ are copied from the certification request, and $h_t$ is added by the BFT Core.
+
+%The field descriptions above apply to a committed (certified) Input Record. In the state certification \emph{request}, the fields are interpreted as follows: $h'$ - root hash to be extended (that is, of the last certified round), $h$, $v$, $h_B$ - values proposed for certification and $n$ is incremented for the proposed round.
+
+\subsection{Statistical Record}\label{statistical-record}
+
+Statistical record of type $\mathbb{SR}$ is a tuple $\mathsf{SR}=(n_e, \overline{\ell}_B, \overline{\ell}_S, \hat{\ell}_B, \hat{\ell}_S)$, where:\index{statistical record ($\mathsf{SR}$)}
+\begin{enumerate}
+	\item $n_e$ -- number of non-empty rounds (adding at least one new leaf), of type $\uint{64}$
+	\item $\overline{\ell}_S$ -- memory usage of the SMT, of type $\uint{64}$
+	\item $\hat{\ell}_B$ -- maximum number of SMT additions processed during a round, of type $\uint{64}$
+\end{enumerate}
+
+There is one Statistical Record of current epoch where the values are being updated, reflecting the current state since the beginning of the epoch; and one invariant Statistical Record of the preceding epoch of every shard of every public partition.
+
+\subsection{Technical Record}\label{technical-record}
+
+Technical record\index{technical record ($\mathbb{TE}$)} of type $\mathbb{TE}$ is a tuple $\mathsf{TE}=(n_r, e_r, \nu_\ell, h_\mathsf{sr})$, where:
+\begin{enumerate}
+	\item $n_r$ -- suggested next round number of type $\uint{64}$
+	\item $e_r$ -- suggested next epoch number of type $\uint{64}$
+	\item $\nu_\ell$ -- suggested leader identifier of type $\{0,1\}^\ast$
+	\item $h_\mathsf{sr}$ -- hash of statistical records; type $\hashtype$
+\end{enumerate}
+
+Technical record is delivered with an Unicity Certificate. When a shard is extending the Unicity Certificate with a next round certification attempt, then it must use the suggested values provided in Technical Record.
+
+There is one Technical Record for every shard of every partition, providing synchronization for the next round.
+
+\subsection{Shard Info}
+
+\emph{Shard info}\index{shard!shard info} of type $\mathbb{SI}$ is a tuple $(n, e, h_-, \mathsf{SR}_-, \mathsf{SR}, \mathcal{V}, \nu_\ell, UC_-)$, where:
+\begin{enumerate}
+	\item $n$ -- shard's round number of type $\uint{64}$
+	\item $e$ -- shard's epoch number of type $\uint{64}$
+	\item $h_-$ -- last-certified root hash
+	\item $\mathsf{SR}_-$ -- statistical record of the previous epoch
+	\item $\mathsf{SR}$ -- statistical record of the current epoch, initially (at each epoch) $(0,0,0,0,0)$
+	\item $\mathcal{V}$ -- validators of the shard, a set of identifiers, each of type $\{0,1\}^\ast$
+	\item $\nu_\ell$ --  leader identifier of type $\{0,1\}^\ast$ (it is assumed that $\nu_\ell\in \mathcal{V}$)
+	\item $UC_-$ -- last created unicity certificate
+\end{enumerate}
+
+\subsection{Shard Tree}\label{se:shard-tree}
+
+For a partition $\beta$, let $\mathcal{SH}_\beta = \mathcal{CD}[\beta].\mathcal{SH}$, and
+$\mathcal{IRT}_\beta$ be of type $(\mathbb{IR},\hashtype)[\mathcal{SH}_\beta]$, i.e. for
+every $\beta\in\mathcal{C}$ and $\sigma\in\mathcal{SH}_\beta$, $\mathcal{IRT}_\beta[\sigma]=(\mathcal{IR},h_t)$ (for some $\mathcal{IR}$ and $h_t$).
+
+If there is no input from a shard to certify then $\mathcal{IRT}_\beta[\sigma] = \mathcal{IRT}_\beta[\sigma]_-$, that is, the value from the previously built Shard Tree is used. If there is no previous value then $\mathcal{IRT}_\beta[\sigma] = \zerohash$.
+
+Shard tree\index{shard tree} for a partition $\beta$ is a function $\chi_\beta \colon \overline{\mathcal{SH}_\beta} \to \hashtype$ such that:
+\begin{enumerate}
+	\item If $\sigma\in\mathcal{SH}_\beta$, then $\chi_\beta(\sigma) = H(\mathcal{IRT}_\beta[\sigma]) =H(\mathcal{IRT}_\beta[\sigma].\mathcal{IR} \mathbin{\|} \mathcal{IRT}_\beta[\sigma].h_t)$.
+	\item If $\sigma\in \overline{\mathcal{SH}_\beta}\backslash\mathcal{SH}_\beta$, then
+		$\chi_\beta(\sigma) = H(\chi_\beta(\sigma\| 0)\, \mathbin{\|} \,\chi_\beta(\sigma\| 1))$.
+\end{enumerate}
+The value $\chi_\beta(\lfloor\!\rfloor)$ is called the root hash of the shard tree.
+
+\emph{Shard tree certificate} for a shard $\sigma\in \mathcal{SH}_\beta$ is a sequence $h^s_1, \ldots, h^s_m$ of sibling hash values of type $\hashtype$, where $m=|\sigma|$ (the number of bits in $\sigma$); see Sec.~\ref{se:shard-tree-cert}.
+
+\subsubsection{Shard Tree Creation: $\mathsf{CreateShardTree}$}\label{se:create-shard-tree}\index{functions!CreateShardTree}
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\mathcal{SH}$ -- sharding scheme of type $\mathbb{SH}$
+	\item $\mathcal{IRT}$ -- shard-specific data of type $(\mathbb{IR},\hashtype)[\mathbb{SH}]$
+\end{enumerate}
+\textbf{Output}: $\chi$ -- shard tree of type $\overline{\mathcal{SH}}\to \hashtype$
+
+\textbf{Computation}:
+$\chi\gets \bot$, $\mathsf{genST}(\emptystr)$
+
+where $\mathsf{genST}$ is the following recursive function of type $\bitstr\to \hashtype$ with side effects:
+\medskip
+
+$\mathsf{genST}(\sigma)$:
+\begin{enumerate}
+	\item \textbf{if} $\sigma\in \mathcal{SH}$, \textbf{then store}  $\chi(\sigma) \gets H(\mathcal{IRT}[\sigma])$ and \textbf{return} $\chi(\sigma)$.
+	\item\textbf{if} $\sigma\in \overline{\mathcal{SH}}\backslash\mathcal{SH}$, \textbf{then store}
+		$\chi(\sigma) \gets H(\mathsf{genST}(\sigma\| 0) \mathbin{\|} \mathsf{genST}(\sigma\| 1))$ and \textbf{return} $\chi(\sigma)$
+\end{enumerate}
+
+For the single shard case, the shard tree is $\{(\emptystr, H(\mathcal{IRT}[\sigma])\}$, i.e. it only has a single record for the root hash $\chi(\emptystr)=H(\mathcal{IRT}[\sigma])$.
+
+\subsection{Unicity Tree}\index{Unicity Tree}
+
+Unicity Tree is an indexed Merkle tree that aggregates the state of all partitions in the network.
+
+\subsubsection{Creation: $\mathsf{CreateUnicityTree}$}\label{se:create-unicity-tree}\index{functions!CreateUnicityTree}
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\mathcal{C}$ -- set of partition identifiers of type $\mathbb{C}$
+	\item $\mathcal{CD}$ -- partition description of type $\mathbb{CD}[\mathcal{C}]$
+	\item $\mathcal{IH}$ -- input hashes of type $\hashtype[\mathcal{C}]$
+\end{enumerate}
+\textbf{Output}: $r$ -- unicity tree root hash of type $\hashtype$
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\State $n \gets \len{\mathcal{C}}$ \Comment{Number of partitions}
+	\State $C \gets \mathsf{sorted}(\mathcal{C})$ \Comment{Sorted list}
+	\For{$i \gets 1 \ldots n$}
+		\State $x_i \gets H(\mathcal{IH}[C_i] \mathbin{\|} H(\mathcal{CD}[C_i]))$
+	\EndFor
+	\State \Return $\Call{\textsc{index\_tree\_root}}{(C_1, x_1), (C_2, x_2), \ldots, (C_n, x_n)}$ \Comment{Sec.~\ref{sec:index-tree-root}}
+\end{algorithmic}
+
+\section{State of the BFT Core}
+
+\emph{State of the BFT Core}\index{BFT Core!BFT Core state} is a tuple $(\alpha, n, e, r_-, \mathcal{T}, \mathcal{C}, \mathcal{CD}, \mathcal{SI})$, where:
+\begin{enumerate}
+	\item $\alpha$ -- network identifier of type $\alpha$
+	\item $n$ -- BFT Core's round number of type $\uint{64}$
+	\item $e$ -- BFT Core's epoch number of type $\uint{64}$
+	\item $r_-$ -- previous root hash of the unicity tree of type $\hashtype$
+	\item $\mathcal{T}$ -- unicity trust base of type $\mathbb{UB}$
+	\item $\mathcal{C}$ -- set of partition identifiers, with elements of type $\mathbb{C}$
+	\item $\mathcal{CD}$ -- partition descriptions of type $\mathbb{CD}[\mathbb{C}]$
+	\item $\mathcal{SI}$ -- shard info of type $\mathbb{SI}[\mathbb{C},\{0,1\}^\ast]$
+\end{enumerate}
+
+Epoch number\index{$e$ (epoch number)} can be interpreted as the version number of some shard's or BFT Core's configuration. It is used by supporting layers like orchestration and consensus. On static configuration, the epoch is $0$.
+
+%Hash tree of the BFT Core (the unicity tree) is not considered as part of the state because it is created as a  per-round data-structure.
+
+%In the implementation specification, additional datastructures are added to the state.
+%For example, buffers may be needed for resending messages during communication error recovery, etc.
+
+\section{Messages of the BFT Core}
+
+\subsection{Certification Request}\label{certification-request}
+
+\emph{Certification Request} (CR)\index{certification request (CR)} of a shard is a message $\langle \alpha, \beta, \sigma, \nu; \mathcal{IR}, \ell_B, \ell_S, [\pi_{CP}]; s; \rangle$, where:
+\begin{enumerate}
+	\item $\alpha$ -- network identifier of type $\mathbb{A}$
+	\item $\beta$ -- partition identifier of type $\mathbb{C}$
+	\item $\sigma$ -- shard identifier of type $\mathbb{SH}$
+	\item $\nu$ -- validator identifier (aggregation layer node identifier) of type $\{0,1\}^\ast$
+	\item $\mathcal{IR}$ -- shard input record of type $\mathbb{IR}$
+	\item $\ell_B$ -- number of added new SMT leaves during the round, type $\uint{64}$
+	\item $\ell_S$ -- SMT memory usage in bytes of type $\uint{64}$
+	\item $\pi_{CP}$ -- consistency proof of type $\mathbb{CP}$ (Sec.~\ref{sec:consistency-proof})
+	\item $s$ -- signature authenticating the message
+\end{enumerate}
+
+Certification requests are sent to the BFT Core by the aggregation layer nodes (validators) implementing the shards.
+
+\subsection{Certification Response}\label{certification-response}
+
+\emph{Certification Response} (CReS)\index{certification response (CReS)} of a shard is a message $\langle \alpha, \beta, \sigma, \mathsf{TE}; UC \rangle$, where:
+\begin{enumerate}
+	\item $\alpha$ -- network identifier of type $\mathbb{A}$
+	\item $\beta$ -- partition identifier of type $\mathbb{C}$
+	\item $\sigma$ -- shard identifier of type $\mathbb{SH}$
+	\item $\mathsf{TE}$ -- technical record of type $\mathbb{TE}$
+	\item $UC$ -- certified unicity certificate
+\end{enumerate}
+
+Certification response is sent by the BFT Core to the nodes of an aggregation layer nodes as a response to a certification request message. This is an asynchronous message: response is not immediate, and there can be multiple subsequent responses.
+
+\section{Functional Description of the BFT Core}
+
+\index{BFT Core!functional description}
+During every round, the BFT Core receives certification requests from the shards of partitions
+$\beta \in \mathcal{C}$.
+
+The BFT Core certifies the SMT root hashes provided by the aggregation layer nodes. Each shard maintains an SMT for its portion of the key space. When aggregation layer nodes process Unicity Service Requests (as specified in Sec.~\ref{sec:request-validation}), they update their SMTs by setting leaves. The BFT Core certifies these updates by:
+\begin{enumerate}
+	\item Receiving certification requests containing the new SMT root hash $h$ and previous root hash $h'$
+	\item Verifying the consistency proof $\pi_{CP}$ that proves correct SMT manipulation
+	\item Certifying the new root hash via the Unicity Certificate
+\end{enumerate}
+
+As every shard $\sigma$ of a partition $\beta$ is implemented by a redundant distributed system with certain number $m=|\mathcal{SI}[\beta,\sigma].\mathcal{V}|$ of validator machines, it is possible that several certification requests $\mathsf{CR}_{\beta,\sigma}$ with the same $\mathsf{CR}_{\beta,\sigma}.\mathcal{IR}.h'$ but different $\mathsf{CR}_{\beta,\sigma}.\mathcal{IR}.h$ are received. This is solved by a majority voting mechanism requiring that
+%\begin{enumerate}
+%	\item
+	a required majority, at least $\lfloor m/2\rfloor + 1$ of the dedicated validators, send $\mathsf{CR}_{\beta,\sigma}$ with an identical value of $\mathsf{CR}_{\beta,\sigma}.\mathcal{IR}.h$.
+%	\item The leader $\mathcal{SI}[\beta,\sigma].\nu_\ell$ is in the majority
+%\end{enumerate}
+It is possible that not every shard sends its shard input record to the BFT Core during the round, and the majority voting may fail (see the Consensus specification for details).
+
+
+For every incoming certificate request $\mathsf{CR}=\langle \alpha, \beta, \sigma, \nu; t, \mathcal{IR}, \ell_B, \ell_S\rangle$ the following checks are made
+(if any of them fails, $\mathsf{CR}$ is discarded):
+\begin{enumerate}
+\item $\mathsf{CR}.\alpha = \alpha$ -- request came from the same network instance
+\item $\mathsf{CR}.\beta\in \mathcal{C}$ and $\sigma\in \mathcal{CD}[\mathsf{CR}.\beta].\mathcal{SH}$ -- request came from a legitimate shard of a registered partition
+\item $\mathsf{CR}.\nu\in \mathcal{SI}[\mathsf{CR}.\beta, \mathsf{CR}.\sigma].\mathcal{V}$ -- request came from an authorized aggregation layer node
+\item $\mathsf{CR}.\mathcal{IR}.n=\mathcal{SI}[\beta,\sigma].n + 1$ -- round number is correctly incremented
+\item $\mathsf{CR}.\mathcal{IR}.e=\mathcal{SI}[\beta,\sigma].e$ -- epoch number matches
+\item $\mathsf{CR}.\mathcal{IR}.h'=\mathcal{SI}[\beta,\sigma].h_-$ -- previous round's SMT root hash in IR matches the recorded one
+\item $\mathcal{CD}[\beta].\gamma_{CP}(\mathsf{CR}.\mathcal{IR}, \mathsf{CR}.\pi_{CP})$ -- consistency proof verification (Sec.~\ref{sec:consistency-proof}) succeeds: verify $\mathsf{VerifyConsistencyProof}(\mathsf{CR}.\pi_{CP}, \mathsf{CR}.\mathcal{IR}.h', \mathsf{CR}.\mathcal{IR}.h) = \TRUE$ and $|B| = \mathsf{CR}.\ell_B$ (batch size matches).
+\item $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta, \sigma].UC_-.IR.C^\mathsf{r}.t$ -- time reference is equal to the time field of the previous unicity seal
+\end{enumerate}
+Only one (majority-voted) certificate request (denoted by $\mathsf{CR}_{\beta,\sigma}$) is accepted from every shard.
+
+When the BFT Core's round $n$ is completed, then:
+\begin{enumerate}
+	\item For every $\beta\in\mathcal{C}$, and $\sigma\in \mathcal{SH}_\beta$ with accepted certificate request \footnote{Please refer to the Consensus chapter for details; notably a ``request'' may be induced for technical reasons}:
+	\begin{enumerate}
+		\item $\mathcal{SI}[\beta, \sigma].n \gets \mathsf{CR}.\mathcal{IR}.n$
+		\item $\mathcal{SI}[\beta, \sigma].h_- \gets \mathsf{CR}.\mathcal{IR}.h$
+		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.n_e \gets \mathcal{SI}[\beta, \sigma].\mathsf{SR}.n_e + 1$
+		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_B \gets \mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_B + \mathsf{CR}.\mathcal{IR}.\ell_B$
+		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_S \gets \mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_S + \mathsf{CR}.\mathcal{IR}.\ell_S$
+		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_B \gets \max\{\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_B, \mathsf{CR}.\mathcal{IR}.\ell_B\}$
+		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_S \gets \max\{\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_S, \mathsf{CR}.\mathcal{IR}.\ell_S\}$
+		\item The leader for next round: \\
+			$\mathcal{SI}[\beta, \sigma].\nu_\ell \gets \Call{leaderfunc}{UC_-, \mathcal{SI}[\beta, \sigma].\mathcal{V}}$
+		\item Technical record: \\
+			$\mathcal{TE}_{\beta,\sigma} \gets (\mathcal{SI}[\beta,\sigma].n+1, \mathcal{SI}[\beta,\sigma].e, \mathcal{SI}[\beta,\sigma].\nu_\ell, h_\mathsf{sr})$ \;, \\
+			where $h_\mathsf{sr}=H(\mathcal{SI}[\beta,\sigma].\mathsf{SR}_-, \mathcal{SI}[\beta,\sigma].\mathsf{SR})$
+	\end{enumerate}
+
+	\item For every registered partition $\beta\in\mathcal{C}$, the collected certification requests $\mathsf{CR}_{\beta,\sigma}$ are converted to a temporary data structure $\mathcal{IRT}_\beta$ of type $(\mathbb{IR},\hashtype)[\mathcal{SH}_\beta]$, where $\mathcal{SH}_\beta=\mathcal{CD}[\beta].\mathcal{SH}$,
+	and $\mathcal{IRT}_\beta[\sigma]=(\mathsf{CR}_{\beta,\sigma}.\mathcal{IR}, H(\mathcal{TE}_{\beta,\sigma}))$; \\
+	if there is no request then respective leaf repeats its previous value. If there is no previous value, the leaf is initialized to $\zerohash$.
+	\item For every $\beta\in\mathcal{C}$, the shard tree $\chi_\beta$  (Sec.~\ref{se:shard-tree}) is created by the function call $\chi_\beta\gets\mathsf{CreateShardTree}(\mathcal{SH}_\beta,\mathcal{IRT}_\beta)$ (Sec.~\ref{se:create-shard-tree}).
+	\item A temporary data structure $\mathcal{IH}$ of type $\hashtype[\mathcal{C}]$ is created such that $\mathcal{IH}[\beta]\gets \chi_\beta(\emptystr)$ for every $\beta\in\mathcal{C}$, i.e. $\mathcal{IH}$ contains the root hashes of the shard trees.
+	\item The root of unicity tree is computed as $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{CD}, \mathcal{IH})$ (Sec.~\ref{se:create-unicity-tree})
+	\item Unicity seal $C^\mathsf{r}=(\alpha, n, e, t, r_-,r; s )$ is created, where $t\gets\mathsf{time}()$ is the current time and $s$ is a "signature" on all other fields. The form of $s$ depends on the used consensus mechanism.
+	\item For every $\beta\in\mathcal{C}$, the unicity tree certificate $C^\mathsf{uni}_\beta$ is created by the function call $C^\mathsf{uni}_\beta\gets \mathsf{CreateUnicityTreeCert}(\beta, \mathcal{C}, \mathcal{CD}, \mathcal{IH})$ (Sec.~\ref{se:create-unicity-tree-cert})
+	\item For every $\beta\in\mathcal{C}$, and $\sigma\in \mathcal{SH}_\beta$:
+	\begin{enumerate}
+		\item The shard tree certificate $C^\mathsf{shard}_{\beta,\sigma}$ (Sec.~\ref{se:shard-tree-cert}) is created by the function call $C^\mathsf{shard}_{\beta,\sigma}\gets \mathsf{CreateShardTreeCert}(\sigma,\chi_\beta)$ (Sec.~\ref{se:create-shard-tree-cert})
+		\item The unicity certificate $UC_{\beta,\sigma}=(\mathcal{IRT}_\beta[\sigma].\mathcal{IR},\mathcal{IRT}_\beta[\sigma].h_t, C^\mathsf{shard}_{\beta,\sigma}, C^\mathsf{uni}_\beta, C^\mathsf{r})$ (Sec.~\ref{se:unicity-certificate}) and the certification response $\mathsf{CReS}_{\beta,\sigma}=\langle \alpha,\beta,\sigma; UC_{\beta,\sigma}, \mathcal{TE}_{\beta,\sigma}\rangle$ are composed (if the shard input have changed)
+		\item The last unicity certificate field is updated by $\mathcal{SI}[\beta,\sigma] UC_-\gets UC$ (if the shard input have changed).
+	\end{enumerate}
+	\item The round number and the previous root hash of the unicity tree are updated by $n\gets n+1$ and $r_-\gets r$.
+\end{enumerate}
+
+When a shard's (identified by $\beta$, $\sigma$) epoch with at least one non-empty round ends, the following assignments are executed:
+\begin{enumerate}
+	\item $\mathcal{SI}[\beta,\sigma].\mathsf{SR}_- \gets \mathcal{SI}[\beta,\sigma].\mathsf{SR}$
+	\item $\mathcal{SI}[\beta,\sigma].\mathsf{SR} \gets (0,0,0,0,0)$
+	\item $\mathcal{SI}[\beta,\sigma].e \gets \mathcal{SI}[\beta,\sigma].e + 1$
+	\item The new validator set $\mathcal{SI}[\beta,\sigma].\mathcal{V}$ is chosen
+\end{enumerate}

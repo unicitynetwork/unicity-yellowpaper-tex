@@ -1,0 +1,28 @@
+\chapter{Bitstrings, Orderings, and Codes}\label{app:ordering}
+
+\section{Bitstrings and Orderings}
+
+By the \emph{topological ordering} $\prec$ of $\bitstr$ we mean the irreflexive total ordering defined as
+follows: $c\|0\|x \prec c \prec c\|1\|y$ for all $c$, $x$, $y$ in $\bitstr$.
+
+For example, the subset $\bits{\le 2}$ is ordered as follows: $\{\mathsf{00}\prec \mathsf{0}\prec \mathsf{01}\prec \emptystr\prec \mathsf{10}\prec \mathsf{1}\prec \mathsf{11}\}$.
+
+
+\section{Prefix-Free Codes}
+
+A \emph{code} is a finite subset $\mathscr{C}$ of $\bitstr$. A code $\mathscr{C}$ is \emph{prefix-free}, if
+no codeword $c\in\mathscr{C}$ is an initial segment of another codeword $c'\in\mathscr{C}$, i.e. if $c\in\mathscr{C}$, then $c\|c''\not\in \mathscr{C}$ for every bitstring $c''\in\bitstr$.
+
+For every code $\mathscr{C}$, the \emph{closure} of $\mathscr{C}$ is the code
+$\overline{\mathscr{C}}=\{c\in\bitstr\colon\;\, \exists c''\colon\, c\|c''\in \mathscr{C}\}$, i.e. $\overline{\mathscr{C}}$ consists of all possible prefixes (including $\emptystr$) of the codewords of
+$\mathscr{C}$.
+
+A prefix-free code $\mathscr{C}$ is \emph{irreducible}, if its closure $\overline{\mathscr{C}}$ satisfies the
+following property. For every $c\in \overline{\mathscr{C}}$, either $c\in\mathscr{C}$ or both $c\|0, c\|1\in \overline{\mathscr{C}}$.
+
+\begin{figure}[hhh]
+	\begin{center}
+		\includegraphics[width= 4cm]{pic/prefix-free-code-and-closure.png}
+		\caption{Irreducible prefix free code $\mathcal{C}$ and its closure $\overline{\mathcal{C}}$.}
+	\end{center}
+\end{figure}

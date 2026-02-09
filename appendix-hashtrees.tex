@@ -1,0 +1,666 @@
+\chapter{Hash Trees}\label{app:hashtrees}
+
+\section{Plain Hash Trees}
+
+\subsection{Function $\textsc{plain\_tree\_root}$}\label{sec:plain-tree-root}
+
+Computes the root value of the plain hash tree with the given $n$ values in its leaves.
+
+\textbf{Input}:
+$L = \langle x_1, \ldots, x_n \rangle \in \hashtype^n$, the list of the values in the $n$ leaves of the tree
+
+\textbf{Output}:
+$r \in \hashtype\opt$, the value in the root of the tree
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{plain\_tree\_root}{$L$}
+		\If {$n = 0$} \Comment{$L = \langle \rangle$}
+			\State \Return $\bot$
+		\ElsIf {$n = 1$} \Comment{$L = \langle x_1 \rangle$}
+			\State \Return $x_1$
+		\Else
+			\State $m \gets 2^{\lfloor \log_2(n-1) \rfloor}$ \Comment{Canonical tree}
+			\State $L_\mathsf{left} \gets \langle x_1, \ldots, x_m \rangle$
+			\State $L_\mathsf{right} \gets \langle x_{m+1}, \ldots, x_n \rangle$
+			\State \Return $H(\Call{plain\_tree\_root}{L_\mathsf{left}} , \Call{plain\_tree\_root}{L_\mathsf{right}})$
+		\EndIf
+	\EndFunction
+\end{algorithmic}
+
+Note that $2^{\lfloor \log_2(n-1) \rfloor}$ is the value of the highest $1$-bit in the binary representation of $n - 1$, which may be the preferred way to compute $m$ in some environments. Splitting the leaves this way results in a structure that allows the root of the tree to be computed incrementally, without having all the leaves in memory at once.
+
+\subsection{Function $\textsc{plain\_tree\_chain}$}\label{sec:plain-tree-chain}
+
+Computes the hash chain from the $i$-th leaf to the root of the plain hash tree with the given $n$ values in its leaves.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $L = \langle x_1, \ldots, x_n \rangle \in \hashtype^n$, the list of the values in the $n$ leaves of the tree
+	\item $i \in \{1, \ldots, n\}$, the index of the starting leaf of the chain
+\end{enumerate}
+
+\textbf{Output}:
+$C = \langle (b_1, y_1), \ldots, (b_\ell, y_\ell) \rangle \in (\bool \times \hashtype)^\ell$, where $y_j$ are the sibling hash values on the path from the $i$-th leaf to the root and $b_j$ indicate whether the corresponding $y_j$ is the right- or left-hand sibling
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{plain\_tree\_chain}{$L; i$}
+		\State \Assert $1 \le i \le n$
+		\If {$n = 1$} \Comment{$L = \langle x_1 \rangle$}
+			\State \Return $\langle \rangle$
+		\Else
+			\State $m \gets 2^{\lfloor \log_2(n-1) \rfloor}$ \Comment{Must match \textsc{plain\_tree\_root}}
+			\State $L_\mathsf{left} \gets \langle x_1, \ldots, x_m \rangle$
+			\State $L_\mathsf{right} \gets \langle x_{m+1}, \ldots, x_n \rangle$
+			\If {$i \le m$}
+				\State \Return $\Call{plain\_tree\_chain}{L_\mathsf{left}; i} \| (0, \Call{plain\_tree\_root}{L_\mathsf{right}})$
+			\Else
+				\State \Return $\Call{plain\_tree\_chain}{L_\mathsf{right}; i-m} \| (1, \Call{plain\_tree\_root}{L_\mathsf{left}})$
+			\EndIf
+		\EndIf
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Function $\textsc{plain\_tree\_output}$}\label{sec:plain-tree-output}
+
+Computes the output hash of the chain $C$ on the input $x$.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $C = \langle (b_1, y_1), \ldots, (b_\ell, y_\ell) \rangle \in (\bool \times \hashtype)^\ell$, where $y_j$ are the sibling hash values on the path from the $i$-th leaf to the root and $b_j$ indicate whether the corresponding $y_j$ is the right- or left-hand sibling
+	\item $x \in \hashtype$, the input hash value
+\end{enumerate}
+
+\textbf{Output}:
+$r \in \hashtype$, output value of the hash chain
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{plain\_tree\_output}{$C; x$}
+		\If {$\ell = 0$} \Comment{$C = \langle \rangle$}
+			\State \Return $x$
+		\Else
+			\State \Assert $b_\ell \in \bool$
+			\If {$b_\ell = 0$}
+				\State \Return $H(\Call{plain\_tree\_output}{\langle (b_1, y_1), \ldots, (b_{\ell-1}, y_{\ell-1}) \rangle; x}, y_\ell)$
+			\Else
+				\State \Return $H(y_\ell, \Call{plain\_tree\_output}{\langle (b_1, y_1), \ldots, (b_{\ell-1}, y_{\ell-1}) \rangle; x})$
+			\EndIf
+		\EndIf
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Inclusion Proofs}
+
+Plain hash trees can be used to provide and verify inclusion proofs. The process for this is as follows:
+
+\begin{itemize}
+	\item To commit to the contents of a list $L = \langle x_1, \ldots, x_n \rangle$:
+		\begin{itemize}
+			\item Compute $r \gets \Call{plain\_tree\_root}{L}$.
+			\item Authenticate $r$ somehow (sign it, post it to an immutable ledger, etc).
+		\end{itemize}
+	\item To generate inclusion proof for $x_i \in L$:
+		\begin{itemize}
+			\item Compute $C \gets \Call{plain\_tree\_chain}{L; i}$.
+		\end{itemize}
+	\item To verify the inclusion proof $C = \langle (b_1, y_1), \ldots, (b_\ell, y_\ell) \rangle$ for $x$:
+		\begin{itemize}
+			\item Check that $\Call{plain\_tree\_output}{C; x} = r$, where $r$ is the previously authenticated root hash value.
+		\end{itemize}
+\end{itemize}
+
+\section{Indexed Hash Trees}
+
+\subsection{Function $\textsc{index\_tree\_root}$}\label{sec:index-tree-root}
+
+Computes the root value of the indexed hash tree with the given $n$ key-value pairs in its leaves.
+
+\begin{figure}[h]
+	\begin{center}
+		\includegraphics[height=5cm]{pic/index-tree.png}
+		\caption{Keys of the nodes of an indexed hash tree.}\label{fi:index-tree}
+	\end{center}
+\end{figure}
+
+\textbf{Input}:
+List $L = \langle (k_1, x_1), \ldots, (k_n, x_n) \rangle \in (\mathbb{K} \times \hashtype)^n$, the list of the key-value pairs in the $n$ leaves of the tree; $\mathbb{K}$ must be a linearly ordered type and the input pairs must be strictly sorted in this order, i.e. $k_1 < \ldots < k_n$
+
+\textbf{Output}:
+$r \in \hashtype\opt$, the value in the root of the tree
+
+\textbf{Computation}:
+
+\begin{algorithmic}
+	\Function{index\_tree\_root}{$L$}
+		\State \Assert $k_1 < \ldots < k_n$
+		\If {$n = 0$} \Comment{$L = \langle \rangle$}
+			\State \Return $\bot$
+		\ElsIf {$n = 1$} \Comment{$L = \langle (k_1, x_1) \rangle$}
+			\State \Return $H(1, k_1, x_1)$
+		\Else
+			\State $m \gets \lceil n/2 \rceil$ \Comment{Most balanced tree}
+			\State $L_\mathsf{left} \gets \langle(k_1, x_1), \ldots, (k_m, x_m) \rangle$
+			\State $L_\mathsf{right} \gets \langle (k_{m+1}, x_{m+1}), \ldots, (k_n, x_n) \rangle$
+			\State \Return $H(0, k_m, \Call{index\_tree\_root}{L_\mathsf{left}}, \Call{index\_tree\_root}{L_\mathsf{right}})$
+		\EndIf
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Function $\textsc{index\_tree\_chain}$}\label{sec:index-tree-chain}
+
+Considers the indexed hash tree with the given $n$ key-value pairs in its leaves. If there is a leaf containing the key $k$, computes the hash chain from that leaf to the root. If there is no such leaf, computes the hash chain from the leaf where $k$ should be according to the ordering, which can be used as a proof of $k$'s absence.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $L = \langle (k_1, x_1), \ldots, (k_n, x_n) \rangle \in (\mathbb{K} \times \hashtype)^n$, the list of the key-value pairs in the $n$ leaves of the tree; $\mathbb{K}$ must be a linearly ordered type and the input pairs must be strictly sorted in this order, i.e. $k_1 < \ldots < k_n$
+	\item $k \in \mathbb{K}$, the key to compute the path for
+\end{enumerate}
+
+\textbf{Output}:
+$C = \langle (k_1, y_1), \ldots, (k_\ell, y_\ell) \rangle \in (\mathbb{K} \times \hashtype)^\ell$, where $k_j$ are the keys in the nodes on the path from the leaf to the root and $y_j$ are the sibling hash values
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{index\_tree\_chain}{$L; k$}
+		\State \Assert $k_1 < \ldots < k_n$
+		\If {$n \in \{0,1\}$} \Comment{$L = \langle \rangle$ or $L = \langle (k_1, x_1) \rangle$}
+			\State \Return $L$
+		\Else
+			\State $m \gets \lceil n/2 \rceil$ \Comment{Must match \textsc{index\_tree\_root}}
+			\State $L_\mathsf{left} \gets \langle(k_1, x_1), \ldots, (k_m, x_m) \rangle$
+			\State $L_\mathsf{right} \gets \langle (k_{m+1}, x_{m+1}), \ldots, (k_n, x_n) \rangle$
+			\If {$k \le k_m$}
+				\State \Return $\Call{index\_tree\_chain}{L_\mathsf{left}; k} \| (k_m, \Call{index\_tree\_root}{L_\mathsf{right}})$
+			\Else
+				\State \Return $\Call{index\_tree\_chain}{L_\mathsf{right}; k} \| (k_m, \Call{index\_tree\_root}{L_\mathsf{left}})$
+			\EndIf
+		\EndIf
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Function $\textsc{index\_tree\_output}$}\label{sec:index-tree-output}
+
+Computes the output hash of the chain $C$ on the input key $k$.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $C = \langle (k_1, y_1), \ldots, (k_\ell, y_\ell) \rangle \in (\mathbb{K} \times \hashtype)^\ell$, where $k_j$ are the keys in the nodes on the path from the leaf to the root and $y_j$ are the sibling hash values
+	\item $k \in \mathbb{K}$, the input key
+\end{enumerate}
+
+\textbf{Output}:
+$r \in \hashtype\opt$, the value in the root of the tree
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{index\_tree\_output}{$C; k$}
+	\If {$\ell = 0$} \Comment{$C = \langle \rangle$}
+		\State \Return $\bot$
+	\ElsIf {$\ell = 1$} \Comment{$C = \langle (k_1, y_1) \rangle$}
+		\State \Return $H(1, k_1, y_1)$
+	\Else
+		\If {$k \le k_\ell$}
+			\State \Return $H(0, k_\ell, \Call{index\_tree\_output}{\langle (k_1, y_1), \ldots, (k_{\ell-1}, y_{\ell-1}) \rangle; k}, y_\ell)$
+		\Else
+			\State \Return $H(0, k_\ell, y_\ell, \Call{index\_tree\_output}{\langle (k_1, y_1), \ldots, (k_{\ell-1}, y_{\ell-1}) \rangle; k})$
+		\EndIf
+	\EndIf
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Inclusion and Exclusion Proofs}
+
+Indexed hash trees can be used to provide and verify both inclusion and exclusion proofs. The process for this is as follows:
+
+\begin{itemize}
+	\item To commit to the contents of a list $L = \langle (k_1, x_1), \ldots, (k_n, x_n) \rangle$ (where $k_1 < \ldots < k_n$):
+		\begin{itemize}
+			\item Compute $r \gets \Call{index\_tree\_root}{L}$.
+			\item Authenticate $r$ somehow (sign it, post it to an immutable ledger, etc).
+		\end{itemize}
+	\item To generate inclusion proof for $(k_i, x_i) \in L$:
+		\begin{itemize}
+			\item Compute $C \gets \Call{index\_tree\_chain}{L; k_i}$.
+		\end{itemize}
+	\item To verify the inclusion proof $C = \langle (k_1, y_1), \ldots, (k_\ell, y_\ell) \rangle$ for $(k, x)$:
+		\begin{itemize}
+			\item Check that $\Call{index\_tree\_output}{C; k} = r$, where $r$ is the previously authenticated root hash value.
+			\item Check that $(k, x) = (k_1, y_1)$, where $(k_1, y_1)$ is the first pair in the list $C$.
+		\end{itemize}
+	\item To generate exclusion proof for $k \not\in \{k_1, \ldots, k_n\}$:
+		\begin{itemize}
+			\item Compute $C \gets \Call{index\_tree\_chain}{L; k}$.
+		\end{itemize}
+	\item To verify the exclusion proof $C = \langle (k_1, y_1), \ldots, (k_\ell, y_\ell) \rangle$ for $k$:
+		\begin{itemize}
+			\item Check that $\Call{index\_tree\_output}{C; k} = r$, where $r$ is the previously authenticated root hash value.
+			\item Check that $k \ne k_1$, where $(k_1, y_1)$ is the first pair in the list $C$.
+		\end{itemize}
+\end{itemize}
+
+\section{Sparse Merkle Trees}\label{app:smt}
+
+A \emph{Sparse Merkle Tree} (SMT) is a binary Merkle tree that maps keys from a large key space to values, where most positions in the key space are empty. The \emph{path-compressed} form, documented below, retains only non-empty leaves and parent nodes with two children explicitly. The root node is an exception and may have zero, one, or two children.
+
+\subsection{Path Compression}
+
+In a path-compressed SMT, edges are labeled with path descriptions (bit-strings) that encode the path from child to parent.
+
+\begin{itemize}
+	\item \textbf{Leaf node hash}: $h = H(p, d)$ where:
+	\begin{itemize}
+		\item $p \in \bitstr$ is the path label from this node to its parent
+		\item $d \in \bytes{\ast}$ is the leaf data
+	\end{itemize}
+	\item \textbf{Branch node hash}: $h = H(p, h_L, h_R)$ where:
+	\begin{itemize}
+		\item $p \in \bitstr$ is the path label from this node to its parent
+		\item $h_L \in \hashtype$ is the left child hash (or $\bot$ if empty)
+		\item $h_R \in \hashtype$ is the right child hash (or $\bot$ if empty)
+	\end{itemize}
+	\item \textbf{Root node}: Uses empty path $\epsilon$ (zero-length bit-string) in hash computation
+\end{itemize}
+
+
+\subsection{Function $\textsc{smt\_leaf\_hash}$}\label{sec:smt-leaf-hash}
+
+Computes the hash of an SMT leaf node.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $p \in \bitstr$ -- path segment from this leaf to its parent
+	\item $d \in \hashtype$ -- leaf data (transaction hash)
+\end{enumerate}
+
+\textbf{Output}: $h \in \hashtype$ -- hash of the leaf node
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{smt\_leaf\_hash}{$p, d$}
+		\State \Return $H(p, d)$
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Function $\textsc{smt\_branch\_hash}$}\label{sec:smt-branch-hash}
+
+Computes the hash of an SMT branch node.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $p \in \bitstr$ -- path segment from this node to its parent
+	\item $h_L \in \hashtype \cup \{\bot\}$ -- left child hash (or $\bot$ if empty)
+	\item $h_R \in \hashtype \cup \{\bot\}$ -- right child hash (or $\bot$ if empty)
+\end{enumerate}
+
+\textbf{Output}: $h \in \hashtype \cup \{\bot\}$ -- hash of the branch node
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{smt\_branch\_hash}{$p, h_L, h_R$}
+		\If {$h_L = \bot \land h_R = \bot$}
+			\State \Return $\bot$ \Comment{Empty subtree}
+		\Else
+			\State \Return $H(p, h_L, h_R)$
+		\EndIf
+	\EndFunction
+\end{algorithmic}
+
+Note: When hashing, $\bot$ values are encoded according to the serialization scheme (e.g., CBOR null).
+
+\subsection{Inclusion Certificate}\label{sec:smt-inclusion-cert}
+
+An \emph{Inclusion Certificate} for an SMT leaf with key $\mathsf{sid}$ is a sequence of pairs:
+\[
+C^\mathsf{inc} = \langle (p_1, d_1), (p_2, d_2), \ldots, (p_n, d_n) \rangle
+\]
+where:
+\begin{itemize}
+	\item $(p_1, d_1)$ -- the leaf's path segment and data
+	\item $(p_i, d_i)$ for $i > 1$ -- path segment $p_i$ to parent and sibling hash $d_i$
+	\item The concatenated path $p_1 \| p_2 \| \ldots \| p_n = \mathsf{sid}$ (full key)
+\end{itemize}
+
+\subsection{Function $\textsc{smt\_verify\_inclusion}$}\label{sec:smt-verify-inclusion}
+
+Verifies an inclusion certificate by reconstructing the root hash.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $k \in \hashtype$ -- key
+	\item $v \in \hashtype$ -- value
+	\item $C^\mathsf{inc} = \langle (p_1, d_1), (p_2, d_2), \ldots, (p_n, d_n) \rangle$ -- inclusion certificate
+	\item $h_{\mathsf{root}} \in \hashtype$ -- expected root hash
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{smt\_verify\_inclusion}{$k, v, C^\mathsf{inc}, h_{\mathsf{root}}$}
+		\If {$d_1 \neq v$}
+			\State \Return \FALSE \Comment{Leaf value mismatch}
+		\EndIf
+		\If {$p_1 \| p_2 \| \ldots \| p_n \neq k$}
+			\State \Return \FALSE \Comment{Path doesn't match key}
+		\EndIf
+		\State $h \gets H(p_1, d_1)$ \Comment{Hash leaf node}
+		\For {$i \gets 2$ to $n$}
+			\State $b \gets$ rightmost bit of $p_{i-1}$
+			\If {$b = 0$}
+				\State $h \gets H(p_i, h, d_i)$ \Comment{Current is left child}
+			\Else
+				\State $h \gets H(p_i, d_i, h)$ \Comment{Current is right child}
+			\EndIf
+		\EndFor
+		\State \Return $(h = h_{\mathsf{root}})$
+	\EndFunction
+\end{algorithmic}
+
+The rightmost bit of path segment $p_{i-1}$ determines whether the current node is the left child (bit is 0) or right child (bit is 1) of its parent.
+
+\subsection{Inclusion and Exclusion Proofs}
+
+Sparse Merkle Trees support both inclusion and exclusion (non-inclusion) proofs using the same certificate structure.
+
+\subsubsection{Inclusion Proof}
+
+To prove that a key-value pair $(k, v)$ exists in an SMT:
+
+\begin{itemize}
+	\item \textbf{Generation}: Extract the path from the leaf to the root, collecting sibling hashes at each level to form $C^\mathsf{inc} = \langle (p_1, d_1), \ldots, (p_n, d_n) \rangle$
+	\item \textbf{Verification}: Check that:
+	\begin{enumerate}
+		\item $\Call{smt\_verify\_inclusion}{k, v, C^\mathsf{inc}, h_{\mathsf{root}}} = \TRUE$
+		\item The leaf data $d_1 = h_{\mathsf{tx}}$ matches the claimed value
+		\item The concatenated path equals the claimed key: $p_1 \| \ldots \| p_n = \mathsf{sid}$
+	\end{enumerate}
+\end{itemize}
+
+\subsubsection{Exclusion Proof (Non-Inclusion Proof)}
+
+To prove that a key $k_q$ does NOT exist in an SMT:
+
+\begin{itemize}
+	\item \textbf{Generation}: Find the position where $k_q$ would be located if it existed. Generate a certificate $C^\mathsf{exc} = \langle (p_1, d_1), \ldots, (p_n, d_n) \rangle$ showing this position (or its prefix) has empty value.
+	\item \textbf{Verification}: Check that:
+	\begin{enumerate}
+		\item The certificate reconstructs the correct root: \\
+		      $\Call{smt\_verify\_inclusion}{k_p, d_1, C^\mathsf{exc}, h_{\mathsf{root}}} = \TRUE$ \\
+		      where $k_p = p_1 \| \ldots \| p_n$ is the path from the certificate
+		\item The position is empty: $d_1 = \bot$ (no leaf exists at this location)
+	\end{enumerate}
+\end{itemize}
+
+The exclusion proof shows the branch where $\mathsf{sid}_q$ would be if it existed, cryptographically proving its absence from the current tree state.
+
+\subsection{Consistency Proofs}\label{app:smt-consistency-proof}
+
+A \emph{Consistency Proof} for a Sparse Merkle Tree validates one round of operation by proving that the state transition from previous SMT root hash $h'$ to current SMT root hash $h$ was performed correctly: only new leaves were added, and no pre-existing leaves were removed or modified.
+
+\subsubsection{Structure}
+
+For a batch of state transitions processed in a single round, the consistency proof $\pi_{CP}$ is a tuple:
+\[
+\pi_{CP} = (B, \Pi)
+\]
+where:
+\begin{itemize}
+	\item $B = \langle (\mathsf{sid}_1, h_{\mathsf{tx},1}), (\mathsf{sid}_2, h_{\mathsf{tx},2}), \ldots, (\mathsf{sid}_j, h_{\mathsf{tx},j}) \rangle$ -- batch of new SMT leaves, where each $\mathsf{sid}_i$ is a state identifier and $h_{\mathsf{tx},i}$ is the corresponding transaction hash
+	\item $\Pi$ -- proof data containing sibling hashes needed for verification
+\end{itemize}
+
+The proof data $\Pi$ is organized by tree depth layers for efficient verification. For each newly inserted leaf, the sibling nodes on the path from the leaf to the root are collected. Siblings that are computable from other leaves in the batch are omitted.
+
+\subsubsection{Function $\textsc{smt\_generate\_consistency\_proof}$}\label{sec:smt-generate-consistency-proof}
+
+Generates a consistency proof for a batch of new leaves inserted into an SMT\footnote{Complete algorithm: \href{https://github.com/unicitynetwork/zkvm-ndsmt/blob/b3ee2ab20b3803100459a4b36b6cef405d175865/script/ndsmt.py\#L42}{github.com/../ndsmt.py}}.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $B$ -- batch of new leaves to insert
+	\item $h'$ -- SMT root hash before the round
+	\item SMT state before the round
+\end{enumerate}
+
+\textbf{Output}: $\pi_{CP} = (B, \Pi)$ and updated SMT with root hash $h$
+
+\textbf{Process}:
+\begin{enumerate}
+	\item Insert all leaves from batch $B$ into the SMT
+	\item Compute new root hash $h$
+	\item For each newly inserted leaf $(\mathsf{sid}_i, h_{\mathsf{tx},i})$:
+	\begin{enumerate}
+		\item Collect sibling nodes on the path from leaf to root
+		\item Discard siblings that are present in batch $B$ or computable from it
+	\end{enumerate}
+	\item Organize remaining siblings by depth layers into $\Pi$
+	\item Return $(B, \Pi)$
+\end{enumerate}
+
+\subsubsection{Function $\textsc{smt\_verify\_consistency\_proof}$}\label{sec:smt-verify-consistency-proof}
+
+Verifies that a consistency proof correctly demonstrates the state transition from previous root hash $h'$ to current root hash $h$.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\pi_{CP} = (B, \Pi)$ -- consistency proof where $B = \langle (\mathsf{sid}_1, h_{\mathsf{tx},1}), \ldots, (\mathsf{sid}_j, h_{\mathsf{tx},j}) \rangle$
+	\item $h'$ -- previous SMT root hash (before the round)
+	\item $h$ -- current SMT root hash (after the round)
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{smt\_verify\_consistency\_proof}{$\pi_{CP}, h', h$}
+		\State $(B, \Pi) \gets \pi_{CP}$
+		\State $B_\emptyset \gets \langle (\mathsf{sid}_1, \emptyset), (\mathsf{sid}_2, \emptyset), \ldots, (\mathsf{sid}_j, \emptyset) \rangle$ \Comment{Empty leaves}
+		\State $h_\emptyset \gets \Call{smt\_compute\_tree\_root}{\Pi, B_\emptyset}$ \Comment{Compute root with empty leaves}
+		\If {$h_\emptyset \neq h'$} \Return \FALSE \EndIf \Comment{Verify previous state}
+		\State $h_B \gets \Call{smt\_compute\_tree\_root}{\Pi, B}$ \Comment{Compute root with actual leaves}
+		\If {$h_B \neq h$} \Return \FALSE \EndIf \Comment{Verify current state}
+		\State \Return \TRUE
+	\EndFunction
+\end{algorithmic}
+
+\subsubsection{Function $\textsc{smt\_compute\_tree\_root}$}\label{sec:smt-compute-tree-root}
+
+Computes the SMT root hash from a batch of leaves and proof siblings.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\Pi$ -- proof data organized by depth layers
+	\item $B$ -- batch of leaves $\langle (\mathsf{sid}_1, v_1), \ldots, (\mathsf{sid}_j, v_j) \rangle$
+\end{enumerate}
+
+\textbf{Output}: Root hash $h_{\mathsf{root}}$
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{smt\_compute\_tree\_root}{$\Pi, B$}
+		\State $L \gets B$ \Comment{Current layer, initially leaves}
+		\For{$\ell \gets 0$ to $d-1$} \Comment{For each tree depth layer}
+			\State $L' \gets []$ \Comment{Next layer}
+			\State $m \gets 0$; $n \gets 0$ \Comment{Indices into $L$ and $\Pi[\ell]$}
+			\While{$m < |L|$}
+				\State $(\mathsf{sid}_k, v_k) \gets L[m]$
+				\State $\mathsf{sid}_p \gets \lfloor \mathsf{sid}_k / 2 \rfloor$ \Comment{Parent identifier}
+				\State $\mathsf{isRight} \gets \mathsf{sid}_k \bmod 2$
+				\State $\mathsf{sid}_s \gets 2 \cdot \mathsf{sid}_p + (1 - \mathsf{isRight})$ \Comment{Sibling identifier}
+				\If{$\neg\mathsf{isRight} \land m+1 < |L| \land L[m+1].\mathsf{sid} = \mathsf{sid}_s$}
+					\State $v_s \gets L[m+1].v$ \Comment{Sibling is next in layer}
+					\State $m \gets m + 1$ \Comment{Skip sibling}
+				\ElsIf{$n < |\Pi[\ell]| \land \Pi[\ell][n].\mathsf{sid} = \mathsf{sid}_s$}
+					\State $v_s \gets \Pi[\ell][n].v$ \Comment{Sibling from proof}
+					\State $n \gets n + 1$
+				\Else
+					\State $v_s \gets \emptyset$ \Comment{Sibling is empty}
+				\EndIf
+				\State $v_p \gets H(p_\ell, v_k, v_s)$ \textbf{if} $\mathsf{isRight}$ \textbf{else} $H(p_\ell, v_s, v_k)$
+				\State $L' \gets L' \| [(\mathsf{sid}_p, v_p)]$
+				\State $m \gets m + 1$
+			\EndWhile
+			\State $L \gets L'$
+		\EndFor
+		\If{$|L| \neq 1$} \Return $\bot$ \EndIf \Comment{Must have exactly one root}
+		\State \Return $L[0].v$ \Comment{Root hash}
+	\EndFunction
+\end{algorithmic}
+
+\noindent where $p_\ell$ is the path segment for layer $\ell$.
+
+\subsection{ZK-Compressed Consistency Proofs}\label{app:zk-consistency-proof}
+
+For high-throughput scenarios with large batches, the hash-based consistency proof size of $O(j \cdot d)$ (where $j$ is the batch size and $d$ is the tree depth) may become a bandwidth bottleneck. Cryptographic zero-knowledge proofs (ZK-SNARKs or ZK-STARKs) can compress the consistency proof to constant ($O(1)$) or logarithmic ($O(\log j)$) size while maintaining tight security guarantees.
+
+\subsubsection{ZK Proof Structure}
+
+A ZK-compressed consistency proof proves successful execution of the $\mathsf{smt\_verify\_consistency\_proof}$ algorithm (Appendix~\ref{sec:smt-verify-consistency-proof}) with the following parameters:
+
+\begin{itemize}
+	\item \textbf{Public inputs (instance)}: Values that must match the Input Record in the Certification Request:
+	\begin{itemize}
+		\item $h'$ -- previous SMT root hash (matches $\mathcal{IR}.h'$)
+		\item $h$ -- current SMT root hash (matches $\mathcal{IR}.h$)
+		\item $j$ -- number of leaves in batch (matches $\ell_B$ in the Certification Request)
+	\end{itemize}
+	\item \textbf{Private inputs (witness)}: proof $(B, \Pi)$
+\end{itemize}
+
+\subsubsection{Verification}
+
+When receiving a ZK-compressed consistency proof, the verifier must:
+\begin{enumerate}
+	\item Verify that the proof is proving the right statement (hash-based consistency proof verification algorithm)
+	\item Verify the ZK proof, obtaining authentic public inputs $h'$, $h$, and $j$
+	\item Confirm these values match the claimed Input Record
+\end{enumerate}
+
+
+\section{Sparse Merkle Sum Trees}\label{app:smst}
+
+A \emph{Sparse Merkle Sum Tree}\index{Sparse Merkle Sum Tree} (SMST) extends the Sparse Merkle Tree (Sec.~\ref{app:smt}) with value tracking. Each node carries both a hash and a non-negative integer value. Internal nodes sum their children's values, enabling cryptographic proofs that a leaf's value is part of a known total. This structure is used for value conservation proofs in token splitting (Sec.~\ref{sec:token-splitting}).
+
+\subsection{Node Structure}
+
+Each node in an SMST carries a pair $(h, v)$, where $h \in \hashtype$ is the node hash and $v \in \mathbb{N}$ is the accumulated value.
+
+\begin{itemize}
+	\item \textbf{Leaf node}: $(h, v)$ where:
+	\begin{itemize}
+		\item $p \in \bitstr$ -- path label from this leaf to its parent
+		\item $d \in \bytes{\ast}$ -- leaf data
+		\item $v \in \mathbb{N}$ -- leaf value (e.g. asset amount)
+		\item $h = H(p, d, v)$
+	\end{itemize}
+	\item \textbf{Branch node}: $(h, v)$ where:
+	\begin{itemize}
+		\item $p \in \bitstr$ -- path label from this node to its parent
+		\item $(h_L, v_L)$ -- left child hash and value
+		\item $(h_R, v_R)$ -- right child hash and value
+		\item $h = H(p, h_L, v_L, h_R, v_R)$
+		\item $v = v_L + v_R$
+	\end{itemize}
+	\item \textbf{Root node}: Uses the fixed path label $p = 1$ in hash computation:
+	\begin{itemize}
+		\item $h = H(1, h_L, v_L, h_R, v_R)$
+		\item $v = v_L + v_R$
+	\end{itemize}
+\end{itemize}
+
+An empty child is represented by $(h, v) = (\bot, 0)$.
+
+\subsection{Function $\textsc{smst\_leaf\_hash}$}\label{sec:smst-leaf-hash}
+
+Computes the hash of an SMST leaf node.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $p \in \bitstr$ -- path segment from this leaf to its parent
+	\item $d \in \hashtype$ -- leaf data
+	\item $v \in \mathbb{N}$ -- leaf value
+\end{enumerate}
+
+\textbf{Output}: $h \in \hashtype$ -- hash of the leaf node
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{smst\_leaf\_hash}{$p, d, v$}
+		\State \Return $H(p, d, v)$
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Function $\textsc{smst\_branch\_hash}$}\label{sec:smst-branch-hash}
+
+Computes the hash and accumulated value of an SMST branch node.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $p \in \bitstr$ -- path segment from this node to its parent
+	\item $(h_L, v_L) \in (\hashtype \cup \{\bot\}) \times \mathbb{N}$ -- left child
+	\item $(h_R, v_R) \in (\hashtype \cup \{\bot\}) \times \mathbb{N}$ -- right child
+\end{enumerate}
+
+\textbf{Output}: $(h, v) \in \hashtype \times \mathbb{N}$ -- hash and value of the branch node
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{smst\_branch\_hash}{$p, (h_L, v_L), (h_R, v_R)$}
+		\State $h \gets H(p, h_L, v_L, h_R, v_R)$
+		\State $v \gets v_L + v_R$
+		\State \Return $(h, v)$
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Inclusion Certificate}\label{sec:smst-inclusion-cert}
+
+An \emph{Inclusion Certificate} for an SMST leaf with key $k$ is a sequence of triples:
+\[
+C^\mathsf{inc} = \langle (p_1, d_1, v_1), (p_2, d_2, v_2), \ldots, (p_n, d_n, v_n) \rangle
+\]
+where:
+\begin{itemize}
+	\item $(p_1, d_1, v_1)$ -- the leaf's path segment, data, and value
+	\item $(p_i, d_i, v_i)$ for $i > 1$ -- path segment $p_i$ to parent, sibling hash $d_i$, and sibling value $v_i$
+\end{itemize}
+
+\subsection{Function $\textsc{smst\_verify\_inclusion}$}\label{sec:smst-verify-inclusion}
+
+Verifies an SMST inclusion certificate by reconstructing the root hash and total value.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $k \in \hashtype$ -- key
+	\item $v_\mathsf{leaf} \in \mathbb{N}$ -- expected leaf value
+	\item $C^\mathsf{inc} = \langle (p_1, d_1, v_1), \ldots, (p_n, d_n, v_n) \rangle$ -- inclusion certificate
+	\item $h_{\mathsf{root}} \in \hashtype$ -- expected root hash
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{smst\_verify\_inclusion}{$k, v_\mathsf{leaf}, C^\mathsf{inc}, h_{\mathsf{root}}$}
+		\If {$v_1 \neq v_\mathsf{leaf}$}
+			\State \Return \FALSE \Comment{Leaf value mismatch}
+		\EndIf
+		\State $h \gets H(p_1, d_1, v_1)$ \Comment{Hash leaf node}
+		\State $v_\mathsf{sum} \gets v_1$
+		\State $q \gets p_1$ \Comment{Reconstructed path}
+		\For {$i \gets 2$ to $n$}
+			\State $b \gets$ rightmost bit of $p_{i-1}$
+			\If {$b = 0$}
+				\State $h \gets H(p_i, h, v_\mathsf{sum}, d_i, v_i)$ \Comment{Current is left child}
+			\Else
+				\State $h \gets H(p_i, d_i, v_i, h, v_\mathsf{sum})$ \Comment{Current is right child}
+			\EndIf
+			\State $v_\mathsf{sum} \gets v_\mathsf{sum} + v_i$
+			\State $q \gets q \| p_i$ \Comment{Extend reconstructed path}
+		\EndFor
+		\State \Return $(h = h_{\mathsf{root}}) \land (q = k)$
+	\EndFunction
+\end{algorithmic}
+
+In addition to verifying the root hash, the accumulated sum $v_\mathsf{sum}$ at the root equals the total value in the tree, enabling value conservation checks: the verifier confirms both that the leaf value matches the claimed allocation and that the root sum matches the original token's total value for the given asset.
