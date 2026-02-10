@@ -175,7 +175,6 @@
 }
 
 \definecolor{shadecolor}{gray}{0.9}
-
 \usepackage[
     type={CC},
     modifier={by},
@@ -230,7 +229,8 @@
 \makeoddhead{TemplateFancy}{}{}{
 	\TemplateArial \tiny \@TemplateStringConfidential}
 \makeevenhead{TemplateFancy}{}{}{
-	\TemplateArial \tiny \@TemplateStringConfidential}
+	{\includegraphics[height=14pt]{
+common/sygnet-black}}}
 
 % Odd footers
 \makeoddfoot{TemplateFancy}{
@@ -263,14 +263,12 @@
 % Titlepage style with headings
 \makepagestyle{TemplateTitle}
 \makerunningwidth{TemplateTitle}{\headwidth}
-% \makeoddhead{TemplateTitle}{
-% 	\begin{minipage}[t]{0.5\textwidth}
-% 		\hspace{-7mm}
-% 		%\includegraphics[width=90mm]{templatelogo.png}
-% 	\end{minipage}
-% 	}{}{
-% 	\raisebox{2.5mm}[0mm]{\TemplateArial \scriptsize \bfseries \@TemplateStringConfidential}
-% 	}
+
+\makeoddhead{TemplateTitle}{
+		\includegraphics[width=0.5\textwidth]{common/logo-black}
+	}{}{
+
+	}
 
 % Chapter and section headline style
 \renewcommand{\printchapternum}{\LARGE \bfseries \TemplateArial \thechapter}
@@ -320,7 +318,7 @@
 		\vspace{-6.5mm}
 		\hfill
 	\end{minipage}
-	\vspace{4cm}
+	\vspace{7cm}
 	\begin{flushleft}
 		\TemplateArial
 		{\huge \bfseries \@title}
@@ -332,20 +330,37 @@
 		{\large \bfseries
 			\@TemplateStringDocumentType
 
-			\ifx\@TemplateDocumentVersion\@empty
-			Document version undefined, use the TemplateDefineDocumentVersion command!
-			\else
-			\@TemplateStringVersion~\@TemplateDocumentVersion
-			\fi
-
 			\@date
-
-			\@TemplateStringCopyrightFooter
-			\doclicenseThis
-
 		}\par
 		% \vspace{2cm}
 		{\scriptsize \@TemplateAcknowledgement}
 	\end{flushleft}
 	\pagebreak
+}
+
+\newcommand{\TemplateSecondPageInfo}{%
+  ~
+  \vfill
+  \ifx\@TemplateDocumentVersion\@empty
+    Document version undefined, use the TemplateDefineDocumentVersion command!
+  \else
+    \@TemplateStringVersion~\@TemplateDocumentVersion
+  \fi
+
+  \par\medskip
+  \@date
+
+  \par\medskip
+  \@TemplateStringCopyrightFooter
+  \doclicenseThis
+}
+
+\AtBeginDocument{%
+  \let\OldMakeTitle\maketitle
+  \renewcommand{\maketitle}{%
+    \OldMakeTitle
+    \clearpage
+    %\thispagestyle{plain}
+    \TemplateSecondPageInfo
+  }
 }
