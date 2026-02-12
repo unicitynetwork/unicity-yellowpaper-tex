@@ -471,7 +471,7 @@ For each incoming transaction, the recipient generates an ephemeral blinding fac
 $\predi' \gets \predi_\mathsf{sig}(\mathsf{pk}_{tx})$ & & \\
 $\auxd' \gets \{\ldots, R\}$ & & \\
 Create and certify $T$ & & \\
-  & $\xrightarrow{\hspace{0.8cm} \mathcal{L} \cup T^\mathsf{cert} \hspace{0.8cm}}$ & \\[2mm]
+  & $\xrightarrow{\hspace{0.8cm} \mathcal{L}\; \cup\; T^\mathsf{cert} \hspace{0.8cm}}$ & \\[2mm]
   & & $r' \gets H(\mathsf{sk} \,\|\, R)$ \\
   & & $\mathsf{sk}_{tx} \gets \mathsf{sk} + r' \bmod n$ \\
   & & Sign next transaction using $\mathsf{sk}_{tx}$ \\
@@ -509,7 +509,7 @@ $\mathsf{pk}_{tx} \gets \mathsf{pk} + s \cdot G$ & & \\
 $\predi' \gets \predi_\mathsf{sig}(\mathsf{pk}_{tx})$ & & \\
 $\auxd' \gets \{\ldots, R\}$ & & \\
 Create and certify $T$ & & \\
-& $\xrightarrow{\hspace{0.6cm} \mathcal{L} \cup T^\mathsf{cert} \hspace{0.6cm}}$ & \\[3mm]
+& $\xrightarrow{\hspace{0.6cm} \mathcal{L}\; \cup\; T^\mathsf{cert} \hspace{0.6cm}}$ & \\[3mm]
 & & \textbf{if} $R = \mathcal{O}$ \textbf{then abort} \\
 & & $s' \gets H(\mathsf{sk} \cdot R \,\|\, R \,\|\, \sthash)$ \\
 & & \textbf{if} $\mathsf{pk} + s' \cdot G \neq \mathsf{pk}_{tx}$ \textbf{then abort} \\

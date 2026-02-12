@@ -225,12 +225,12 @@
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{1.5ex}
 
-% Confidentiality mark in the headers
+% Confidentiality mark, logo in the headers
 \makeoddhead{TemplateFancy}{}{}{
-	\TemplateArial \tiny \@TemplateStringConfidential}
-\makeevenhead{TemplateFancy}{}{}{
 	{\includegraphics[height=14pt]{
 common/sygnet-black}}}
+\makeevenhead{TemplateFancy}{}{}{
+	\TemplateArial \tiny \@TemplateStringConfidential}
 
 % Odd footers
 \makeoddfoot{TemplateFancy}{
