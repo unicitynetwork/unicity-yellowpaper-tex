@@ -6,7 +6,10 @@ This appendix specifies the concrete encodings for the Unicity Token defined in 
 
 \begin{itemize}
 	\item $\mathsf{MINT\_SUFFIX} = \mathsf{SHA\text{-}256}(\texttt{"TOKENID"})$ -- a fixed 32-byte domain separator used to derive the source state hash of mint transactions.
-	\item $\mathsf{MINTER\_SECRET}$ = \texttt{0x495f414d5f554e4956455253414c5f4d494e5445525f464f525f} (ASCII: \texttt{"I\_AM\_UNIVERSAL\_MINTER\_FOR\_"}) -- a fixed 26-byte constant used to derive deterministic minting key pairs.
+	\item $\mathsf{MINTER\_SECRET}$ = \\
+	  \hspace*{10mm}\texttt{0x495f414d5f554e4956455253414c5f4d494e5445525f464f525f} \\
+	  \hspace*{10mm} (ASCII: \texttt{"I\_AM\_UNIVERSAL\_MINTER\_FOR\_"}) \\
+	  -- a fixed 26-byte constant used to derive deterministic minting key pairs.
 	\item The minting key pair for a token with identifier $\mathsf{id}$ is derived as:
 	\[
 	\mathsf{sk}_\mathsf{mint} = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{MINTER\_SECRET}, \mathsf{id}))

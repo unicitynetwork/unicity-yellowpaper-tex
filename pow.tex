@@ -1,0 +1,521 @@
+\chapter{PoW Chain}\label{ch:pow-chain}
+
+The Proof-of-Work (PoW) chain is the decentralization backbone of the Unicity Consensus Layer. Together with the BFT Core, it forms the two-faceted consensus mechanism: the PoW chain provides permissionless participation, robustness, and long-term security, while the BFT Core provides fast deterministic finality for the Aggregation Layer.
+
+Two cross-certification processes link the PoW chain and the BFT Core:
+\begin{description}
+\item[Snapshot Publishing] (Sec.~\ref{sec:snapshot-publishing}): BFT Core epoch transitions produce new Unicity Trust Base entries, which PoW miners embed into PoW blocks. This anchors the BFT Core state into the PoW chain.
+\item[Finality Gadget] (Sec.~\ref{sec:finality-gadget}): BFT Core validators collectively certify PoW blocks, providing deterministic finality to the PoW chain and enabling reward token minting.
+\end{description}
+
+The BFT Core operates at approximately one round per second with finality in two rounds. The PoW chain targets a block rate of one block per $8640$ seconds ($\approx 2.4$ hours). The two layers operate at vastly different timescales, with the PoW chain providing slow but robust anchoring and the BFT Core providing fast finality for practical transactions, with compact and stable root of trust.
+
+
+\section{PoW Blockchain}\label{sec:pow-blockchain}
+
+\subsection{Motivation}\label{sec:pow-motivation}
+
+Decentralization of the Consensus Layer requires a mechanism for permissionless participation. A PoW\index{PoW chain} chain provides this: any party can mine blocks without prior authorization. PoW also provides robustness---if any number of miners leave or join the network, the chain continues to grow with the block rate eventually adjusting to the new total mining power. These properties are essential during the bootstrapping phase of a decentralized system, when the number of validators fluctuates, the financial value of tokens is low, and token distribution is relatively concentrated.
+
+PoW chains do not provide fast deterministic finality: many blocks of confirmations are needed to achieve reasonable certainty. This is mitigated by the BFT Core finality gadget (Sec.~\ref{sec:finality-gadget}). By combining PoW with BFT consensus, Unicity leverages the strengths of both: PoW provides permissionlessness, robustness, and high security for the base currency, while BFT provides fast, deterministic finality for the Aggregation Layer.
+
+BFT Core validators are selected from a pool of recent, high-performing PoW miners based on a deterministic algorithm and PoW chain content; anyone can execute the algorithm to verify the selection. PoW validators may also delegate their BFT layer validation rights.
+
+
+\subsection{Longest Chain Rule}\label{sec:longest-chain}
+
+The PoW chain follows the \emph{heaviest chain rule}\index{longest chain rule}: the valid chain with the greatest cumulative proof-of-work is considered the canonical chain. When a node observes two competing forks, it adopts the one with more accumulated work.
+
+Chain reorganizations\index{chain reorganization} occur when an alternative fork accumulates more proof-of-work than the current active chain:
+\begin{enumerate}[nosep]
+  \item Find the common ancestor (fork point) of the current and candidate chains.
+  \item Disconnect blocks from the active chain back to the fork point.
+  \item Connect blocks from the candidate chain forward from the fork point.
+  \item Update the active chain tip.
+\end{enumerate}
+
+The Finality Gadget (Sec.~\ref{sec:finality-gadget}) limits the practical depth of reorganizations by providing BFT-certified checkpoints.
+
+
+\subsection{RandomX Proof-of-Work}\label{sec:pow-randomx}
+
+The PoW chain uses RandomX\index{RandomX}\footnote{\url{https://github.com/tevador/RandomX}}, a proof-of-work algorithm designed to be efficient on general-purpose CPUs while resisting acceleration by GPUs and ASICs. RandomX achieves this through:
+\begin{itemize}[nosep]
+  \item \textbf{Memory-hardness}: Requires $\approx 2$~GB dataset per epoch, making hardware optimization difficult.
+  \item \textbf{Random code execution}: Generates and executes random programs, exploiting the full complexity of a modern CPU instruction set.
+  \item \textbf{Epoch-based dataset}: The dataset changes periodically, preventing pre-computation.
+\end{itemize}
+
+By selecting an ASIC-resistant mining algorithm, participation in mining is democratized: commodity hardware can compete effectively, lowering the barrier to entry.
+
+Block header validation uses a two-phase approach:
+\begin{enumerate}[nosep]
+  \item \textbf{Commitment check} ($\sim 1$~ms): The \texttt{hashRandomX} field in the header is verified against the difficulty target \texttt{nBits}. This fast check rejects invalid headers before invoking the expensive PoW computation, providing DoS protection.
+  \item \textbf{Full RandomX verification} ($\sim 50$~ms): The RandomX hash is recomputed from the header fields (excluding \texttt{hashRandomX}) and verified to match \texttt{hashRandomX}.
+\end{enumerate}
+
+
+\subsection{Block Structure}\label{sec:pow-block-structure}
+
+The PoW chain is a \emph{headers-only blockchain}\index{headers-only blockchain} with minimal prunable payload. The primary data unit is the block header; the payload is small and can be discarded after verification for most use cases.
+
+\subsubsection{Block Header}\label{sec:pow-block-header}
+
+The block header is a fixed-size $112$-byte structure containing all consensus-critical fields.
+
+\begin{table}[!htbp]
+  \begin{center}
+    \caption{PoW Block Header Format ($112$ bytes).}\label{ta:pow-header}
+    \begin{tabular}{|p{0.5cm}|p{3.5cm}|p{1.2cm}|p{2cm}|p{6cm}|}\hline
+      No & Field & Size & Type & Description \\\hline\hline
+      1. & \texttt{nVersion}      & 4 B  & \texttt{int32}  & Block version number \\\hline
+      2. & \texttt{hashPrevBlock} & 32 B & $\hashtype$      & Hash of the previous block header \\\hline
+      3. & \texttt{payloadRoot}   & 32 B & $\hashtype$      & Root of block payload tree (Sec.~\ref{sec:pow-payload}) \\\hline
+      4. & \texttt{nTime}         & 4 B  & \texttt{uint32} & Block timestamp (Unix epoch, seconds) \\\hline
+      5. & \texttt{nBits}         & 4 B  & \texttt{uint32} & Difficulty target in compact format \\\hline
+      6. & \texttt{nNonce}        & 4 B  & \texttt{uint32} & Mining nonce \\\hline
+      7. & \texttt{hashRandomX}   & 32 B & $\hashtype$      & RandomX hash (PoW commitment) \\\hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+All integer fields use little-endian byte order. The block hash is computed as $H(B.H)$ over the serialized header bytes.
+
+
+\subsubsection{Block Payload}\label{sec:pow-payload}
+
+The block payload is a two-leaf hash tree committed to by the \texttt{payloadRoot} field in the header.
+
+\begin{table}[!htbp]
+  \begin{center}
+    \caption{PoW Block Payload Tree.}\label{ta:pow-payload}
+    \begin{tabular}{|p{.8cm}|p{3cm}|p{2cm}|p{7.5cm}|}\hline
+      Leaf & Name & Type & Description \\\hline\hline
+      0 & Reward claim & $\hashtype$ & $H(\mathsf{tokenId}_\mathsf{reward})$: hash of the reward token identifier claimed by the miner \\\hline
+      1 & BFT checkpoint & $\hashtype$ & $H(T_e)$: hash of a Unicity Trust Base entry, or $\zerohash$ if no checkpoint is published in this block \\\hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+The payload root is computed as:
+\[
+  \texttt{payloadRoot} = H\!\left(H(\mathsf{tokenId}_\mathsf{reward}) \;\|\; H_\mathsf{cp}\right)
+\]
+where $H_\mathsf{cp} = H(T_e)$ if a Trust Base entry $T_e$ is published, or $H_\mathsf{cp} = \zerohash$ otherwise.
+
+The full block consists of the header and the payload data (the preimages):
+\begin{itemize}[nosep]
+  \item $\mathsf{tokenId}_\mathsf{reward} \in \idtype$ --- the reward token identifier chosen by the miner.
+  \item $T_e$ --- the Unicity Trust Base entry for epoch $e$ (present only in checkpoint blocks).
+\end{itemize}
+
+
+\subsubsection{Block Pruning}\label{sec:pow-pruning}
+
+The payload data is prunable\index{block pruning}: nodes can discard the preimages ($\mathsf{tokenId}_\mathsf{reward}$ and $T_e$) and retain only the $112$-byte header. The \texttt{payloadRoot} in the header cryptographically commits to the payload, so the payload can be verified independently when needed.
+
+Pruned (header-only) operation is sufficient for:
+\begin{itemize}[nosep]
+  \item Chain validation (all consensus rules are header-based),
+  \item Difficulty verification and fork selection,
+  \item Serving as a PoW chain full node for replication.
+\end{itemize}
+
+Full payload is required for:
+\begin{itemize}[nosep]
+  \item Verifying miner reward claims (Sec.~\ref{sec:pow-reward-minting}),
+  \item Verifying published BFT checkpoints (Sec.~\ref{sec:snapshot-publishing}),
+  \item Maximalist token verification (Sec.~\ref{sec:maxi-verification}).
+\end{itemize}
+
+
+\subsection{Difficulty Adjustment}\label{sec:pow-difficulty}
+
+The PoW chain uses the ASERT\index{ASERT} (Absolutely Scheduled Exponentially Rising Targets) difficulty adjustment algorithm, providing per-block difficulty recalculation:
+\[
+  \mathsf{target}_\mathsf{new} = \mathsf{target}_\mathsf{ref} \cdot 2^{\;(\Delta t \;-\; \Delta t_\mathsf{ideal}) \;/\; \tau_{1/2}}
+\]
+where:
+\begin{itemize}[nosep]
+  \item $\mathsf{target}_\mathsf{ref}$ is the reference target from the anchor block,
+  \item $\Delta t$ is the elapsed time since the anchor block,
+  \item $\Delta t_\mathsf{ideal}$ is the ideal elapsed time based on block count and target spacing,
+  \item $\tau_{1/2}$ is the half-life parameter.
+\end{itemize}
+
+\begin{table}[!htbp]
+  \begin{center}
+    \caption{ASERT Difficulty Adjustment Parameters.}\label{ta:pow-difficulty}
+    \begin{tabular}{|p{5cm}|p{4cm}|p{4.5cm}|}\hline
+      Parameter & Value & Description \\\hline\hline
+      Target block spacing & $8640$~s ($2.4$~h) & Average time between blocks \\\hline
+      Half-life ($\tau_{1/2}$) & $172800$~s ($48$~h) & Difficulty doubles/halves over this period \\\hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+\textbf{Timestamp rules.} Block timestamps must be strictly increasing (each block's timestamp must exceed the previous block's timestamp). Timestamps must not exceed the current time plus $600$ seconds ($10$ minutes).
+
+
+\subsection{Mining}\label{sec:pow-mining}
+
+\subsubsection{Block Mining}\label{sec:pow-block-mining}
+
+Mining follows the standard PoW longest-chain paradigm. A miner:
+\begin{enumerate}[nosep]
+  \item Selects the current chain tip as the parent block.
+  \item Constructs the payload tree:
+    \begin{enumerate}[nosep]
+      \item Chooses a unique reward token identifier $\mathsf{tokenId}_\mathsf{reward}$ and computes leaf $0 = H(\mathsf{tokenId}_\mathsf{reward})$.
+      \item If a new Unicity Trust Base entry $T_e$ is available and not yet published in the chain, sets leaf $1 = H(T_e)$; otherwise leaf $1 = \zerohash$.
+      \item Computes $\texttt{payloadRoot} = H(\text{leaf}_0 \| \text{leaf}_1)$.
+    \end{enumerate}
+  \item Assembles the block header with current timestamp, difficulty target from ASERT, and the computed \texttt{payloadRoot}.
+  \item Iterates \texttt{nNonce} values, computing the RandomX hash for each candidate header, until finding a hash that meets the difficulty target \texttt{nBits}.
+  \item Broadcasts the winning block (header and payload) to the P2P network.
+\end{enumerate}
+
+
+\subsubsection{Block Validation}\label{sec:pow-block-validation}
+
+Received blocks are validated in three layers:
+
+\begin{algorithm}[!htbp]
+  \caption{PoW Block Validation}\label{alg:pow-validate}
+  \begin{algorithmic}[0]
+    \Function{ValidatePoWBlock}{$B$}
+      \State \Comment{Layer 1: Commitment check (DoS protection, $\sim 1$~ms)}
+      \State ensure($B.H.\texttt{hashRandomX} \le \Call{TargetFromBits}{B.H.\texttt{nBits}}$)
+      \State
+      \State \Comment{Layer 2: Full PoW verification ($\sim 50$~ms)}
+      \State $\mathsf{input} \gets B.H.\texttt{nVersion} \| B.H.\texttt{hashPrevBlock} \| B.H.\texttt{payloadRoot}$
+      \State $\quad \| \; B.H.\texttt{nTime} \| B.H.\texttt{nBits} \| B.H.\texttt{nNonce}$
+      \State $rx \gets \Call{RandomX}{\mathsf{input}}$
+      \State ensure($rx = B.H.\texttt{hashRandomX}$)
+      \State
+      \State \Comment{Layer 3: Contextual validation}
+      \State ensure($B.H.\texttt{nBits} = \Call{ASERT}{B.\mathsf{parent}}$) \Comment{Correct difficulty}
+      \State ensure($B.H.\texttt{nTime} > B.\mathsf{parent}.H.\texttt{nTime}$) \Comment{Strictly increasing}
+      \State ensure($B.H.\texttt{nTime} < \Call{Now}{} + 600$) \Comment{Not too far in the future}
+      \State ensure($B.H.\texttt{nVersion} \ge 1$)
+      \State \Return $1$
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+
+\subsubsection{Block Reward Token Minting}\label{sec:pow-reward-minting}
+
+The miner who produces a winning block is entitled to a block reward\index{block reward} in $\mathsf{ALPHA}$ currency. The reward value depends on the current \emph{reward rate}, a protocol-defined schedule indexed by block height. The reward is \emph{not immediately claimable}: the miner must wait for the Finality Gadget (Sec.~\ref{sec:finality-gadget}) to certify the block containing the reward claim (or a descendant thereof).
+
+The reward is a Unicity token minted through the standard minting process (Sec.~\ref{sec:mint-tx}), with the parameters specified in Table~\ref{ta:pow-reward}.
+
+\begin{table}[!htbp]
+  \begin{center}
+    \caption{Block Reward Token.}\label{ta:pow-reward}
+    \begin{tabular}{|p{4cm}|p{9.5cm}|}\hline
+      Field & Value \\\hline\hline
+      Token identifier ($\mathsf{id}$) & $\mathsf{tokenId}_\mathsf{reward}$: the identifier whose hash was committed in leaf $0$ of the mined block's payload tree \\\hline
+      Token type ($\mathsf{ty}$) & $\mathsf{ALPHA}$ \\\hline
+      Value & $\Call{RewardRate}{h}$, the reward rate at block height $h$ \\\hline
+      Owner predicate ($\predi'$) & Miner's chosen spending predicate \\\hline
+      Mint justification ($\auxd'$) & Composite structure defined in Table~\ref{ta:pow-mint-justification} \\\hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+\begin{table}[!htbp]
+  \begin{center}
+    \caption{Mint Justification for Block Reward Token.}\label{ta:pow-mint-justification}
+    \begin{tabular}{|p{0.5cm}|p{3.2cm}|p{2.5cm}|p{7cm}|}\hline
+      No & Field & Type & Description \\\hline\hline
+      1. & Mined block & $(B_h.H, B_h.P)$ & The PoW block at height $h$: header and payload, proving the reward claim is committed in the block \\\hline
+      2. & Continuation headers & $\{B_i.H\}_{i=h+1}^{h'}$ & Sequence of PoW block headers linking the mined block to the Finality Gadget certified block at height $h'$ \\\hline
+      3. & Finality certificate & $\mathsf{cert}_\mathsf{FG}$ & Unicity Certificate from the Finality Gadget Partition certifying the PoW block at height $h'$ \\\hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+
+\begin{algorithm}[!htbp]
+  \caption{Block Reward Token Minting Process}\label{alg:pow-reward}
+  \begin{algorithmic}[0]
+    \Function{MintRewardToken}{$B_h, \mathsf{sk}_\mathsf{miner}, \mathcal{T}$}
+      \State \Comment{Precondition: $B_h$ is a valid PoW block mined by this miner}
+      \State
+      \State \Comment{Step 1: Wait for Finality Gadget certification}
+      \State $(h', \mathsf{cert}_\mathsf{FG}) \gets \Call{WaitForFGCert}{h}$
+        \Comment{Block at $h' \ge h$ certified by FG}
+      \State
+      \State \Comment{Step 2: Collect continuation headers}
+      \State $\mathsf{hdrs} \gets \{B_i.H\}_{i=h+1}^{h'}$
+      \State
+      \State \Comment{Step 3: Construct mint justification}
+      \State $\auxd' \gets (B_h, \mathsf{hdrs}, \mathsf{cert}_\mathsf{FG})$
+      \State
+      \State \Comment{Step 4: Construct mint transaction (Sec.~\ref{sec:mint-tx})}
+      \State $\mathsf{id} \gets \mathsf{tokenId}_\mathsf{reward}$  \Comment{Preimage of leaf $0$ in $B_h$}
+      \State $\predi' \gets \Call{OwnerPredicate}{\mathsf{sk}_\mathsf{miner}}$
+      \State $D_\mathsf{mint} \gets (\mathsf{id}, \mathsf{ALPHA}, \predi', \auxd')$
+      \State
+      \State \Comment{Step 5: Submit to Unicity Service}
+      \State $\sthash \gets H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
+      \State $\txhash \gets H(D_\mathsf{mint})$
+      \State $u_0 \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, H(\sthash, \txhash))$
+      \State $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, u_0)$
+      \State \Call{SubmitToUnicityService}{$Q$}
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+Verification of a reward token by a recipient requires checking the mint justification:
+
+\begin{algorithm}[!htbp]
+  \caption{Block Reward Mint Justification Verification}\label{alg:pow-reward-verify}
+  \begin{algorithmic}[0]
+    \Function{VerifyRewardMint}{$D_\mathsf{mint}, \mathcal{T}$}
+      \State $(B_h, \mathsf{hdrs}, \mathsf{cert}_\mathsf{FG}) \gets D_\mathsf{mint}.\auxd'$
+      \State
+      \State \Comment{1. Verify the mined block is valid and contains the reward claim}
+      \State ensure($\Call{ValidatePoWBlock}{B_h}$)
+      \State ensure($H(D_\mathsf{mint}.\mathsf{id})$ matches leaf $0$ of $B_h$'s payload tree)
+      \State ensure($B_h.\texttt{payloadRoot} = H(H(D_\mathsf{mint}.\mathsf{id}) \| \text{leaf}_1)$)
+      \State
+      \State \Comment{2. Verify chain of headers from mined block to certified block}
+      \State $\mathsf{prev} \gets H(B_h.H)$
+      \ForAll{$B_i.H \in \mathsf{hdrs}$}
+        \State ensure($B_i.H.\texttt{hashPrevBlock} = \mathsf{prev}$)
+        \State ensure($B_i.H.\texttt{hashRandomX} \le \Call{TargetFromBits}{B_i.H.\texttt{nBits}}$) \Comment{Valid PoW}
+        \State $\mathsf{prev} \gets H(B_i.H)$
+      \EndFor
+      \State
+      \State \Comment{3. Verify Finality Gadget certificate covers the chain tip}
+      \State ensure($\Call{VerifyUnicityCert}{\mathsf{cert}_\mathsf{FG}, \mathcal{T}}$)
+      \State ensure($\mathsf{cert}_\mathsf{FG}.\beta = \beta_\mathsf{FP}$) \Comment{FG partition}
+      \State ensure($\mathsf{cert}_\mathsf{FG}$ certifies $\mathsf{prev}$) \Comment{Certified block matches chain tip}
+      \State
+      \State \Comment{4. Verify reward value is correct for the block height}
+      \State ensure($D_\mathsf{mint}.\mathsf{value} = \Call{RewardRate}{B_h.\mathsf{height}}$)
+      \State \Return $1$
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+
+\subsection{Network Parameters}\label{sec:pow-network}
+
+Identifiers and hard limits are provided in Table~\ref{ta:pow-network}.
+
+\begin{table}[!htbp]
+  \begin{center}
+    \caption{PoW Chain Network Parameters.}\label{ta:pow-network}
+    \begin{tabular}{|p{5cm}|p{4cm}|p{4.5cm}|}\hline
+      Parameter & Value & Description \\\hline\hline
+      Protocol version & $1$ & Wire protocol version \\\hline
+      Mainnet magic & \texttt{0x554E4943} & Network identifier (``UNIC'') \\\hline
+      Mainnet port & $9590$ & Default P2P port \\\hline
+      Max message size & $8$~MB & Wire protocol limit \\\hline
+      Max headers per message & $80000$ & Header sync batch size \\\hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+
+\section{Snapshot Publishing}\label{sec:snapshot-publishing}
+
+Snapshot publishing\index{snapshot publishing} is the process by which BFT Core epoch transitions are anchored into the PoW chain. This provides the PoW chain community---and maximalist verifiers (Sec.~\ref{sec:maxi-verification})---with a verifiable link from the PoW chain to the BFT Core state.
+
+\subsection{Data Flow}\label{sec:snapshot-dataflow}
+
+\begin{enumerate}
+  \item The BFT Core completes an epoch change: the leader proposes a new epoch, validators approve the proposal and collectively sign a new Unicity Trust Base entry $T_e$ defining the next set of BFT validators (Sec.~\ref{sec:ddrc}, Table~\ref{ta:t-drc}).
+  \item A PoW miner obtains the new entry $T_e$ via the \texttt{GetTrustBase} protocol (Sec.~\ref{protocol-get-trust-base}), provided by BFT Core validators and aggregation layer nodes as a REST API.
+  \item The miner validates the new entry by verifying the Trust Base chain:
+    \begin{enumerate}[nosep]
+      \item Hash chain linkage: $T_e.h_{e-1} = H(T_{e-1})$.
+      \item Epoch number progression: $T_e.e = T_{e-1}.e + 1$.
+      \item Signature validity: $T_e.s_{e-1}$ is a valid signature from the epoch $e-1$ validator set over $T_e$.
+    \end{enumerate}
+  \item The miner includes $H(T_e)$ as leaf $1$ of the block payload tree in the next block being mined (Sec.~\ref{sec:pow-payload}).
+  \item If this block enters the longest chain, the checkpoint is published.
+  \item Other PoW nodes and interested verifiers replicate the block, including the full payload containing $T_e$, and can independently verify the checkpoint.
+\end{enumerate}
+
+
+\subsection{Snapshot Generation}\label{sec:snapshot-generation}
+
+\begin{algorithm}[!htbp]
+  \caption{Snapshot Generation by a PoW Miner}\label{alg:snapshot-publish}
+  \begin{algorithmic}[0]
+    \State \emph{State}:
+    \State $\mathcal{T}_\mathsf{local}$: locally verified Trust Base entries
+    \State $e_\mathsf{latest}$: epoch number of the latest verified entry
+    \State
+    \Function{PrepareCheckpoint}{}
+      \State \Comment{Query for new Trust Base entries}
+      \State $\mathcal{T}_\mathsf{new} \gets \Call{GetTrustBase}{\alpha, e_\mathsf{latest}+1}$
+        \Comment{Via REST API from BFT Core / aggregation nodes}
+      \If{$\mathcal{T}_\mathsf{new} = \NULL$}
+        \State \Return $\zerohash$ \Comment{No new checkpoint available}
+      \EndIf
+      \State
+      \State \Comment{Validate each new entry against the local Trust Base}
+      \ForAll{$T_e \in \mathcal{T}_\mathsf{new}$}
+        \State ensure($T_e.e = e_\mathsf{latest} + 1$) \Comment{Sequential epochs}
+        \State ensure($T_e.h_{e-1} = H(\mathcal{T}_\mathsf{local}[e_\mathsf{latest}])$) \Comment{Hash chain}
+        \State ensure($\Call{VerifySig}{T_e.s_{e-1}, T_e, \mathcal{T}_\mathsf{local}[e_\mathsf{latest}].\mathcal{V}}$)
+          \Comment{Signed by prev.\ validators}
+        \State $\mathcal{T}_\mathsf{local}[T_e.e] \gets T_e$
+        \State $e_\mathsf{latest} \gets T_e.e$
+      \EndFor
+      \State
+      \State \Return $H(T_{e_\mathsf{latest}})$ \Comment{Checkpoint hash for payload leaf $1$}
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+%TODO: fix me
+Since BFT Core epochs change infrequently relative to the PoW block rate, most PoW blocks will carry $\zerohash$ in payload leaf $1$. When multiple unclaimed Trust Base entries exist, the miner publishes the latest one; the intermediate entries can be obtained and verified by any party through the \texttt{GetTrustBase} protocol.
+
+
+\section{Finality Gadget}\label{sec:finality-gadget}
+
+The Finality Gadget\index{Finality Gadget} is an independent process that provides deterministic finality to PoW blocks by leveraging the BFT Core's consensus. Its purposes are:
+\begin{enumerate}[nosep]
+  \item Providing faster deterministic finality to PoW blocks than the probabilistic finality of the longest chain rule.
+  \item Enabling reward token verification against the Unicity Trust Base as the root of trust, without requiring the verifier to maintain a full PoW chain.
+  \item Bounding the practical depth of chain reorganizations.
+\end{enumerate}
+
+
+\subsection{Finality Gadget Partition}\label{sec:fg-partition}
+
+The Finality Gadget operates as a dedicated partition\index{Finality Gadget Partition} under the BFT Core, the \textbf{Finality Gadget Partition} (FP), with partition identifier $\beta_\mathsf{FP}$.
+
+\textbf{Assumptions:}
+\begin{itemize}[nosep]
+  \item Every BFT Core validator (as an independent, self-governing, financially independent entity) also runs a node in the FP.
+  \item Each such entity also operates a PoW node (without mining) to replicate, validate, and maintain a locally verified copy of the PoW chain.
+  \item The FP operates as a standard partition with a rotating partition leader, using the BFT Core consensus mechanisms described in Sec.~\ref{aggregation-layer}.
+\end{itemize}
+
+
+\subsection{Operation}\label{sec:fg-operation}
+
+The Finality Gadget partition operates in standard shard rounds:
+
+\begin{enumerate}
+  \item The FP leader queries its local PoW node (via RPC) for the latest ``final enough'' PoW block. Since the leader operates its own PoW node, it can trust the local RPC interface.
+  \item A PoW block is considered \emph{final enough} by the standard longest-chain criterion: it has sufficient cumulative work built on top and no visible competing forks. The required confirmation depth is a configuration parameter $d_\mathsf{FG}$.
+  \item The leader includes the candidate PoW block header in the FP block proposal and broadcasts it to FP follower nodes.
+  \item Each follower independently verifies the candidate against its own local PoW chain: the block must exist in their active chain with at least $d_\mathsf{FG}$ confirmations.
+  \item Followers vote for or against the proposal following the standard BFT partition protocol (Sec.~\ref{block-input}).
+  \item The BFT Core validates the majority approval and returns a Unicity Certificate for the FP round.
+  \item The certified PoW block header and its Unicity Certificate are stored as part of the FP partition blockchain.
+\end{enumerate}
+
+\begin{algorithm}[!htbp]
+  \caption{Finality Gadget Round -- Leader}\label{alg:fg-leader}
+  \begin{algorithmic}[0]
+    \State \emph{State}:
+    \State $h_\mathsf{FG}$: height of the latest FG-certified PoW block
+    \State $d_\mathsf{FG}$: required confirmation depth
+    \State
+    \Function{FGLeaderPropose}{}
+      \State $B_\mathsf{tip} \gets \Call{GetPoWChainTip}{}$  \Comment{From local PoW node via RPC}
+      \State $B_\mathsf{cand} \gets B_\mathsf{tip}.\mathsf{ancestor}(d_\mathsf{FG})$
+        \Comment{Block at depth $d_\mathsf{FG}$ from tip}
+      \If{$B_\mathsf{cand}.\mathsf{height} \le h_\mathsf{FG}$}
+        \State \Return  \Comment{No new block to certify}
+      \EndIf
+      \State ensure(no competing fork visible at $B_\mathsf{cand}.\mathsf{height}$)
+      \State
+      \State \Comment{Propose via standard partition protocol}
+      \State \Call{send\_BlockProposalMsg}{$\alpha, \beta_\mathsf{FP}, \sigma, \nu, luc, lte, \{B_\mathsf{cand}.H\}$}
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[!htbp]
+  \caption{Finality Gadget Round -- Follower Verification}\label{alg:fg-follower}
+  \begin{algorithmic}[0]
+    \Function{FGFollowerVerify}{$B_\mathsf{cand}.H$}
+      \State \Comment{Look up the candidate block in local PoW chain}
+      \State $B_\mathsf{local} \gets \Call{GetBlockByHash}{H(B_\mathsf{cand}.H)}$
+        \Comment{From local PoW node}
+      \If{$B_\mathsf{local} = \NULL$}
+        \State \Return $0$  \Comment{Block unknown, vote against}
+      \EndIf
+      \State ensure($B_\mathsf{local}$ is in the active chain) \Comment{Not on a fork}
+      \State $d \gets \Call{GetPoWChainTip}{}.\mathsf{height} - B_\mathsf{local}.\mathsf{height}$
+      \State ensure($d \ge d_\mathsf{FG}$) \Comment{Sufficient confirmations}
+      \State \Return $1$  \Comment{Vote for the proposal}
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+
+\subsection{Obtaining Finalized PoW Blocks}\label{sec:fg-obtaining}
+
+The FP partition blockchain is the authoritative source of deterministically finalized PoW blocks. Parties requiring guaranteed PoW finality obtain certified blocks from this chain:
+
+\begin{itemize}[nosep]
+  \item \textbf{Miners} collecting Finality Gadget certificates for reward token minting (Sec.~\ref{sec:pow-reward-minting}).
+  \item \textbf{Maximalist verifiers} anchoring their trust in the PoW chain with BFT-backed finality.
+  \item \textbf{Light clients} obtaining PoW chain checkpoints without running a full PoW node.
+\end{itemize}
+
+FP blocks are replicated using the standard ledger replication protocol (Sec.~\ref{ledger-replication}). Each FP block contains a certified PoW block header; verification uses the standard $\Call{VerifyUnicityCert}{\cdot, \mathcal{T}}$ function.
+
+
+\section{Trust Model}\label{sec:pow-trust-model}
+
+The combination of PoW chain, BFT Core, Snapshot Publishing, and Finality Gadget enables two distinct modes of token verification, offering different trade-offs between trust assumptions and operational convenience.
+
+
+\subsection{Maximalist Token Verification}\label{sec:maxi-verification}
+
+In the maximalist\index{maximalist verification} model, the root of trust is a \emph{living copy} of the PoW chain. The user maintains a full PoW node, verifying the chain from genesis. This provides security guarantees analogous to those of Bitcoin: the verifier trusts nothing beyond the PoW chain and cryptographic proofs.
+
+Upon receiving a token, the maximalist verifier checks:
+\begin{enumerate}
+  \item \textbf{Token validity}: The complete token transaction history is valid (Sec.~\ref{sec:token-structure}).
+  \item \textbf{Aggregation Layer integrity}: The Aggregation Layer has not forked---verified by checking that the Unicity Trust Base entries published as PoW chain checkpoints are consistent.
+  \item \textbf{No conflicting certifications}: The Aggregation Layer has not certified conflicting states for the same token---verified through non-deletion proofs, made efficient by recursive zero-knowledge proof compression.
+\end{enumerate}
+
+\textbf{Verification is not immediate.} The verifier must wait until:
+\begin{enumerate}[nosep]
+  \item A BFT Core epoch covering the token's latest Unicity Certificate has completed, and its Trust Base entry has been published in a PoW block via Snapshot Publishing.
+  \item The PoW block containing the relevant checkpoint has accumulated sufficient confirmations ($d_\mathsf{maxi}$) to be considered final under the longest chain rule.
+\end{enumerate}
+
+
+
+\subsection{Practical Token Verification}\label{sec:practical-verification}
+
+In the practical\index{practical verification} model, the root of trust is the verified Unicity Trust Base $\mathcal{T}$. The trust assumption is relaxed: a majority of BFT Core validators behave honestly and do not collude with the Aggregation Layer. Under this assumption, BFT layer forking or certifying conflicting states would produce strong cryptographic evidence (equivocation proofs, Sec.~\ref{round-finalization}), which is detected and processed out of the critical path of serving users.
+
+The Unicity Trust Base is compact: it grows by one entry per BFT Core epoch (a few aggregate signatures per week). A verifier initializes by obtaining and verifying $\mathcal{T}$; subsequent updates are incremental.
+
+Token verification is fast: a transaction is finalized and an inclusion proof returned within a few seconds of submission to the Unicity Service. The recipient can verify the token independently, without consulting external data beyond the previously obtained $\mathcal{T}$.
+
+
+\subsection{Comparison}\label{sec:trust-comparison}
+
+\begin{table}[!htbp]
+  \begin{center}
+    \caption{Trust Model Comparison.}\label{ta:trust-comparison}
+    \begin{tabular}{|p{3.5cm}|p{5cm}|p{5cm}|}\hline
+      & \textbf{Maximalist} & \textbf{Practical} \\\hline\hline
+      Root of trust & PoW chain (full node) & Unicity Trust Base $\mathcal{T}$ \\\hline
+      Trust assumption & Own PoW node validates everything & Honest BFT validator majority \\\hline
+      Verification latency & Hours to days (checkpoint publishing and PoW confirmations) & Seconds (BFT finality in $\approx 2$ rounds) \\\hline
+      Bootstrapping cost & Full PoW chain sync from genesis & Obtain $\mathcal{T}$ (compact, grows slowly) \\\hline
+      Offline verification & Yes, after blockchain sync & Yes, after obtaining $\mathcal{T}$ \\\hline
+      Security guarantee & Bitcoin-level PoW security & BFT consensus security (honest majority) \\\hline
+    \end{tabular}
+  \end{center}
+\end{table}
+
+Both models verify the same token transaction history and Unicity Certificates. The difference lies in how the Unicity Trust Base is authenticated: the maximalist model derives it from the PoW chain (via Snapshot Publishing), while the practical model obtains it directly from the BFT Core. The Finality Gadget bridges the two by allowing PoW chain artifacts (block rewards) to be verified under the practical model.
