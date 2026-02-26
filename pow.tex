@@ -166,8 +166,8 @@ Mining follows the standard PoW longest-chain paradigm. A miner:
   \item Selects the current chain tip as the parent block.
   \item Constructs the payload tree:
     \begin{enumerate}[nosep]
-      \item Chooses a unique reward token identifier $\mathsf{tokenId}_\mathsf{reward}$ and computes leaf $0 = H(\mathsf{tokenId}_\mathsf{reward})$.
-      \item If a new Unicity Trust Base entry $T_e$ is available and not yet published in the chain, sets leaf $1 = H(T_e)$; otherwise leaf $1 = \zerohash$.
+      \item Chooses a unique reward token identifier $\mathsf{tokenId}_\mathsf{reward}$ and computes $\text{leaf}_0 = H(\mathsf{tokenId}_\mathsf{reward})$.
+      \item If a new Unicity Trust Base entry $T_e$ is available and not yet published in the chain, sets $\text{leaf}_1 = H(T_e)$; otherwise $\text{leaf}_1 = \zerohash$.
       \item Computes $\texttt{payloadRoot} = H(\text{leaf}_0 \| \text{leaf}_1)$.
     \end{enumerate}
   \item Assembles the block header with current timestamp, difficulty target from ASERT, and the computed \texttt{payloadRoot}.
