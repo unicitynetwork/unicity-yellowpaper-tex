@@ -105,7 +105,7 @@ where $H_\mathsf{cp} = H(T_e)$ if a Trust Base entry $T_e$ is published, or $H_\
 
 The full block consists of the header and the payload data (the preimages):
 \begin{itemize}[nosep]
-  \item $\mathsf{tokenId}_\mathsf{reward} \in \idtype$ --- the reward token identifier chosen by the miner.
+  \item $H(\mathsf{tokenId}_\mathsf{reward}) \in \idtype$ --- the hash of the reward token identifier chosen by the miner. The actual token identifier remains in miner's sole custody and is revealed only when the token is redeemed (minted).
   \item $T_e$ --- the Unicity Trust Base entry for epoch $e$ (present only in checkpoint blocks).
 \end{itemize}
 
