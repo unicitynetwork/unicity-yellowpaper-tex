@@ -48,10 +48,10 @@ The PoW chain uses RandomX\index{RandomX}\footnote{\url{https://github.com/tevad
 
 By selecting an ASIC-resistant mining algorithm, participation in mining is democratized: commodity hardware can compete effectively, lowering the barrier to entry.
 
-Block validation uses a two-phase approach:
+Block validation uses a layered approach (Alg.~\ref{alg:pow-validate}):
 \begin{enumerate}[nosep]
-  \item \textbf{Commitment check} ($\sim 1$~ms): The \texttt{hashRandomX} field in the block is verified against the difficulty target \texttt{nBits}. This fast check rejects invalid blocks before invoking the expensive PoW computation, providing DoS protection.
-  \item \textbf{Full RandomX verification} ($\sim 50$~ms): The RandomX hash is recomputed from the block fields (excluding \texttt{hashRandomX}) and verified to match \texttt{hashRandomX}.
+  \item \textbf{Commitment check} ($\sim 1$~ms): The \texttt{hashRandomX} field is verified against the difficulty target \texttt{nBits}. This fast check rejects invalid blocks before invoking the expensive PoW computation, providing DoS protection.
+  \item \textbf{Full RandomX verification} ($\sim 50$~ms): The block hash $h_B = H(\text{fields 1--6})$ is recomputed from the header fields (excluding \texttt{hashRandomX}), and $\Call{RandomX}{h_B}$ is verified to equal \texttt{hashRandomX}.
 \end{enumerate}
 
 
@@ -61,46 +61,52 @@ The PoW chain is a \emph{permissionless blockchain}\index{PoW blockchain}. The p
 
 \subsubsection{Block Header}\label{sec:pow-block-format}
 
-The block is a fixed-size header with consensus-related fields, and a payload with optional and/or variable size fields. The RandomX hash is computed from the block fields (excluding \texttt{hashRandomX}) and verified to match \texttt{hashRandomX}.
+Each block consists of a fixed-size 112-byte header containing the consensus-critical fields, followed by a variable-length payload \texttt{vPayload}. The header commits to the payload via \texttt{payloadRoot}; the RandomX PoW commitment is derived from the block hash (fields 1--6) and stored in \texttt{hashRandomX}.
 
 \begin{table}[!htbp]
   \begin{center}
-    \caption{PoW Block Format.}\label{ta:pow-block}
+    \caption{PoW Block Header (112 bytes, fixed size).}\label{ta:pow-block}
     \begin{tabular}{|p{0.5cm}|p{3cm}|p{1.5cm}|p{1.4cm}|p{7cm}|}\hline
       No & Field & Size & Type & Description \\\hline\hline
       1. & \texttt{nVersion}       & 4 B  & \texttt{int32}   & Block version number \\\hline
-      2. & \texttt{hashPrevBlock}  & 32 B & $\hashtype$      & Hash of the previous block \\\hline
-      3. & \texttt{payloadRoot}    & 32 B & $\hashtype$      & Root of block payload tree (Sec.~\ref{sec:pow-payload}) \\\hline
+      2. & \texttt{hashPrevBlock}  & 32 B & $\hashtype$      & Hash of the previous block ($H$ of fields 1--6 of that block) \\\hline
+      3. & \texttt{payloadRoot}    & 32 B & $\hashtype$      & Root of the payload commitment tree (Sec.~\ref{sec:pow-payload}) \\\hline
       4. & \texttt{nTime}          & 4 B  & \texttt{uint32}  & Block timestamp (Unix epoch, seconds) \\\hline
       5. & \texttt{nBits}          & 4 B  & \texttt{uint32}  & Difficulty target in compact format \\\hline
       6. & \texttt{nNonce}         & 4 B  & \texttt{uint32}  & Mining nonce \\\hline
-      7. & \texttt{hashRandomX}    & 32 B & $\hashtype$      & RandomX hash (PoW commitment) \\\hline
-      8. & \texttt{vPayload}       & variable & $\hashtype$  & Block payload \\\hline
+      7. & \texttt{hashRandomX}    & 32 B & $\hashtype$      & RandomX PoW commitment; derived from the block hash, set last \\\hline
     \end{tabular}
   \end{center}
 \end{table}
 
-All integer fields use little-endian byte order. The block hash is computed as $H(B)$ over the serialized block bytes.
+All integer fields use little-endian byte order. Fields 1--7, serialized contiguously in the order above, form the fixed-size 112-byte block header. The variable-length payload \texttt{vPayload} is appended after the header; it is \emph{not} part of the block hash computation (its integrity is guaranteed via \texttt{payloadRoot}).
+
+\paragraph{Block hash.} The \emph{block hash} $H(B)$ is defined over the first six header fields only, \emph{excluding} \texttt{hashRandomX}:
+\[
+  H(B) \;=\; H\!\left(\texttt{nVersion} \;\|\; \texttt{hashPrevBlock} \;\|\; \texttt{payloadRoot} \;\|\; \texttt{nTime} \;\|\; \texttt{nBits} \;\|\; \texttt{nNonce}\right).
+\]
+This 80-byte prefix is also the input to the RandomX function. The \texttt{hashRandomX} field is set to $\Call{RandomX}{H(B)}$ and stored in the header after mining.
 
 \subsubsection{Block Payload}\label{sec:pow-payload}
 
-The block includes two payload elements:
-\begin{itemize}[nosep]
-  \item \texttt{hashReward}: The hash of the reward token identifier chosen by the miner. The actual token identifier remains in the miner's custody and is revealed only when the token is minted.
-  \item \texttt{hashCheckpoint}: The hash of the Unicity Trust Base entry $T_e$ for epoch $e$, or $\zerohash$ if no checkpoint is published in this block.
-\end{itemize}
-The full block data required for certain types of validation includes the preimages: the reward token identifier $\mathsf{tokenId}_\mathsf{reward}$ and the Trust Base entry $T_e$.
+The \texttt{payloadRoot} field commits to two payload elements via a hash tree. Let $\mathsf{cbor}(\cdot)$ denote CBOR encoding\footnote{Concise Binary Object Representation (CBOR), RFC~7049.} and let $T_e$ be the Unicity Trust Base entry for the current epoch (or the CBOR nil value $\bot$ if no new entry is published in this block). The computation and validation rule is defined as:
+\[
+  \texttt{payloadRoot} \;=\; H(H(\mathsf{tokenId}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e))) \;.
+\]
+When no Trust Base entry is published, $\mathsf{cbor}(T_e)$ is the CBOR encoding of the nil value.
 
 \begin{table}[!htbp]
   \begin{center}
-    \caption{PoW Block payload (\texttt{vPayload}).}\label{ta:pow-block-payload}
-    \begin{tabular}{|p{0.5cm}|p{3cm}|p{1.5cm}|p{1.4cm}|p{7cm}|}\hline
-      No & Field & Size & Type & Description \\\hline\hline
-      1. & \texttt{hashReward}     & 32 B & $\hashtype$       & $H(\mathsf{tokenId}_\mathsf{reward})$: hash of the reward token identifier claimed by the miner \\\hline
-      2. & \texttt{Checkpoint} & variable size & $\hashtype$       & $T_e$: Unicity Trust Base entry for epoch $e$, or blank \\\hline
+    \caption{PoW Block Payload (\texttt{vPayload}), serialized as a CBOR sequence.}\label{ta:pow-block-payload}
+    \begin{tabular}{|p{0.5cm}|p{3.5cm}|p{1.5cm}|p{7.5cm}|}\hline
+      No & Field & Size & Description \\\hline\hline
+      1. & $H(\mathsf{tokenId}_\mathsf{reward})$ & 32 B & Reward commitment leaf: hash of the reward token identifier chosen by the miner. The preimage $\mathsf{tokenId}_\mathsf{reward}$ remains in the miner's custody and is revealed only at minting time. \\\hline
+      2. & $\mathsf{cbor}(T_e)$ & variable & CBOR encoding of the Unicity Trust Base entry $T_e$ for the new epoch, or CBOR nil if the UTB epoch has not changed since the last published checkpoint. \\\hline
     \end{tabular}
   \end{center}
 \end{table}
+
+If $\mathsf{cbor}(T_e)$ is non-nil, the validator must additionally verify $T_e$ against the locally maintained, authentic Unicity Trust Base (Sec.~\ref{sec:snapshot-publishing}).
 
 
 \subsection{Difficulty Adjustment}\label{sec:pow-difficulty}
@@ -138,39 +144,52 @@ where:
 Mining follows the standard PoW longest-chain paradigm. A miner:
 \begin{enumerate}[nosep]
   \item Selects the current chain tip as the parent block.
-  \item Prepares the block commitments:
+  \item Prepares the payload commitments (Sec.~\ref{sec:pow-payload}):
     \begin{enumerate}[nosep]
-      \item Chooses a unique reward token identifier $\mathsf{tokenId}_\mathsf{reward}$ and sets \texttt{hashReward} $= H(\mathsf{tokenId}_\mathsf{reward})$.
-      \item If a new Unicity Trust Base entry $T_e$ is available and not yet published in the chain, sets \texttt{hashCheckpoint} $= H(T_e)$; otherwise \texttt{hashCheckpoint} $= \zerohash$.
+      \item Chooses a unique reward token identifier $\mathsf{tokenId}_\mathsf{reward}$ and stores it (e.g., by using a pseudo-random seed and a counter).
+      \item Obtains the new Unicity Trust Base entry $T_e$ if one is published, validates it against the authentic Unicity Trust Base (Sec.~\ref{sec:snapshot-publishing}); otherwise uses the CBOR nil value.
+      \item Computes $\texttt{payloadRoot} \;=\; H(H(\mathsf{tokenId}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e)))$.
     \end{enumerate}
-  \item Assembles the block with current timestamp, difficulty target from ASERT, and the computed commitments.
-  \item Iterates \texttt{nNonce} values, computing the RandomX hash for each candidate block, until finding a hash that meets the difficulty target \texttt{nBits}.
-  \item Broadcasts the winning block (including preimages $\mathsf{tokenId}_\mathsf{reward}$ and $T_e$ if applicable) to the P2P network.
+  \item Assembles the header with current timestamp, difficulty target from ASERT, \texttt{payloadRoot}, and \texttt{hashPrevBlock} $= H(\text{parent})$.
+  \item Iterates \texttt{nNonce} values. For each candidate, computes the block hash $h_B = H(\texttt{nVersion} \| \texttt{hashPrevBlock} \| \texttt{payloadRoot} \| \texttt{nTime} \| \texttt{nBits} \| \texttt{nNonce})$ and the RandomX commitment $\texttt{hashRandomX} = \Call{RandomX}{h_B}$, until \texttt{hashRandomX} meets the difficulty target \texttt{nBits}.
+  \item Broadcasts the complete block (112-byte header with final \texttt{hashRandomX}, followed by \texttt{vPayload}) to the P2P network.
 \end{enumerate}
 
 
 \subsubsection{Block Validation}\label{sec:pow-block-validation}
 
-Received blocks are validated in three layers:
+The steps to validade a block are documented by Algorithm~\ref{alg:pow-validate}.
 
 \begin{algorithm}[!htbp]
   \caption{PoW Block Validation}\label{alg:pow-validate}
   \begin{algorithmic}[0]
-    \Function{ValidatePoWBlock}{$B$}
-      \State \Comment{Layer 1: Commitment check (DoS protection, $\sim 1$~ms)}
+    \Function{ValidatePoWBlock}{$B, \mathcal{T}_\mathsf{local}$}
+      \State \Comment{Step 1: Commitment check (DoS protection)}
       \State ensure($B.\texttt{hashRandomX} \le \Call{TargetFromBits}{B.\texttt{nBits}}$)
       \State
-      \State \Comment{Layer 2: Full PoW verification ($\sim 50$~ms)}
-      \State $\mathsf{input} \gets B.\texttt{nVersion} \| B.\texttt{hashPrevBlock} \| B.\texttt{nTime} \| B.\texttt{nBits} \| B.\texttt{nNonce}$
-      \State $\quad \| \; B.\texttt{hashReward} \| B.\texttt{hashCheckpoint}$
-      \State $rx \gets \Call{RandomX}{\mathsf{input}}$
-      \State ensure($rx = B.\texttt{hashRandomX}$)
+      \State \Comment{Step 2: Full PoW verification}
+      \State $h_B \gets H(B.\texttt{nVersion} \| B.\texttt{hashPrevBlock} \| B.\texttt{payloadRoot} \| B.\texttt{nTime} \| B.\texttt{nBits} \| B.\texttt{nNonce})$
+      \State ensure($\Call{RandomX}{h_B} = B.\texttt{hashRandomX}$)
       \State
-      \State \Comment{Layer 3: Contextual validation}
+      \State \Comment{Step 3: Payload root verification}
+      \State $(\ell_0,\; \mathsf{cbor\_Te}) \gets \Call{CborDecode}{B.\texttt{vPayload}}$
+      \State $\ell_1 \gets H(\mathsf{cbor\_Te})$
+      \State ensure($B.\texttt{payloadRoot} = H(\ell_0 \| \ell_1)$) \Comment{Payload integrity}
+      \State
+      \State \Comment{Step 4: Contextual validation}
       \State ensure($B.\texttt{nBits} = \Call{ASERT}{B.\mathsf{parent}}$) \Comment{Correct difficulty}
       \State ensure($B.\texttt{nTime} > B.\mathsf{parent}.\texttt{nTime}$) \Comment{Strictly increasing}
       \State ensure($B.\texttt{nTime} < \Call{Now}{} + 600$) \Comment{Not too far in the future}
       \State ensure($B.\texttt{nVersion} \ge 1$)
+      \State
+      \State \Comment{Step 5: Trust Base entry validation (if checkpoint present)}
+      \If{$\mathsf{cbor\_Te} \ne \Call{CborNil}{}$}
+        \State $T_e \gets \Call{CborDecode}{\mathsf{cbor\_Te}}$
+        \State $T_{e-1} \gets \mathcal{T}_\mathsf{local}[T_e.e - 1]$ \Comment{Last locally verified entry}
+        \State ensure($T_e.e = T_{e-1}.e + 1$) \Comment{Sequential epoch number}
+        \State ensure($T_e.h_{e-1} = H(T_{e-1})$) \Comment{Hash chain linkage}
+        \State ensure($\Call{VerifySig}{T_e.s_{e-1},\; T_e,\; T_{e-1}.\mathcal{V}}$) \Comment{Signed by previous validators}
+      \EndIf
       \State \Return $1$
     \EndFunction
   \end{algorithmic}
@@ -188,7 +207,7 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
     \caption{Block Reward Token.}\label{ta:pow-reward}
     \begin{tabular}{|p{4cm}|p{9.5cm}|}\hline
       Field & Value \\\hline\hline
-      Token identifier ($\mathsf{id}$) & $\mathsf{tokenId}_\mathsf{reward}$: the identifier whose hash is committed in the \texttt{hashReward} field of the mined block \\\hline
+      Token identifier ($\mathsf{id}$) & $\mathsf{tokenId}_\mathsf{reward}$: the identifier whose hash $\ell_0 = H(\mathsf{tokenId}_\mathsf{reward})$ is committed via \texttt{payloadRoot} of the mined block \\\hline
       Token type ($\mathsf{ty}$) & $\mathsf{ALPHA}$ \\\hline
       Value & $\Call{RewardRate}{h}$, the reward rate at block height $h$ \\\hline
       Owner predicate ($\predi'$) & Miner's chosen spending predicate \\\hline
@@ -227,7 +246,7 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
       \State $\auxd' \gets (B_h, \mathsf{blocks}, \mathsf{cert}_\mathsf{FG})$
       \State
       \State \Comment{Step 4: Construct mint transaction (Sec.~\ref{sec:mint-tx})}
-      \State $\mathsf{id} \gets \mathsf{tokenId}_\mathsf{reward}$  \Comment{Preimage of \texttt{hashReward} in $B_h$}
+      \State $\mathsf{id} \gets \mathsf{tokenId}_\mathsf{reward}$  \Comment{Preimage of $\ell_0$ committed in $B_h.\texttt{payloadRoot}$}
       \State $\predi' \gets \Call{OwnerPredicate}{\mathsf{sk}_\mathsf{miner}}$
       \State $D_\mathsf{mint} \gets (\mathsf{id}, \mathsf{ALPHA}, \predi', \auxd')$
       \State
@@ -250,15 +269,16 @@ Verification of a reward token by a recipient requires checking the mint justifi
       \State $(B_h, \mathsf{blocks}, \mathsf{cert}_\mathsf{FG}) \gets D_\mathsf{mint}.\auxd'$
       \State
       \State \Comment{1. Verify the mined block is valid and contains the reward claim}
-      \State ensure($\Call{ValidatePoWBlock}{B_h}$)
-      \State ensure($H(D_\mathsf{mint}.\mathsf{id}) = B_h.\texttt{hashReward}$)
+      \State ensure($\Call{ValidatePoWBlock}{B_h, \mathcal{T}}$)
+      \State $(\ell_0,\; \_) \gets \Call{CborDecode}{B_h.\texttt{vPayload}}$
+      \State ensure($\ell_0 = H(D_\mathsf{mint}.\mathsf{id})$) \Comment{Reward commitment matches token id}
       \State
       \State \Comment{2. Verify chain of blocks from mined block to certified block}
-      \State $\mathsf{prev} \gets H(B_h)$
+      \State $\mathsf{prev} \gets H(B_h)$ \Comment{$H$ over fields 1--6 of $B_h$}
       \ForAll{$B_i \in \mathsf{blocks}$}
         \State ensure($B_i.\texttt{hashPrevBlock} = \mathsf{prev}$)
         \State ensure($B_i.\texttt{hashRandomX} \le \Call{TargetFromBits}{B_i.\texttt{nBits}}$) \Comment{Valid PoW}
-        \State $\mathsf{prev} \gets H(B_i)$
+        \State $\mathsf{prev} \gets H(B_i)$ \Comment{$H$ over fields 1--6 of $B_i$}
       \EndFor
       \State
       \State \Comment{3. Verify Finality Gadget certificate covers the chain tip}
@@ -308,9 +328,9 @@ Snapshot publishing\index{snapshot publishing} is the process by which BFT Core 
       \item Epoch number progression: $T_e.e = T_{e-1}.e + 1$.
       \item Signature validity: $T_e.s_{e-1}$ is a valid signature from the epoch $e-1$ validator set over $T_e$.
     \end{enumerate}
-  \item The miner includes $H(T_e)$ as \texttt{hashCheckpoint} in the next block being mined.
+  \item The miner CBOR-encodes $T_e$ as $\mathsf{cbor}(T_e)$ and includes it in \texttt{vPayload} alongside the reward commitment $\ell_0$. The commitment $\ell_1 = H(\mathsf{cbor}(T_e))$ is folded into \texttt{payloadRoot} (Sec.~\ref{sec:pow-payload}).
   \item If this block enters the longest chain, the checkpoint is published.
-  \item Other PoW nodes and interested verifiers replicate the block, and can independently verify the checkpoint if they obtain $T_e$.
+  \item Other PoW nodes and interested verifiers replicate the block. Upon receiving a block, they CBOR-decode \texttt{vPayload} to extract $\mathsf{cbor}(T_e)$, verify it against the locally maintained Trust Base chain (Layer~5 of Alg.~\ref{alg:pow-validate}), and if valid, extend their local Trust Base.
 \end{enumerate}
 
 
@@ -328,7 +348,7 @@ Snapshot publishing\index{snapshot publishing} is the process by which BFT Core 
       \State $\mathcal{T}_\mathsf{new} \gets \Call{GetTrustBase}{\alpha, e_\mathsf{latest}+1}$
         \Comment{Via REST API from BFT Core / aggregation nodes}
       \If{$\mathcal{T}_\mathsf{new} = \NULL$}
-        \State \Return $\zerohash$ \Comment{No new checkpoint available}
+        \State \Return $\Call{CborNil}{}$ \Comment{No new checkpoint; payload leaf $\ell_1 = H(\mathsf{cbor}(\bot))$}
       \EndIf
       \State
       \State \Comment{Validate each new entry against the local Trust Base}
@@ -341,12 +361,12 @@ Snapshot publishing\index{snapshot publishing} is the process by which BFT Core 
         \State $e_\mathsf{latest} \gets T_e.e$
       \EndFor
       \State
-      \State \Return $H(T_{e_\mathsf{latest}})$ \Comment{Checkpoint hash for \texttt{hashCheckpoint}}
+      \State \Return $\Call{CborEncode}{T_{e_\mathsf{latest}}}$ \Comment{CBOR bytes for \texttt{vPayload} field 2}
     \EndFunction
   \end{algorithmic}
 \end{algorithm}
 
-Since BFT Core epochs change infrequently relative to the PoW block rate, most PoW blocks will carry $\zerohash$ in \texttt{hashCheckpoint}. When multiple unclaimed Trust Base entries exist, the miner publishes the latest one; the intermediate entries can be obtained and verified by any party through the \texttt{GetTrustBase} protocol.
+Since BFT Core epochs change infrequently relative to the PoW block rate, most PoW blocks will carry the CBOR nil value in the checkpoint field of \texttt{vPayload}. When multiple unclaimed Trust Base entries exist, the miner publishes the latest one; the intermediate entries can be obtained and verified by any party through the \texttt{GetTrustBase} protocol.
 
 
 \section{Finality Gadget}\label{sec:finality-gadget}
