@@ -177,8 +177,8 @@ See Fig.~\ref{fi:inc-proof} for the Inclusion Proof structure and Fig.~\ref{fi:u
 
 \subsection{Sparse Merkle Tree}\label{sec:smt}
 
-\index{sparse merkle tree}\index{SMT}
-The aggregation layer maintains a \emph{Sparse Merkle Tree} (SMT) in compressed paths form. The SMT maps state identifiers to transaction hashes and provides compact inclusion proofs. Refer to Appendix \ref{app:smt} for details.
+\index{sparse merkle tree}\index{SMT}\index{RSMT}
+The aggregation layer maintains a \emph{Radix Sparse Merkle Tree} (RSMT), a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. The RSMT maps state identifiers to transaction hashes and provides compact inclusion and non-inclusion certificates. Refer to Appendix~\ref{app:rsmt} for details.
 
 
 \subsubsection{SMT Leaf Structure}
@@ -198,21 +198,13 @@ The SMT effectively maintains a mapping $\mathsf{sid} \mapsto \txhash$ that prov
 \subsubsection{Inclusion Certificate}\label{InclusionCert}
 
 \index{$C^\mathsf{inc}$ (Inclusion Certificate)}\index{Inclusion Certificate}
-An \emph{Inclusion Certificate} $C^\mathsf{inc}$ for a leaf with key $\mathsf{sid}$ is a sequence of pairs:
-\begin{equation*}
-C^\mathsf{inc} = \langle (p_1, d_1), (p_2, d_2), \ldots, (p_n, d_n) \rangle
-\end{equation*}
-where each pair $(p_i, d_i)$ consists of:
+An \emph{Inclusion Certificate} $C^\mathsf{inc}$ for a leaf with key $\mathsf{sid}$ is a pair $C^\mathsf{inc} = (\mathit{bitmap}, \mathit{siblings})$ where:
 \begin{itemize}
-	\item $p_i \in \bitstr$ -- a path segment (bit-string)
-	\item $d_i \in \hashtype \cup \bytes{\ast}$ -- for $i=1$ this is the leaf data, for $i>1$ this is a sibling hash value
+	\item $\mathit{bitmap} \in \bytes{32}$ -- a 256-bit vector; bit $d$ is set iff a sibling hash is required at depth $d$ on the path from the leaf to the root
+	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes ordered leaf-to-root
 \end{itemize}
 
-The first pair $(p_1, d_1)$ contains the leaf's path segment and data. Each subsequent pair $(p_i, d_i)$ for $i > 1$ represents a step up the tree where $p_i$ is the path segment from the current node to its parent, and $d_i$ is the sibling hash value.
-
-The concatenated path $p_1 \| p_2 \| \ldots \| p_n$ equals the full key $\mathsf{sid}$. The respective value $d_1$ records $\txhash$.
-
-The verification function $\Call{smt\_verify\_inclusion}$ is provided in Appendix~\ref{sec:smt-verify-inclusion}.
+The verification function $\textsc{rsmt\_verify\_inclusion}$ is provided in Appendix~\ref{sec:rsmt-verify-inclusion}.
 
 \subsection{Shard Tree Certificate}\label{se:shard-tree-cert}
 
@@ -378,41 +370,21 @@ Verifies if unicity certificate is valid, based on unicity trust base as the roo
 
 \subsection{Inclusion Proof}
 
-\emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state transition (mapping from state identifier to transaction hash) has been registered in the SMT and certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (L, C^\mathsf{inc}, UC)$, where:
+\emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state transition (mapping from state identifier to transaction hash) has been registered in the SMT and certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, where:
 \begin{enumerate}
-	\item $L$ -- SMT leaf containing the state transition
+	\item $\mathsf{sid} \in \bytes{32}$ -- state identifier (SMT leaf key)
+	\item $\txhash \in \hashtype$ -- transaction data hash (SMT leaf value)
 	\item $C^\mathsf{inc}$ -- Inclusion Certificate (Sec.~\ref{InclusionCert})
 	\item $UC$ -- unicity certificate (Sec.~\ref{se:unicity-certificate})
 \end{enumerate}
 
-\subsubsection{SMT Leaf}
-
-An SMT leaf $L$ is a tuple $L = (\mathsf{sid}, \txhash)$, where:
-\begin{itemize}
-	\item $\mathsf{sid} = H(\predi, \sthash)$ -- state identifier, computed as the hash of the token owner's spending predicate and state hash
-	\item $\txhash$ -- transaction data hash
-\end{itemize}
-
-SMT Leaf can be extracted from Inclusion Certificate like this:
-
-\textbf{Input}: $C^\mathsf{inc} = \langle (p_1, d_1), (p_2, d_2), \ldots, (p_n, d_n) \rangle$ -- Inclusion Certificate
-
-\textbf{Output}: $L = (\mathsf{sid}, h_{\mathsf{tx}})$ -- SMT Leaf
-
-\textbf{Computation}:
-\begin{algorithmic}[0]
-	\State $\mathsf{sid} \gets p_1 \| p_2 \| \ldots \| p_n$ \Comment{Concatenate all path segments}
-	\State $h_{\mathsf{tx}} \gets d_1$ \Comment{Extract leaf data from first pair}
-	\State \Return $(\mathsf{sid}, h_{\mathsf{tx}})$
-\end{algorithmic}
-
 \subsubsection{Verification: $\mathsf{VerifyInclusionProof}$}\label{VerifyInclusionProof}\index{functions!VerifyInclusionProof}
 
-$\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type $\mathbb{IP} \times \mathbb{UB} \times \mathbb{CD} \to \bool$
+$\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type $\mathbb{IP} \times \mathbb{UB} \to \bool$
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $\pi^\mathsf{inc} = (C^\mathsf{inc}, UC)$ -- inclusion proof
+	\item $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$ -- inclusion proof
 	\item $\mathcal{T}$ -- trust base
 \end{enumerate}
 
@@ -421,18 +393,39 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 \textbf{Computation}:
 \begin{algorithmic}[0]
 	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
-	\If {$\neg \Call{smt\_verify\_inclusion}{\mathsf{sid}, h_{\mathsf{tx}}, C^\mathsf{inc}, h}$} \Return \FALSE \EndIf
+	\If {$\neg \Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, h, \mathsf{sid}, \txhash}$} \Return \FALSE \EndIf
 	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
 	\State \Return \TRUE
 \end{algorithmic}
 
-The inclusion proof applies to the leaf which matches the leaf extracted from the Inclusion Certificate.
-
 \subsection{Non-Inclusion Proof}
 
-\emph{Non-Inclusion Proof}\index{$\pi^\mathsf{exc}$ (non-inclusion proof)}\index{non-inclusion proof}\index{exclusion proof} proves that a state identifier does NOT exist in the SMT. It cryptographically demonstrates that a StateID is absent from the tree by showing the path to where it would be located if it existed.
+\emph{Non-Inclusion Proof}\index{$\pi^\mathsf{exc}$ (non-inclusion proof)}\index{non-inclusion proof}\index{exclusion proof} proves that a state identifier does NOT exist in the SMT. It is a tuple $\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$, where:
+\begin{enumerate}
+	\item $C^\mathsf{exc}$ -- Non-Inclusion Certificate (Appendix~\ref{sec:rsmt-non-inclusion-cert})
+	\item $UC$ -- unicity certificate (Sec.~\ref{se:unicity-certificate})
+\end{enumerate}
 
-A non-inclusion proof uses the same data structure as the inclusion proof but with different interpretation. The non-inclusion proof $\pi^\mathsf{exc} = (C^\mathsf{inc}, UC)$ of $\mathsf{sid}$ is valid if $\mathsf{VerifyInclusionProof}(\pi^\mathsf{exc}, \mathcal{T}) = \TRUE$ and $p_1$ is a prefix of $\mathsf{sid}$ and $d_1 = \emptyset$.
+\subsubsection{Verification: $\mathsf{VerifyNonInclusionProof}$}\label{VerifyNonInclusionProof}\index{functions!VerifyNonInclusionProof}
+
+$\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function of type $\mathbb{EP} \times \mathbb{UB} \to \bool$
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$ -- non-inclusion proof
+	\item $\mathcal{T}$ -- trust base
+	\item $\mathsf{sid} \in \bytes{32}$ -- queried state identifier
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}[0]
+	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
+	\If {$\neg \Call{rsmt\_verify\_non\_inclusion}{C^\mathsf{exc}, h, \mathsf{sid}}$} \Return \FALSE \EndIf
+	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
+	\State \Return \TRUE
+\end{algorithmic}
 
 
 \subsection{Consistency Proof}\label{sec:consistency-proof}
@@ -442,7 +435,7 @@ A \emph{Consistency Proof} (also called \emph{non-deletion proof}) is a cryptogr
 
 The consistency proof enables the BFT Core to verify the integrity of the Aggregation Layer's operations in a trustless manner.
 
-For a batch of state transitions processed in a single round, the consistency proof $\pi_{CP}$ of type $\mathbb{CP}$ is a tuple $(B, \Pi)$ where $B$ is the batch of new SMT leaves and $\Pi$ contains the sibling hashes needed for verification (see Appendix~\ref{app:smt-consistency-proof} for detailed structure).
+For a batch of state transitions processed in a single round, the consistency proof $\pi_{CP}$ is the post-order opcode stream defined in Appendix~\ref{sec:rsmt-consistency-proof}.
 
 \subsubsection{Verification Function}\label{VerifyConsistencyProof}\index{functions!VerifyConsistencyProof}
 
@@ -450,14 +443,15 @@ $\mathsf{VerifyConsistencyProof}$ -- consistency proof verification function of 
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $\pi_{CP} = (B, \Pi)$ -- consistency proof where $B = \langle (\mathsf{sid}_1, h_{\mathsf{tx},1}), \ldots, (\mathsf{sid}_j, h_{\mathsf{tx},j}) \rangle$
+	\item $\pi_{CP}$ -- consistency proof (opcode stream)
+	\item $B = \langle (\mathsf{sid}_1, h_{\mathsf{tx},1}), \ldots, (\mathsf{sid}_j, h_{\mathsf{tx},j}) \rangle$ -- batch of inserted leaves
 	\item $h'$ -- previous SMT root hash (before the round)
 	\item $h$ -- current SMT root hash (after the round)
 \end{enumerate}
 
 \textbf{Output}: \TRUE or \FALSE
 
-The verification algorithm is defined in Appendix~\ref{sec:smt-verify-consistency-proof}.
+The verification algorithm ($\textsc{rsmt\_verify\_consistency}$) is defined in Appendix~\ref{sec:rsmt-verify-consistency}.
 
 A valid consistency proof guarantees: (1) \textbf{Append-only property}: No existing leaves were deleted or modified; (2) \textbf{Correctness}: All new leaves in batch $B$ were correctly inserted at positions determined by their state identifiers; (3) \textbf{Completeness}: The state transition from $h'$ to $h$ includes exactly the leaves in $B$ and no others.
 

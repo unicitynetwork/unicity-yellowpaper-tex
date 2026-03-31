@@ -100,7 +100,7 @@ acs-*.bib
 
 # knitr
 *-concordance.tex
-# TODO Comment the next line if you want to keep your tikz graphics files
+# Comment the next line if you want to keep your tikz graphics files
 *.tikz
 *-tikzDictionary
 
@@ -209,3 +209,4 @@ TSWLatexianTemp*
 .DS_Store
 .idea
 *.iml
+.claude

@@ -240,308 +240,10 @@ Indexed hash trees can be used to provide and verify both inclusion and exclusio
 		\end{itemize}
 \end{itemize}
 
-\section{Sparse Merkle Trees}\label{app:smt}
-
-A \emph{Sparse Merkle Tree} (SMT) is a binary Merkle tree that maps keys from a large key space to values, where most positions in the key space are empty. The \emph{path-compressed} form, documented below, retains only non-empty leaves and parent nodes with two children explicitly. The root node is an exception and may have zero, one, or two children.
-
-\subsection{Path Compression}
-
-In a path-compressed SMT, edges are labeled with path descriptions (bit-strings) that encode the path from child to parent.
-
-\begin{itemize}
-	\item \textbf{Leaf node hash}: $h = H(p, d)$ where:
-	\begin{itemize}
-		\item $p \in \bitstr$ is the path label from this node to its parent
-		\item $d \in \bytes{\ast}$ is the leaf data
-	\end{itemize}
-	\item \textbf{Branch node hash}: $h = H(p, h_L, h_R)$ where:
-	\begin{itemize}
-		\item $p \in \bitstr$ is the path label from this node to its parent
-		\item $h_L \in \hashtype$ is the left child hash (or $\bot$ if empty)
-		\item $h_R \in \hashtype$ is the right child hash (or $\bot$ if empty)
-	\end{itemize}
-	\item \textbf{Root node}: Uses empty path $\epsilon$ (zero-length bit-string) in hash computation
-\end{itemize}
-
-
-\subsection{Function $\textsc{smt\_leaf\_hash}$}\label{sec:smt-leaf-hash}
-
-Computes the hash of an SMT leaf node.
-
-\textbf{Input}:
-\begin{enumerate}
-	\item $p \in \bitstr$ -- path segment from this leaf to its parent
-	\item $d \in \hashtype$ -- leaf data (transaction hash)
-\end{enumerate}
-
-\textbf{Output}: $h \in \hashtype$ -- hash of the leaf node
-
-\textbf{Computation}:
-\begin{algorithmic}
-	\Function{smt\_leaf\_hash}{$p, d$}
-		\State \Return $H(p, d)$
-	\EndFunction
-\end{algorithmic}
-
-\subsection{Function $\textsc{smt\_branch\_hash}$}\label{sec:smt-branch-hash}
-
-Computes the hash of an SMT branch node.
-
-\textbf{Input}:
-\begin{enumerate}
-	\item $p \in \bitstr$ -- path segment from this node to its parent
-	\item $h_L \in \hashtype \cup \{\bot\}$ -- left child hash (or $\bot$ if empty)
-	\item $h_R \in \hashtype \cup \{\bot\}$ -- right child hash (or $\bot$ if empty)
-\end{enumerate}
-
-\textbf{Output}: $h \in \hashtype \cup \{\bot\}$ -- hash of the branch node
-
-\textbf{Computation}:
-\begin{algorithmic}
-	\Function{smt\_branch\_hash}{$p, h_L, h_R$}
-		\If {$h_L = \bot \land h_R = \bot$}
-			\State \Return $\bot$ \Comment{Empty subtree}
-		\Else
-			\State \Return $H(p, h_L, h_R)$
-		\EndIf
-	\EndFunction
-\end{algorithmic}
-
-Note: When hashing, $\bot$ values are encoded according to the serialization scheme (e.g., CBOR null).
-
-\subsection{Inclusion Certificate}\label{sec:smt-inclusion-cert}
-
-An \emph{Inclusion Certificate} for an SMT leaf with key $\mathsf{sid}$ is a sequence of pairs:
-\[
-C^\mathsf{inc} = \langle (p_1, d_1), (p_2, d_2), \ldots, (p_n, d_n) \rangle
-\]
-where:
-\begin{itemize}
-	\item $(p_1, d_1)$ -- the leaf's path segment and data
-	\item $(p_i, d_i)$ for $i > 1$ -- path segment $p_i$ to parent and sibling hash $d_i$
-	\item The concatenated path $p_1 \| p_2 \| \ldots \| p_n = \mathsf{sid}$ (full key)
-\end{itemize}
-
-\subsection{Function $\textsc{smt\_verify\_inclusion}$}\label{sec:smt-verify-inclusion}
-
-Verifies an inclusion certificate by reconstructing the root hash.
-
-\textbf{Input}:
-\begin{enumerate}
-	\item $k \in \hashtype$ -- key
-	\item $v \in \hashtype$ -- value
-	\item $C^\mathsf{inc} = \langle (p_1, d_1), (p_2, d_2), \ldots, (p_n, d_n) \rangle$ -- inclusion certificate
-	\item $h_{\mathsf{root}} \in \hashtype$ -- expected root hash
-\end{enumerate}
-
-\textbf{Output}: \TRUE or \FALSE
-
-\textbf{Computation}:
-\begin{algorithmic}
-	\Function{smt\_verify\_inclusion}{$k, v, C^\mathsf{inc}, h_{\mathsf{root}}$}
-		\If {$d_1 \neq v$}
-			\State \Return \FALSE \Comment{Leaf value mismatch}
-		\EndIf
-		\If {$p_1 \| p_2 \| \ldots \| p_n \neq k$}
-			\State \Return \FALSE \Comment{Path doesn't match key}
-		\EndIf
-		\State $h \gets H(p_1, d_1)$ \Comment{Hash leaf node}
-		\For {$i \gets 2$ to $n$}
-			\State $b \gets$ rightmost bit of $p_{i-1}$
-			\If {$b = 0$}
-				\State $h \gets H(p_i, h, d_i)$ \Comment{Current is left child}
-			\Else
-				\State $h \gets H(p_i, d_i, h)$ \Comment{Current is right child}
-			\EndIf
-		\EndFor
-		\State \Return $(h = h_{\mathsf{root}})$
-	\EndFunction
-\end{algorithmic}
-
-The rightmost bit of path segment $p_{i-1}$ determines whether the current node is the left child (bit is 0) or right child (bit is 1) of its parent.
-
-\subsection{Inclusion and Exclusion Proofs}
-
-Sparse Merkle Trees support both inclusion and exclusion (non-inclusion) proofs using the same certificate structure.
-
-\subsubsection{Inclusion Proof}
-
-To prove that a key-value pair $(k, v)$ exists in an SMT:
-
-\begin{itemize}
-	\item \textbf{Generation}: Extract the path from the leaf to the root, collecting sibling hashes at each level to form $C^\mathsf{inc} = \langle (p_1, d_1), \ldots, (p_n, d_n) \rangle$
-	\item \textbf{Verification}: Check that:
-	\begin{enumerate}
-		\item $\Call{smt\_verify\_inclusion}{k, v, C^\mathsf{inc}, h_{\mathsf{root}}} = \TRUE$
-		\item The leaf data $d_1 = h_{\mathsf{tx}}$ matches the claimed value
-		\item The concatenated path equals the claimed key: $p_1 \| \ldots \| p_n = \mathsf{sid}$
-	\end{enumerate}
-\end{itemize}
-
-\subsubsection{Exclusion Proof (Non-Inclusion Proof)}
-
-To prove that a key $k_q$ does NOT exist in an SMT:
-
-\begin{itemize}
-	\item \textbf{Generation}: Find the position where $k_q$ would be located if it existed. Generate a certificate $C^\mathsf{exc} = \langle (p_1, d_1), \ldots, (p_n, d_n) \rangle$ showing this position (or its prefix) has empty value.
-	\item \textbf{Verification}: Check that:
-	\begin{enumerate}
-		\item The certificate reconstructs the correct root: \\
-		      $\Call{smt\_verify\_inclusion}{k_p, d_1, C^\mathsf{exc}, h_{\mathsf{root}}} = \TRUE$ \\
-		      where $k_p = p_1 \| \ldots \| p_n$ is the path from the certificate
-		\item The position is empty: $d_1 = \bot$ (no leaf exists at this location)
-	\end{enumerate}
-\end{itemize}
-
-The exclusion proof shows the branch where $\mathsf{sid}_q$ would be if it existed, cryptographically proving its absence from the current tree state.
-
-\subsection{Consistency Proofs}\label{app:smt-consistency-proof}
-
-A \emph{Consistency Proof} for a Sparse Merkle Tree validates one round of operation by proving that the state transition from previous SMT root hash $h'$ to current SMT root hash $h$ was performed correctly: only new leaves were added, and no pre-existing leaves were removed or modified.
-
-\subsubsection{Structure}
-
-For a batch of state transitions processed in a single round, the consistency proof $\pi_{CP}$ is a tuple:
-\[
-\pi_{CP} = (B, \Pi)
-\]
-where:
-\begin{itemize}
-	\item $B = \langle (\mathsf{sid}_1, h_{\mathsf{tx},1}), (\mathsf{sid}_2, h_{\mathsf{tx},2}), \ldots, (\mathsf{sid}_j, h_{\mathsf{tx},j}) \rangle$ -- batch of new SMT leaves, where each $\mathsf{sid}_i$ is a state identifier and $h_{\mathsf{tx},i}$ is the corresponding transaction hash
-	\item $\Pi$ -- proof data containing sibling hashes needed for verification
-\end{itemize}
-
-The proof data $\Pi$ is organized by tree depth layers for efficient verification. For each newly inserted leaf, the sibling nodes on the path from the leaf to the root are collected. Siblings that are computable from other leaves in the batch are omitted.
-
-\subsubsection{Function $\textsc{smt\_generate\_consistency\_proof}$}\label{sec:smt-generate-consistency-proof}
-
-Generates a consistency proof for a batch of new leaves inserted into an SMT\footnote{Complete algorithm: \href{https://github.com/unicitynetwork/zkvm-ndsmt/blob/b3ee2ab20b3803100459a4b36b6cef405d175865/script/ndsmt.py\#L42}{github.com/../ndsmt.py}}.
-
-\textbf{Input}:
-\begin{enumerate}
-	\item $B$ -- batch of new leaves to insert
-	\item $h'$ -- SMT root hash before the round
-	\item SMT state before the round
-\end{enumerate}
-
-\textbf{Output}: $\pi_{CP} = (B, \Pi)$ and updated SMT with root hash $h$
-
-\textbf{Process}:
-\begin{enumerate}
-	\item Insert all leaves from batch $B$ into the SMT
-	\item Compute new root hash $h$
-	\item For each newly inserted leaf $(\mathsf{sid}_i, h_{\mathsf{tx},i})$:
-	\begin{enumerate}
-		\item Collect sibling nodes on the path from leaf to root
-		\item Discard siblings that are present in batch $B$ or computable from it
-	\end{enumerate}
-	\item Organize remaining siblings by depth layers into $\Pi$
-	\item Return $(B, \Pi)$
-\end{enumerate}
-
-\subsubsection{Function $\textsc{smt\_verify\_consistency\_proof}$}\label{sec:smt-verify-consistency-proof}
-
-Verifies that a consistency proof correctly demonstrates the state transition from previous root hash $h'$ to current root hash $h$.
-
-\textbf{Input}:
-\begin{enumerate}
-	\item $\pi_{CP} = (B, \Pi)$ -- consistency proof where $B = \langle (\mathsf{sid}_1, h_{\mathsf{tx},1}), \ldots, (\mathsf{sid}_j, h_{\mathsf{tx},j}) \rangle$
-	\item $h'$ -- previous SMT root hash (before the round)
-	\item $h$ -- current SMT root hash (after the round)
-\end{enumerate}
-
-\textbf{Output}: \TRUE or \FALSE
-
-\textbf{Computation}:
-\begin{algorithmic}
-	\Function{smt\_verify\_consistency\_proof}{$\pi_{CP}, h', h$}
-		\State $(B, \Pi) \gets \pi_{CP}$
-		\State $B_\emptyset \gets \langle (\mathsf{sid}_1, \emptyset), (\mathsf{sid}_2, \emptyset), \ldots, (\mathsf{sid}_j, \emptyset) \rangle$ \Comment{Empty leaves}
-		\State $h_\emptyset \gets \Call{smt\_compute\_tree\_root}{\Pi, B_\emptyset}$ \Comment{Compute root with empty leaves}
-		\If {$h_\emptyset \neq h'$} \Return \FALSE \EndIf \Comment{Verify previous state}
-		\State $h_B \gets \Call{smt\_compute\_tree\_root}{\Pi, B}$ \Comment{Compute root with actual leaves}
-		\If {$h_B \neq h$} \Return \FALSE \EndIf \Comment{Verify current state}
-		\State \Return \TRUE
-	\EndFunction
-\end{algorithmic}
-
-\subsubsection{Function $\textsc{smt\_compute\_tree\_root}$}\label{sec:smt-compute-tree-root}
-
-Computes the SMT root hash from a batch of leaves and proof siblings.
-
-\textbf{Input}:
-\begin{enumerate}
-	\item $\Pi$ -- proof data organized by depth layers
-	\item $B$ -- batch of leaves $\langle (\mathsf{sid}_1, v_1), \ldots, (\mathsf{sid}_j, v_j) \rangle$
-\end{enumerate}
-
-\textbf{Output}: Root hash $h_{\mathsf{root}}$
-
-\textbf{Computation}:
-\begin{algorithmic}
-	\Function{smt\_compute\_tree\_root}{$\Pi, B$}
-		\State $L \gets B$ \Comment{Current layer, initially leaves}
-		\For{$\ell \gets 0$ to $d-1$} \Comment{For each tree depth layer}
-			\State $L' \gets []$ \Comment{Next layer}
-			\State $m \gets 0$; $n \gets 0$ \Comment{Indices into $L$ and $\Pi[\ell]$}
-			\While{$m < |L|$}
-				\State $(\mathsf{sid}_k, v_k) \gets L[m]$
-				\State $\mathsf{sid}_p \gets \lfloor \mathsf{sid}_k / 2 \rfloor$ \Comment{Parent identifier}
-				\State $\mathsf{isRight} \gets \mathsf{sid}_k \bmod 2$
-				\State $\mathsf{sid}_s \gets 2 \cdot \mathsf{sid}_p + (1 - \mathsf{isRight})$ \Comment{Sibling identifier}
-				\If{$\neg\mathsf{isRight} \land m+1 < |L| \land L[m+1].\mathsf{sid} = \mathsf{sid}_s$}
-					\State $v_s \gets L[m+1].v$ \Comment{Sibling is next in layer}
-					\State $m \gets m + 1$ \Comment{Skip sibling}
-				\ElsIf{$n < |\Pi[\ell]| \land \Pi[\ell][n].\mathsf{sid} = \mathsf{sid}_s$}
-					\State $v_s \gets \Pi[\ell][n].v$ \Comment{Sibling from proof}
-					\State $n \gets n + 1$
-				\Else
-					\State $v_s \gets \emptyset$ \Comment{Sibling is empty}
-				\EndIf
-				\State $v_p \gets H(p_\ell, v_k, v_s)$ \textbf{if} $\mathsf{isRight}$ \textbf{else} $H(p_\ell, v_s, v_k)$
-				\State $L' \gets L' \| [(\mathsf{sid}_p, v_p)]$
-				\State $m \gets m + 1$
-			\EndWhile
-			\State $L \gets L'$
-		\EndFor
-		\If{$|L| \neq 1$} \Return $\bot$ \EndIf \Comment{Must have exactly one root}
-		\State \Return $L[0].v$ \Comment{Root hash}
-	\EndFunction
-\end{algorithmic}
-
-\noindent where $p_\ell$ is the path segment for layer $\ell$.
-
-\subsection{ZK-Compressed Consistency Proofs}\label{app:zk-consistency-proof}
-
-For high-throughput scenarios with large batches, the hash-based consistency proof size of $O(j \cdot d)$ (where $j$ is the batch size and $d$ is the tree depth) may become a bandwidth bottleneck. Cryptographic zero-knowledge proofs (ZK-SNARKs or ZK-STARKs) can compress the consistency proof to constant ($O(1)$) or logarithmic ($O(\log j)$) size while maintaining tight security guarantees.
-
-\subsubsection{ZK Proof Structure}
-
-A ZK-compressed consistency proof proves successful execution of the $\mathsf{smt\_verify\_consistency\_proof}$ algorithm (Appendix~\ref{sec:smt-verify-consistency-proof}) with the following parameters:
-
-\begin{itemize}
-	\item \textbf{Public inputs (instance)}: Values that must match the Input Record in the Certification Request:
-	\begin{itemize}
-		\item $h'$ -- previous SMT root hash (matches $\mathcal{IR}.h'$)
-		\item $h$ -- current SMT root hash (matches $\mathcal{IR}.h$)
-		\item $j$ -- number of leaves in batch (matches $\ell_B$ in the Certification Request)
-	\end{itemize}
-	\item \textbf{Private inputs (witness)}: proof $(B, \Pi)$
-\end{itemize}
-
-\subsubsection{Verification}
-
-When receiving a ZK-compressed consistency proof, the verifier must:
-\begin{enumerate}
-	\item Verify that the proof is proving the right statement (hash-based consistency proof verification algorithm)
-	\item Verify the ZK proof, obtaining authentic public inputs $h'$, $h$, and $j$
-	\item Confirm these values match the claimed Input Record
-\end{enumerate}
-
 
 \section{Sparse Merkle Sum Trees}\label{app:smst}
 
-A \emph{Sparse Merkle Sum Tree}\index{Sparse Merkle Sum Tree} (SMST) extends the Sparse Merkle Tree (Sec.~\ref{app:smt}) with value tracking. Each node carries both a hash and a non-negative integer value. Internal nodes sum their children's values, enabling cryptographic proofs that a leaf's value is part of a known total. This structure is used for value conservation proofs in token splitting (Sec.~\ref{sec:token-splitting}).
+A \emph{Sparse Merkle Sum Tree}\index{Sparse Merkle Sum Tree} (SMST) extends Sparse Merkle Tree with value tracking. Each node carries both a hash and a non-negative integer value. Internal nodes sum their children's values, enabling cryptographic proofs that a leaf's value is part of a known total. This structure is used for value conservation proofs in token splitting (Sec.~\ref{sec:token-splitting}).
 
 \subsection{Node Structure}
 
@@ -664,3 +366,316 @@ Verifies an SMST inclusion certificate by reconstructing the root hash and total
 \end{algorithmic}
 
 In addition to verifying the root hash, the accumulated sum $v_\mathsf{sum}$ at the root equals the total value in the tree, enabling value conservation checks: the verifier confirms both that the leaf value matches the claimed allocation and that the root sum matches the original token's total value for the given asset.
+
+\section{Radix Sparse Merkle Trees}\label{app:rsmt}
+
+A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. Each leaf hash commits to the full 256-bit key, and each internal node hash commits to an explicit bifurcation depth. Consequently, pre-existing node hashes are immutable when new keys are inserted---only the new leaf and the new internal node at the bifurcation point produce fresh hashes. The tree supports (non-)inclusion proofs and consistency proofs \footnote{Prototype implementation: \href{https://github.com/unicitynetwork/unicity-yellowpaper-tex/blob/main/ndrsmt3.py}{github.com/../ndrsmt3o.py}}
+
+\subsection{Tree Structure}
+
+Keys are elements of $\bytes{32}$ (256 bits), addressed in LSB-first order\footnote{See Appendix~\ref{app:ordering} for bit-string conventions.}: bit position $i$ corresponds to bit $(i \bmod 8)$ of byte $\lfloor i/8 \rfloor$, where bit 0 is the least significant bit of byte 0.
+
+\begin{itemize}
+	\item \textbf{Leaf node}: Stores a key $k \in \bytes{32}$ and a value $v \in \bytestr$. The hash commits to both the full key and the value.
+	\item \textbf{Internal node}: Bifurcates at a depth $d \in \{0, \ldots, 255\}$. The left child corresponds to bit $d$ of the key being 0, the right child to bit $d$ being 1. An internal node also stores a compressed common-prefix path for key-routing during traversal; this path is \emph{not} included in hashing.
+	\item \textbf{Root}: The single top-level node. An empty tree has root $\bot$.
+\end{itemize}
+
+\subsection{Hash Computation}
+
+The hash function $H$ is SHA-256. Domain separation is achieved via a one-byte prefix: $\mathtt{0x00}$ for leaves and $\mathtt{0x01}$ for internal nodes.
+
+\subsubsection{Function $\textsc{rsmt\_leaf\_hash}$}\label{sec:rsmt-leaf-hash}
+
+Computes the hash of an RSMT leaf node.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $k \in \bytes{32}$ -- key (256-bit identifier)
+	\item $v \in \bytestr$ -- value
+\end{enumerate}
+
+\textbf{Output}: $h \in \hashtype$
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{rsmt\_leaf\_hash}{$k, v$}
+		\State \Return $H(\mathtt{0x00} \,\|\, k \,\|\, v)$
+	\EndFunction
+\end{algorithmic}
+
+\subsubsection{Function $\textsc{rsmt\_node\_hash}$}\label{sec:rsmt-node-hash}
+
+Computes the hash of an RSMT internal node.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $h_L \in \hashtype$ -- left child hash
+	\item $h_R \in \hashtype$ -- right child hash
+	\item $d \in \uint{8}$ -- bifurcation depth
+\end{enumerate}
+
+\textbf{Output}: $h \in \hashtype$
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{rsmt\_node\_hash}{$h_L, h_R, d$}
+		\State \Return $H(\mathtt{0x01} \,\|\, d \,\|\, h_L \,\|\, h_R)$
+	\EndFunction
+\end{algorithmic}
+
+
+\subsection{Inclusion Certificate}\label{sec:rsmt-inclusion-cert}
+
+An \emph{Inclusion Certificate}\index{Inclusion Certificate!RSMT} $C^\mathsf{inc}$ demonstrates that a specific $(k, v)$ pair exists in a tree with root hash $\rho$.
+
+\subsubsection{Format}
+
+An inclusion certificate is a pair $C^\mathsf{inc} = (\mathit{bitmap}, \mathit{siblings})$ where:
+\begin{itemize}
+	\item $\mathit{bitmap} \in \bytes{32}$ -- a 256-bit vector. Bit $d$ is set if and only if a sibling hash is required at depth $d$ on the path from the leaf to the root.
+	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes ordered leaf-to-root (ascending depth).
+\end{itemize}
+
+\noindent\textbf{Wire format}: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$, for a total of $32 + 32n$ bytes.
+
+\subsubsection{Generation}
+
+To generate an inclusion certificate for key $k$, walk from the root to the leaf matching $k$. At each internal node with bifurcation depth $d$ on the path, set bit $d$ in the bitmap and append the sibling subtree's hash to the siblings list.
+
+\subsubsection{Function $\textsc{rsmt\_verify\_inclusion}$}\label{sec:rsmt-verify-inclusion}
+
+Verifies an inclusion certificate by reconstructing the root hash from the leaf upward.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $C^\mathsf{inc} = (\mathit{bitmap}, \mathit{siblings})$ -- inclusion certificate
+	\item $\rho \in \hashtype$ -- expected (authentic) root hash
+	\item $k \in \bytes{32}$ -- key
+	\item $v \in \bytestr$ -- value
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{rsmt\_verify\_inclusion}{$C^\mathsf{inc}, \rho, k, v$}
+		\State $h \gets \Call{rsmt\_leaf\_hash}{k, v}$
+		\State $j \gets \len{\mathit{siblings}}$
+		\For{$d \gets 255$ \textbf{downto} $0$}
+			\If{bit $d$ of $\mathit{bitmap}$ is not set}
+				\State \textbf{continue}
+			\EndIf
+			\State $j \gets j - 1$
+			\If{$j < 0$} \Return \FALSE \EndIf
+			\State $s \gets \mathit{siblings}[j]$
+			\If{bit $d$ of $k$ is $1$} \Comment{Leaf went right at depth $d$}
+				\State $h \gets \Call{rsmt\_node\_hash}{s, h, d}$
+			\Else
+				\State $h \gets \Call{rsmt\_node\_hash}{h, s, d}$
+			\EndIf
+		\EndFor
+		\State \Return $(j = 0) \land (h = \rho)$
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Non-Inclusion Certificate}\label{sec:rsmt-non-inclusion-cert}
+
+A \emph{Non-Inclusion Certificate}\index{Non-Inclusion Certificate!RSMT} $C^\mathsf{exc}$ demonstrates that a key $k$ does \emph{not} appear in a tree with root hash $\rho$. In a path-compressed RSMT, searching for a key that is absent terminates at a leaf whose key $k_\ell$ shares a common prefix with $k$ up to some bifurcation depth but differs from $k$. The non-inclusion certificate carries the neighbouring leaf's key and hash (but not its value), together with the sibling hashes needed to reconstruct the root.
+
+\subsubsection{Format}
+
+A non-inclusion certificate is a tuple $C^\mathsf{exc} = (k_\ell, h_\ell, \mathit{bitmap}, \mathit{siblings})$ where:
+\begin{itemize}
+	\item $k_\ell \in \bytes{32}$ -- key of the neighbouring leaf
+	\item $h_\ell \in \hashtype$ -- hash of the neighbouring leaf ($= \Call{rsmt\_leaf\_hash}{k_\ell, v_\ell}$)
+	\item $\mathit{bitmap} \in \bytes{32}$ -- branching-depth bitmap (same semantics as inclusion certificate, Section~\ref{sec:rsmt-inclusion-cert})
+	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes, leaf-to-root
+\end{itemize}
+
+\noindent\textbf{Wire format}: $k_\ell[32] \,\|\, h_\ell[32] \,\|\, \mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$, for a total of $96 + 32n$ bytes.
+
+For the special case of an empty tree ($\rho = \bot$), the non-inclusion certificate is empty---every key is trivially absent.
+
+\subsubsection{Generation}
+
+To generate a non-inclusion certificate for $k$, walk from the root toward $k$. The walk terminates at a leaf with key $k_\ell \neq k$ (since $k$ is absent). Record $k_\ell$ and its leaf hash $h_\ell$, then collect sibling hashes and the bitmap exactly as for an inclusion certificate (Section~\ref{sec:rsmt-inclusion-cert}).
+
+\subsubsection{Function $\textsc{rsmt\_verify\_non\_inclusion}$}\label{sec:rsmt-verify-non-inclusion}
+
+Verifies that key $k$ is absent from a tree with root hash $\rho$.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $C^\mathsf{exc} = (k_\ell, h_\ell, \mathit{bitmap}, \mathit{siblings})$ -- non-inclusion certificate
+	\item $\rho \in \hashtype \opt$ -- root hash ($\bot$ if tree is empty)
+	\item $k \in \bytes{32}$ -- queried key
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{rsmt\_verify\_non\_inclusion}{$C^\mathsf{exc}, \rho, k$}
+		\If{$\rho = \bot$}
+			\State \Return \TRUE \Comment{Empty tree contains no keys}
+		\EndIf
+		\If{$k_\ell = k$}
+			\State \Return \FALSE \Comment{Neighbour key must differ from queried key}
+		\EndIf
+		\State $d^* \gets$ lowest bit position where $k$ and $k_\ell$ differ
+		\If{bit $d^*$ of $\mathit{bitmap}$ is set}
+			\State \Return \FALSE \Comment{A branch at $d^*$ means $k$ could exist in the opposite subtree}
+		\EndIf
+		\State $h \gets h_\ell$ \Comment{Start from the neighbouring leaf hash}
+		\State $j \gets \len{\mathit{siblings}}$
+		\For{$d \gets 255$ \textbf{downto} $0$}
+			\If{bit $d$ of $\mathit{bitmap}$ is not set}
+				\State \textbf{continue}
+			\EndIf
+			\State $j \gets j - 1$
+			\If{$j < 0$} \Return \FALSE \EndIf
+			\State $s \gets \mathit{siblings}[j]$
+			\If{bit $d$ of $k_\ell$ is $1$}
+				\State $h \gets \Call{rsmt\_node\_hash}{s, h, d}$
+			\Else
+				\State $h \gets \Call{rsmt\_node\_hash}{h, s, d}$
+			\EndIf
+		\EndFor
+		\State \Return $(j = 0) \land (h = \rho)$
+	\EndFunction
+\end{algorithmic}
+
+
+\subsection{Consistency Proof}\label{sec:rsmt-consistency-proof}
+
+A \emph{consistency proof} demonstrates that a batch $B$ of new key-value pairs was correctly inserted into a tree with root $\rho'$, producing a new tree with root $\rho$, without modifying or deleting any pre-existing data.
+
+\subsubsection{Sort Order}\label{sec:rsmt-sort-order}
+
+The batch and proof use \emph{LSB-first traversal order}. The sort key of a 256-bit key $k$ is obtained by independently reversing the bits within each byte of $k$ (no byte reordering). This places bit~0 as the most significant sort bit, matching the tree's LSB-first branching order.
+
+\subsubsection{Proof Format}
+
+The proof $\pi$ is a flat stream of opcodes emitted from a post-order, LSB-first traversal of the tree:
+
+\begin{center}
+\begin{tabular}{clcl}
+\textbf{Opcode} & \textbf{Semantics} & \textbf{Wire encoding} & \textbf{Size} \\
+\hline
+$\mathtt{S}(h)$ & Unchanged subtree with hash $h$ & $\mathtt{0x00} \,\|\, h[32]$ & 33 bytes \\
+$\mathtt{L}$ & New leaf (consumed from sorted batch) & $\mathtt{0x01}$ & 1 byte \\
+$\mathtt{N}(d)$ & Internal node at bifurcation depth $d$ & $\mathtt{0x02} \,\|\, d[1]$ & 2 bytes \\
+\end{tabular}
+\end{center}
+
+\noindent In the post-order encoding, the two children of every $\mathtt{N}$ node precede it in the stream (left child first, then right child), enabling efficient validation using a stack machine algorithm.
+
+\subsubsection{Generation}
+
+To generate the proof during batch insertion, perform a post-order traversal of the tree regions affected by the insertion. Emit $\mathtt{S}(h)$ for every unchanged subtree (carrying its pre-existing hash), $\mathtt{L}$ for every newly inserted leaf, and $\mathtt{N}(d)$ for every internal node at bifurcation depth $d$.
+
+
+\subsubsection{Function $\textsc{rsmt\_verify\_consistency}$}\label{sec:rsmt-verify-consistency}
+
+Verifies a consistency proof using a stack machine. Each opcode either pushes a pair of hashes (pre-state, post-state) onto the stack, or pops children and pushes a combined parent.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\pi$ -- consistency proof (sequence of opcodes)
+	\item $\rho_0 \in \hashtype \opt$ -- root hash before insertion ($\bot$ if tree was empty)
+	\item $\rho_1 \in \hashtype \opt$ -- root hash after insertion
+	\item $B = \langle (k_1, v_1), \ldots, (k_m, v_m) \rangle$ -- batch of inserted key-value pairs
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{rsmt\_verify\_consistency}{$\pi, \rho_0, \rho_1, B$}
+		\If{$B = \langle\rangle$}
+			\State \Return $\rho_0 = \rho_1$
+		\EndIf
+		\State Sort $B$ by $\textsc{rsmt\_sort\_key}$ to obtain $B' = \langle (k'_1, v'_1), \ldots, (k'_m, v'_m) \rangle$
+		\State $\mathcal{S} \gets \langle\rangle$ \Comment{Stack of $(h_\mathsf{pre}, h_\mathsf{post})$ pairs}
+		\State $b \gets 1$ \Comment{Batch index into $B'$}
+		\For{each opcode $\mathsf{op}$ in $\pi$}
+			\If{$\mathsf{op} = \mathtt{S}(h)$}
+				\State push $(h, h)$ onto $\mathcal{S}$
+			\ElsIf{$\mathsf{op} = \mathtt{L}$}
+				\If{$b > m$} \Return \FALSE \EndIf
+				\State push $(\bot, \Call{rsmt\_leaf\_hash}{k'_b, v'_b})$ onto $\mathcal{S}$
+				\State $b \gets b + 1$
+			\ElsIf{$\mathsf{op} = \mathtt{N}(d)$}
+				\If{$\len{\mathcal{S}} < 2$} \Return \FALSE \EndIf
+				\State pop $(r_0, r_1)$ from $\mathcal{S}$ \Comment{Right child}
+				\State pop $(\ell_0, \ell_1)$ from $\mathcal{S}$ \Comment{Left child}
+				\State $h_0 \gets \Call{rsmt\_resolve\_pre\_state}{\ell_0, r_0, d}$
+				\State $h_1 \gets \Call{rsmt\_node\_hash}{\ell_1, r_1, d}$
+				\State push $(h_0, h_1)$ onto $\mathcal{S}$
+			\Else
+				\State \Return \FALSE \Comment{Unknown opcode}
+			\EndIf
+		\EndFor
+		\If{$b \neq m + 1 \lor \len{\mathcal{S}} \neq 1$}
+			\State \Return \FALSE
+		\EndIf
+		\State pop $(\rho'_0, \rho'_1)$ from $\mathcal{S}$
+		\State \Return $(\rho'_0 = \rho_0) \land (\rho'_1 = \rho_1)$
+	\EndFunction
+\end{algorithmic}
+
+We define helper function $\textsc{rsmt\_resolve\_pre\_state}$ which resolves the pre-insertion hash of a node. When one child is new ($\bot$), the parent node did not exist in the pre-state; only the existing child's subtree occupied that position, so its hash passes through without hashing.
+
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $h_L \in \hashtype \opt$ -- left child pre-state hash ($\bot$ if new)
+	\item $h_R \in \hashtype \opt$ -- right child pre-state hash ($\bot$ if new)
+	\item $d \in \uint{8}$ -- bifurcation depth
+\end{enumerate}
+
+\textbf{Output}: $h \in \hashtype \opt$
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{rsmt\_resolve\_pre\_state}{$h_L, h_R, d$}
+		\If{$h_L = \bot \land h_R = \bot$}
+			\State \Return $\bot$ \Comment{Entire subtree is new}
+		\ElsIf{$h_L = \bot$}
+			\State \Return $h_R$ \Comment{Only right child existed}
+		\ElsIf{$h_R = \bot$}
+			\State \Return $h_L$ \Comment{Only left child existed}
+		\Else
+			\State \Return $\Call{rsmt\_node\_hash}{h_L, h_R, d}$ \Comment{Both children existed}
+		\EndIf
+	\EndFunction
+\end{algorithmic}
+
+
+\subsection{ZK-Compressed Consistency Proofs}\label{app:zk-consistency-proof}
+
+For high-throughput scenarios with large batches, the hash-based consistency proof size of $O(j \cdot d)$ (where $j$ is the batch size and $d$ is the tree depth) may become a bandwidth bottleneck. Cryptographic zero-knowledge proofs (ZK-SNARKs or ZK-STARKs) can compress the consistency proof to constant ($O(1)$) or logarithmic ($O(\log j)$) size while maintaining tight security guarantees.
+
+\subsubsection{ZK Proof Structure}
+
+A ZK-compressed consistency proof proves successful execution of the $\mathsf{rsmt\_verify\_consistency}$ algorithm (Appendix~\ref{sec:rsmt-verify-consistency}) with the following parameters:
+
+\begin{itemize}
+	\item \textbf{Public inputs (instance)}: Values that must match the Input Record in the Certification Request:
+	\begin{itemize}
+		\item $h'$ -- previous SMT root hash (matches $\mathcal{IR}.h'$)
+		\item $h$ -- current SMT root hash (matches $\mathcal{IR}.h$)
+		\item $j$ -- number of leaves in batch (matches $\ell_B$ in the Certification Request)
+	\end{itemize}
+	\item \textbf{Private inputs (witness)}: proof $(B, \Pi)$
+\end{itemize}
+
+\subsubsection{Verification}
+
+When receiving a ZK-compressed consistency proof, the verifier must:
+\begin{enumerate}
+	\item Verify that the proof is proving the right statement (hash-based consistency proof verification algorithm)
+	\item Verify the ZK proof, obtaining authentic public inputs $h'$, $h$, and $j$
+	\item Confirm these values match the claimed Input Record
+\end{enumerate}

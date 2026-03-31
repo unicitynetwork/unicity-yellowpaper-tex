@@ -80,40 +80,40 @@
 ; ============================================================================
 ; 4. AGGREGATION LAYER
 
-  StateIdentifier = Hash  ;~$\mathsf{sid} = H(\nu, h_{\mathsf{st}})$
-  LeafData = TransactionHash    ;~value of key-value store
+; The aggregation layer uses a Radix Sparse Merkle Tree (RSMT, Appendix~\ref{app:rsmt}).
+; Leaf-anchored: hashes commit to full 256-bit key and bifurcation depth.
+; LSB-first bit addressing.
+
+  StateIdentifier = Bytes32  ;~$\mathsf{sid} = H(\nu, h_{\mathsf{st}})$ -- SMT leaf key
+  LeafData = TransactionHash    ;~$h_{\mathsf{tx}}$ -- SMT leaf value
   SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, h_{\mathsf{tx}})$
 
-  InclusionCertificate = *InclusionStep  ;~$C^\mathsf{inc} = \langle (p_1, d_1), (p_2, d_2), \ldots, (p_n, d_n) \rangle$
-  InclusionStep = PathSegment (LeafData | SiblingHash)
-      ;~First step contains LeafData, subsequent steps contain sibling hashes
-      ;~Concatenated path segments equal the full StateIdentifier
+  InclusionCertificate = Bitmap *SiblingHash  ;~$C^\mathsf{inc} = (\mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
+      ;~bitmap: 32 bytes (256 bits); bit $d$ set iff sibling needed at depth $d$
+      ;~siblings: $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, leaf-to-root order
+      ;~Wire: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
 
-  ConsistencyProof = Batch ProofSiblings | ZKProof
-      ;~$\pi_{\mathsf{CP}}$ - proves correct SMT manipulation (append-only)
-      ;~Hash-based: batch and sibling hashes for verification
-      ;~ZK-compressed: SNARK/STARK proof with public params
+  NonInclusionCertificate = Key Hash Bitmap *SiblingHash  ;~$C^\mathsf{exc} = (k_\ell, h_\ell, \mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
+      ;~$k_\ell$: key of neighbouring leaf
+      ;~$h_\ell$: hash of neighbouring leaf ($= \textsc{rsmt\_leaf\_hash}(k_\ell, v_\ell)$)
+      ;~bitmap, siblings: same semantics as InclusionCertificate
+      ;~Wire: $k_\ell[32] \,\|\, h_\ell[32] \,\|\, \mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
 
-  Batch = *SMTLeaf  ;~Batch of new SMT leaves
-  ProofSiblings = *DepthLayer  ;~Sibling hashes organized by tree depth
-  DepthLayer = *SiblingHashPair
-  SiblingHashPair = StateIdentifier Hash
-  ZKProof = Bytes  ;~Opaque ZK proof (SNARK/STARK)
+  InclusionProof = StateIdentifier LeafData InclusionCertificate UC  ;~$\pi^\mathsf{inc} = (\mathsf{sid}, h_{\mathsf{tx}}, C^\mathsf{inc}, UC)$
+      ;~Proves that $\mathsf{sid}$ EXISTS in the SMT with value $h_{\mathsf{tx}}$
 
-  InclusionProof = InclusionCertificate UC  ;~$\pi^\mathsf{inc} = (C^\mathsf{inc}, UC)$
-      ;~Complete proof from SMT leaf through UC to trust base
-      ;~Proves that a StateID EXISTS in the SMT
-      ;~SMT Leaf L = (sid, htx) can be extracted from InclusionCertificate:
-      ;~  sid = concatenation of all path segments p1 || p2 || ... || pn
-      ;~  htx = d1 (leaf data from first pair)
+  NonInclusionProof = NonInclusionCertificate UC  ;~$\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$
+      ;~Proves that a queried $\mathsf{sid}$ does NOT exist in the SMT
 
-  NonInclusionProof = InclusionCertificate UC  ;~$\pi^\mathsf{exc} = (C^\mathsf{inc}, UC)$
-      ;~Exclusion proof - proves that a StateID does NOT exist in the SMT
-      ;~Uses same structure as InclusionProof but with different validation
-      ;~Valid for queried sid if:
-      ;~  1. VerifyInclusionProof returns TRUE
-      ;~  2. p1 is a prefix of sid (queried StateID)
-      ;~  3. d1 = empty (position is unoccupied)
+  ConsistencyProof = *ConsistencyProofOp | ZKProof
+      ;~$\pi_{\mathsf{CP}}$ -- proves correct append-only SMT manipulation
+  ConsistencyProofOp = OpS | OpL | OpN  ;~post-order flat opcode stream
+  OpS = %x00 Hash    ;~S(h): unchanged subtree, 33 bytes
+  OpL = %x01          ;~L: new leaf (consumed from sorted batch), 1 byte
+  OpN = %x02 Depth    ;~N(d): internal node at bifurcation depth $d$, 2 bytes
+  Depth = OCTET       ;~$d \in \{0, \ldots, 255\}$
+  Bitmap = Bytes32    ;~256-bit branching-depth vector
+  ZKProof = Bytes     ;~Opaque ZK proof (SNARK/STARK)
 
 ; ============================================================================
 ; 5. EXECUTION LAYER
@@ -156,7 +156,7 @@
   CertificationData = LockScript SourceStateHash TransactionHash UnlockScript
       ;~$Q = (\nu, h_\mathsf{st}, h_\mathsf{tx}, u)$ -- CBOR array[4], submitted to Unicity Service
 
-; --- Hash Derivations (computed, not wire format) ---
+; --- Hash Derivations ---
   ; $h_\mathsf{st} = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$~-- mint source state hash
   ; $h_\mathsf{st}' = H(h_\mathsf{st}, x)$~-- next state hash
   ; $h_\mathsf{tx} = H(\mathsf{recipient}, \mathsf{id}, [\mathsf{ty}, \auxd'])$~-- mint transaction hash
