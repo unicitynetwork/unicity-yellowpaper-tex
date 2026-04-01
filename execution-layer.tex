@@ -171,7 +171,19 @@ A \emph{predicate} $\predi_\mathsf{name}(\mathsf{par}; \cdot)$ is a boolean func
 	\end{itemize}
 \end{itemize}
 
-The predicate evaluates to $\predi_\mathsf{name}(\mathsf{par}; \tau, m, u) \in \{0, 1\}$. The Unicity Service evaluates the predicate at the current system time $\tau$ when processing a certification request. Verifiers of certified transactions evaluate the predicate at the system time $\mathsf{time}(\pi)$ extracted from the inclusion proof.
+The predicate evaluates to $\predi_\mathsf{name}(\mathsf{par}; \tau, m, u) \in \{0, 1\}$.
+
+
+\subsubsection{Time Reference}\label{sec:time-extraction}
+
+The Unicity Service evaluates the predicate at the current system time $\tau$ when processing a certification request. Verifiers of certified transactions evaluate the predicate at the system time $\mathsf{time}(\pi)$ extracted from the inclusion proof.\index{$\tau$}
+
+\index{time extraction}
+Given an inclusion proof $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, the \emph{system time} is extracted as
+\[
+	\mathsf{time}(\pi^\mathsf{inc}) \;=\; UC.C^\mathsf{r}.t_r
+\]
+where $t_r$ is the round creation time from the Unicity Seal (Sec.~\ref{se:unicity-certificate}). This is a wall-clock timestamp with one-second precision, set and verified by the BFT Core at the time the round is committed.
 
 \subsection{Standard Predicates}\label{sec:standard-predicates}
 
@@ -253,9 +265,39 @@ The \emph{burn predicate} $\predi_\mathsf{burn}(h_\mathsf{reason})$ cannot be un
 
 The burn predicate is used in token splitting (Sec.~\ref{sec:token-splitting}), where the reason hash references the aggregation root of the split proof.
 
-\bigskip
 
-Predicates can also encode time-dependent conditions, enabling protocols such as atomic swaps via hashed timelock predicates. Such application-level predicates are outside the scope of this specification.
+\subsubsection{Timelock Predicate}
+
+\index{predicate!timelock ($\predi_\mathsf{tlock}$)}
+The \emph{timelock predicate} $\predi_\mathsf{tlock}(\mathsf{pk}, \tau_\mathsf{min};\cdot)$ prevents spending until the system time reaches a specified threshold. This is used to implement e.g. vesting schedules and lock-up periods for tokens.
+
+\begin{itemize}
+	\item \textbf{Parameters}: $(\mathsf{pk}, \tau_\mathsf{min})$ where $\mathsf{pk}$ is a public key and $\tau_\mathsf{min} \in \mathbb{T}$ is the unlock time
+	\item \textbf{Unlocking argument}: $u = \sigma$ (digital signature)
+	\item \textbf{Definition}: $\predi_\mathsf{tlock}(\mathsf{pk}, \tau_\mathsf{min}; \tau, m, \sigma) = 1$ iff $\tau \ge \tau_\mathsf{min} \;\land\; \mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1$
+\end{itemize}
+
+The token remains locked until system time $\tau \ge \tau_\mathsf{min}$, after which it can be spent by producing a valid signature under $\mathsf{pk}$ and forming a witness unlocking the predicate and appending a spending transaction to the token ledger.
+
+
+\subsubsection{Hashed Timelock Predicate}
+
+\index{predicate!hashed timelock ($\predi_\mathsf{htlc}$)}
+The \emph{hashed timelock predicate} $\predi_\mathsf{htlc}(\mathsf{pk}, \mathsf{pk}', y, \tau_\mathsf{max};\cdot)$ combines hash-locked and time-locked spending paths. The parameter $\mathsf{pk}$ is the refund key (original sender), $\mathsf{pk}'$ is the claim key (intended recipient), $y \in \hashtype$ is a hash lock, and $\tau_\mathsf{max} \in \mathbb{T}$ is a timeout.
+
+\begin{itemize}
+	\item \textbf{Parameters}: $(\mathsf{pk}, \mathsf{pk}', y, \tau_\mathsf{max})$
+	\item \textbf{Unlocking argument}: $u = (x, \sigma)$ where $x$ is a preimage candidate and $\sigma$ is a digital signature
+	\item \textbf{Definition}: $\predi_\mathsf{htlc}(\mathsf{pk}, \mathsf{pk}', y, \tau_\mathsf{max}; \tau, m, (x, \sigma)) = 1$ iff (a) or (b):
+	\begin{itemize}
+		\item[(a)] \emph{Claim path}: $\mathsf{Verify}(\mathsf{pk}', m, \sigma) = 1 \;\land\; y = H(x) \;\land\; \tau \le \tau_\mathsf{max}$
+		\item[(b)] \emph{Refund path}: $\mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1 \;\land\; \tau > \tau_\mathsf{max}$
+	\end{itemize}
+\end{itemize}
+
+Clause~(a) allows the recipient to claim the token before the timeout by revealing the $H$-preimage $x$ of $y$ and signing with $\mathsf{pk}'$. Clause~(b) allows the sender to reclaim the token after the timeout by signing with $\mathsf{pk}$.
+
+Example use-case is atomic swap, where two HTLC predicates on different ledgers/partitions share the same hash lock $y$; claiming on one ledger reveals $x$, enabling the counterparty to claim on the other. Note that this assumes ledgers to be public, which is not always the case on p2p networks.
 
 
 \section{Interaction with Unicity Service}\label{sec:el-us-interaction}
@@ -285,13 +327,6 @@ The Unicity Service processes the request as follows:
 \end{enumerate}
 
 If the request is accepted, the Unicity Service returns an inclusion proof $\pinc$. If the state has already been spent (uniqueness check fails) or the predicate evaluation fails, the request is rejected.
-
-\subsection{System Time}\label{sec:system-time}
-
-\index{system time}
-The system time $\tau$ available during predicate evaluation is the round creation time from the Unicity Seal: $\tau = C^\mathsf{r}.t_r$ (Sec.~\ref{se:unicity-certificate}). The system time can be extracted from inclusion proofs by $\tau \gets \mathsf{time}(\pi)$.
-
-The Unicity Service evaluates predicates at the current round time. Verifiers of certified transactions evaluate predicates using the time extracted from the inclusion proof $\pi$.
 
 
 \section{Transaction Flow}\label{sec:transaction-flow}
