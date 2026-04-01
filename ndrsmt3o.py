@@ -373,6 +373,37 @@ class SparseMerkleTree:
         return None
 
 
+    def inclusion_cert(self, key):
+        """Walk root to leaf, collecting bitmap and siblings."""
+        node = self.root
+        if node is None:
+            return None
+
+        bitmap = 0
+        siblings = []
+        bit = 0
+
+        while isinstance(node, NodeBranch):
+            n = path_len(node.path)
+            prefix = node.path & ((1 << n) - 1)
+            if ((key >> bit) & ((1 << n) - 1)) != prefix:
+                return None  # key not in tree
+            bit += n
+            depth = node.depth
+            if (key >> bit) & 1:
+                siblings.append(node.left.get_hash())
+                node = node.right
+            else:
+                siblings.append(node.right.get_hash())
+                node = node.left
+            bitmap |= (1 << depth)
+
+        if not isinstance(node, LeafBranch) or node.key != key:
+            return None
+
+        return {"bitmap": bitmap, "siblings": siblings}
+
+
 # ---------------------------------------------------------------------------
 # Verifier Functions
 # ---------------------------------------------------------------------------
@@ -438,3 +469,26 @@ def verify_consistency(proof, old_root, new_root, batch, _=None):
 
     r0, r1 = stack[0]
     return r0 == old_root and r1 == new_root
+
+
+def verify_inclusion(cert, root_hash, key, value):
+    """Verify an inclusion certificate against a root hash."""
+    bitmap = cert["bitmap"]
+    siblings = list(cert["siblings"])
+
+    h = hash_leaf(key, value)
+    j = len(siblings)
+
+    for d in range(255, -1, -1):
+        if not (bitmap >> d) & 1:
+            continue
+        j -= 1
+        if j < 0:
+            return False
+        s = siblings[j]
+        if (key >> d) & 1:
+            h = hash_node(s, h, d)
+        else:
+            h = hash_node(h, s, d)
+
+    return j == 0 and h == root_hash
