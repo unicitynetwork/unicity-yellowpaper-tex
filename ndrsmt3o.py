@@ -17,8 +17,14 @@
 # ---------------------------------------------------------------------------
 # Consistency Proof
 # -----------------
-# Demonstrates that batch B was correctly inserted into tree state ρ_0,
-# producing state ρ_1, without modifying or deleting pre-existing records.
+# Demonstrates that batch B was inserted into tree pre-state ρ_0,
+# producing post-state ρ_1, without modifying or deleting pre-existing records.
+#
+# It verifies preservation of committed subtree hashes and batch incorporation
+# into the post-state hash, but it does not fully verify that the resulting
+# post-state is a well-formed radix tree whose topology is uniquely determined
+# by the committed keys.
+# This may result in leaves without valid inclusion proofs.
 #
 # Format (flat opcode stream from LSB-first post-order traversal):
 #   'S' (Subtree): Stream: ['S', hash]. Represents an unmodified existing branch.
@@ -123,19 +129,6 @@
 #      finding hashes that, combined with H_leaf through the claimed
 #      depths, produce ρ — a second-preimage attack on the iterated
 #      hash chain.
-#
-# ---------------------------------------------------------------------------
-# Protocol Considerations
-# ---------------------------------------------------------------------------
-# - Already-existing keys: batch_insert silently filters keys already in
-#   the tree. The consistency proof covers only actually-inserted keys.
-#   If the operator claims a batch key pre-exists and omits it, the
-#   protocol must independently verify pre-existence via an inclusion
-#   proof against ρ_0. Without this check, the operator can drop items.
-# - Denial of service: A malicious proof with excessive 'N' nesting can
-#   cause deep recursion. Production verifiers should enforce a recursion
-#   depth limit (256 for a 256-bit key space).
-
 
 import hashlib
 
@@ -225,6 +218,138 @@ class SparseMerkleTree:
 
     def get_root(self):
         return self.root.get_hash() if self.root else None
+
+    def batch_insert_np(self, batch):
+        """
+        Batch insertion without consistency-proof generation.
+
+        The batch is sorted exactly once in LSB-first traversal order, then
+        merged against the touched search frontier of the tree. Existing keys
+        are filtered during that merge, so this avoids the extra per-key
+        membership probes done by the proof-producing path.
+        """
+        items = self._prepare_batch_np(batch)
+        if not items:
+            return
+
+        self.root = self._insert_np(self.root, items, 0, len(items), 0)
+
+    def _prepare_batch_np(self, batch):
+        items = [(key, value, get_sort_key(key)) for key, value in batch]
+        items.sort(key=lambda item: item[2])
+
+        unique = []
+        prev_key = None
+        have_prev = False
+        for item in items:
+            key = item[0]
+            if have_prev and key == prev_key:
+                continue
+            unique.append(item)
+            prev_key = key
+            have_prev = True
+        return unique
+
+    def _partition_point_np(self, batch, start, end, split):
+        low, high = start, end
+        while low < high:
+            mid = (low + high) // 2
+            if (batch[mid][0] >> split) & 1:
+                high = mid
+            else:
+                low = mid + 1
+        return low
+
+    def _merge_leaf_np(self, batch, start, end, node):
+        leaf_item = (node.key, node.value, get_sort_key(node.key))
+        merged = []
+        i = start
+
+        while i < end and batch[i][2] < leaf_item[2]:
+            merged.append(batch[i])
+            i += 1
+
+        if i < end and batch[i][0] == node.key:
+            i += 1
+
+        merged.append(leaf_item)
+        merged.extend(batch[i:end])
+        return merged
+
+    def _build_subtree_np(self, batch, start, end, start_bit):
+        if end - start == 1:
+            k, v, _ = batch[start]
+            return LeafBranch(k, v)
+
+        xor = (batch[start][0] ^ batch[end - 1][0]) >> start_bit
+        split = start_bit + (xor & -xor).bit_length() - 1
+        mid = self._partition_point_np(batch, start, end, split)
+
+        n_common = split - start_bit
+        cp = (1 << n_common) | ((batch[start][0] >> start_bit) & ((1 << n_common) - 1))
+
+        ln = self._build_subtree_np(batch, start, mid, split)
+        rn = self._build_subtree_np(batch, mid, end, split)
+        return NodeBranch(cp, ln, rn, split)
+
+    def _insert_np(self, node, batch, start, end, start_bit):
+        if start == end:
+            return node
+
+        if node is None:
+            return self._build_subtree_np(batch, start, end, start_bit)
+
+        if isinstance(node, LeafBranch):
+            merged = self._merge_leaf_np(batch, start, end, node)
+            if len(merged) == 1 and merged[0][0] == node.key:
+                return node
+            return self._build_subtree_np(merged, 0, len(merged), start_bit)
+
+        n_path = path_len(node.path)
+        node_prefix = node.path & ((1 << n_path) - 1)
+
+        first_div = n_path
+        xor_start = ((batch[start][0] >> start_bit) & ((1 << n_path) - 1)) ^ node_prefix
+        if xor_start:
+            first_div = min(first_div, (xor_start & -xor_start).bit_length() - 1)
+        xor_end = ((batch[end - 1][0] >> start_bit) & ((1 << n_path) - 1)) ^ node_prefix
+        if xor_end:
+            first_div = min(first_div, (xor_end & -xor_end).bit_length() - 1)
+
+        if first_div < n_path:
+            return self._node_split_np(node, batch, start, end, start_bit, first_div)
+
+        split = start_bit + n_path
+        mid = self._partition_point_np(batch, start, end, split)
+
+        new_left = self._insert_np(node.left, batch, start, mid, split)
+        new_right = self._insert_np(node.right, batch, mid, end, split)
+
+        node.left, node.right, node._hash = new_left, new_right, None
+        return node
+
+    def _node_split_np(self, node, batch, start, end, start_bit, first_div):
+        n_path = path_len(node.path)
+        node_prefix = node.path & ((1 << n_path) - 1)
+
+        n_common = first_div
+        new_cp = (1 << n_common) | (node_prefix & ((1 << n_common) - 1))
+        new_split = start_bit + n_common
+        old_dir = (node_prefix >> n_common) & 1
+
+        new_path = node.path >> n_common
+        node.path = new_path if new_path != 0 else 1
+
+        mid = self._partition_point_np(batch, start, end, new_split)
+
+        if old_dir == 0:
+            new_left = self._insert_np(node, batch, start, mid, new_split)
+            new_right = self._insert_np(None, batch, mid, end, new_split)
+        else:
+            new_left = self._insert_np(None, batch, start, mid, new_split)
+            new_right = self._insert_np(node, batch, mid, end, new_split)
+
+        return NodeBranch(new_cp, new_left, new_right, new_split)
 
     def batch_insert(self, batch):
         new_items = {}

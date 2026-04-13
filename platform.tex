@@ -178,7 +178,7 @@ See Fig.~\ref{fi:inc-proof} for the Inclusion Proof structure and Fig.~\ref{fi:u
 \subsection{Sparse Merkle Tree}\label{sec:smt}
 
 \index{sparse merkle tree}\index{SMT}\index{RSMT}
-The aggregation layer maintains a \emph{Radix Sparse Merkle Tree} (RSMT), a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. The RSMT maps state identifiers to transaction hashes and provides compact inclusion and non-inclusion certificates. Refer to Appendix~\ref{app:rsmt} for details.
+The aggregation layer maintains a \emph{(Radix) Sparse Merkle Tree} (SMT), a path-compressed authenticated map from 256-bit state identifiers to transaction hashes. Leaves are anchored by full keys, and internal nodes record the branching structure needed to route lookups and authenticate the root. The SMT supports batch insertion, inclusion certificates, non-inclusion certificates and consistency proofs. Exact formats and algorithms are given in Appendix~\ref{app:rsmt}.
 
 
 \subsubsection{SMT Leaf Structure}
@@ -195,16 +195,18 @@ An SMT leaf contains a key-value pair:
 
 The SMT effectively maintains a mapping $\mathsf{sid} \mapsto \txhash$ that proves a state transition from state identifier $\mathsf{sid}$ was authorized via transaction with hash $\txhash$. This prevents double-spending: once a state identifier is registered in the SMT with a transaction hash, that state cannot be spent again.
 
-\subsubsection{Inclusion Certificate}\label{InclusionCert}
+\subsubsection{SMT Certificates and Updates}\label{InclusionCert}
 
-\index{$C^\mathsf{inc}$ (Inclusion Certificate)}\index{Inclusion Certificate}
-An \emph{Inclusion Certificate} $C^\mathsf{inc}$ for a leaf with key $\mathsf{sid}$ is a pair $C^\mathsf{inc} = (\mathit{bitmap}, \mathit{siblings})$ where:
+\index{$C^\mathsf{inc}$ (Inclusion Certificate)}\index{Inclusion Certificate}\index{$C^\mathsf{exc}$ (Non-Inclusion Certificate)}\index{Non-Inclusion Certificate}
+The SMT exposes the following functionalities and authenticated objects:
 \begin{itemize}
-	\item $\mathit{bitmap} \in \bytes{32}$ -- a 256-bit vector; bit $d$ is set iff a sibling hash is required at depth $d$ on the path from the leaf to the root
-	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes ordered leaf-to-root
+	\item \textbf{Batch insertion}: inserts a batch of new leaves into the tree and updates the root hash.
+	\item \textbf{Inclusion Certificate} $C^\mathsf{inc}$: authenticates that a leaf $(\mathsf{sid}, \txhash)$ is present under a given SMT root.
+	\item \textbf{Non-Inclusion Certificate} $C^\mathsf{exc}$: authenticates that a state identifier $\mathsf{sid}$ is absent from the tree.
+	\item \textbf{Consistency proof} $\pi_{CP}$: authenticates that a new SMT root extends a previous root by a batch insertion.
 \end{itemize}
 
-The verification function $\textsc{rsmt\_verify\_inclusion}$ is provided in Appendix~\ref{sec:rsmt-verify-inclusion}.
+Appendix~\ref{app:rsmt} defines the corresponding wire formats and verification procedures.
 
 \subsection{Shard Tree Certificate}\label{se:shard-tree-cert}
 
@@ -431,15 +433,31 @@ $\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function 
 \subsection{Consistency Proof}\label{sec:consistency-proof}
 
 \index{consistency proof}\index{$\pi_{CP}$ (consistency proof)}
-A \emph{Consistency Proof} (also called \emph{non-deletion proof}) is a cryptographic construction that validates one round of operation of the append-only SMT maintained by aggregation layer nodes. It proves that the state transition from previous SMT root hash $h'$ to current SMT root hash $h$ was performed correctly: only new leaves were added, and no pre-existing leaves were removed or modified.
+A \emph{Consistency Proof} (also called \emph{non-deletion proof}) is a cryptographic construction that validates one round of operation of the append-only SMT maintained by aggregation layer nodes. It proves that the state transition from previous SMT root hash $h'$ to current SMT root hash $h$ was performed correctly: only new leaves were added, and no pre-existing leaves were removed or modified. For a round with inserted batch
+\[
+B = \langle (\mathsf{sid}_1, h_{\mathsf{tx},1}), \ldots, (\mathsf{sid}_j, h_{\mathsf{tx},j}) \rangle,
+\]
+the security objective is to prove that the map committed by $h$ is obtained from the map committed by $h'$ by extending it with exactly the leaves in $B$.
 
-The consistency proof enables the BFT Core to verify the integrity of the Aggregation Layer's operations in a trustless manner.
+The consistency proof enables the BFT Core to verify the integrity of the Aggregation Layer's SMT manipulation with respect to the authenticated prior root and the declared round batch.
 
 For a batch of state transitions processed in a single round, the consistency proof $\pi_{CP}$ is the post-order opcode stream defined in Appendix~\ref{sec:rsmt-consistency-proof}.
 
+\subsubsection{Security Model}
+
+The aggregation layer node that computes $\pi_{CP}$ may be Byzantine: it may maintain an arbitrary internal tree representation, claim an arbitrary post-state root $h$, and send an arbitrary proof stream. The verifier trusts only the following inputs:
+\begin{enumerate}
+	\item the previously certified root hash $h'$;
+	\item the batch $B$ determined by the validated requests of the round;
+	\item the claimed post-state root hash $h$ in the shard input record; and
+	\item the collision resistance of the hash function $H$.
+\end{enumerate}
+
+The consistency proof authenticates only the append-only SMT update from $h'$ to $h$. It does not, by itself, prove that an element of $B$ was semantically admissible for insertion; this is established separately by request validation (Sec.~\ref{sec:request-validation}) and public audit of append only logs of Aggregation nodes.
+
 \subsubsection{Verification Function}\label{VerifyConsistencyProof}\index{functions!VerifyConsistencyProof}
 
-$\mathsf{VerifyConsistencyProof}$ -- consistency proof verification function of type $\mathbb{CP} \times \hashtype \times \hashtype \to \bool$
+$\mathsf{VerifyConsistencyProof}$ -- consistency proof verification function of type $\mathbb{CP} \times (\bytes{32} \times \hashtype)^\ast \times \hashtype\opt \times \hashtype\opt \to \bool$
 
 \textbf{Input}:
 \begin{enumerate}
@@ -453,7 +471,40 @@ $\mathsf{VerifyConsistencyProof}$ -- consistency proof verification function of 
 
 The verification algorithm ($\textsc{rsmt\_verify\_consistency}$) is defined in Appendix~\ref{sec:rsmt-verify-consistency}.
 
-A valid consistency proof guarantees: (1) \textbf{Append-only property}: No existing leaves were deleted or modified; (2) \textbf{Correctness}: All new leaves in batch $B$ were correctly inserted at positions determined by their state identifiers; (3) \textbf{Completeness}: The state transition from $h'$ to $h$ includes exactly the leaves in $B$ and no others.
+The intended proof system properties are as follows. Specified algorithms enforce Items~1--4 below. Item~5 is a stronger structural property that is intentionally skipped.
+\begin{enumerate}
+	\item \textbf{Completeness}: If an honest aggregation layer node starts from the tree committed by $h'$ and inserts exactly the batch $B$, then it can produce $\pi_{CP}$ such that $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$.
+	\item \textbf{Soundness of prior-state preservation}: Let $M_0, M_1 \colon \bytes{32} \to \hashtype\opt$ denote the partial maps committed by $h'$ and $h$, respectively. If $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$, then
+	\[
+		\forall\, \mathsf{sid} \in \bytes{32}\colon\; M_0(\mathsf{sid}) \ne \bot \Rightarrow M_1(\mathsf{sid}) = M_0(\mathsf{sid}).
+	\]
+	That is, no previously committed SMT leaf can be deleted or modified.
+	\item \textbf{Batch incorporation}: If $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$, then
+	\[
+		\forall\, i \in \{1, \ldots, j\}\colon\; M_1(\mathsf{sid}_i) = h_{\mathsf{tx},i}.
+	\]
+	Thus every declared inserted leaf appears in the post-state under the key determined by its state identifier.
+	\item \textbf{No phantom insertions}: If $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$, then
+	\[
+		\begin{aligned}
+			\forall\, \mathsf{sid} \in \bytes{32}\colon\;& M_1(\mathsf{sid}) \ne \bot \land M_0(\mathsf{sid}) = \bot \\
+			&\Rightarrow \exists\, i \in \{1, \ldots, j\}\colon\; (\mathsf{sid}, M_1(\mathsf{sid})) = (\mathsf{sid}_i, h_{\mathsf{tx},i}).
+		\end{aligned}
+	\]
+	Therefore every new post-state leaf is justified by the declared batch.
+	\item \textbf{Canonical inserts} (stronger structural property): Let $\mathsf{root}_{\mathsf{canon}}(M)$ denote the root hash of the unique well-formed radix sparse Merkle tree induced by a finite map $M$. The strongest desirable statement is
+	\[
+		h = \mathsf{root}_{\mathsf{canon}}(M_0 \cup B).
+	\]
+	Equivalently, the post-state topology is uniquely determined by the committed keys and every leaf in the domain of $M_0 \cup B$ admits a valid inclusion certificate against $h$.
+\end{enumerate}
+
+Equivalently, if $B$ is interpreted as a finite partial map with pairwise distinct keys disjoint from the domain of $M_0$, then acceptance of $\pi_{CP}$ implies
+\[
+	M_1 = M_0 \cup B.
+\]
+
+The specification deliberately omits Item~5 for efficiency reasons. In the worst case, a Byzantine aggregation layer node may obtain certification for a non-canonical post-state root that still preserves all previously committed leaves and incorporates the declared batch, yet leaves some committed leaves without valid inclusion certificates. Thus the loss is in structural canonicity and proof availability, not in prior-state preservation or batch incorporation.
 
 
 %%%%%%%% BFT Core
@@ -473,11 +524,6 @@ A valid consistency proof guarantees: (1) \textbf{Append-only property}: No exis
 	\item $t$ -- reference time for request validation of type $\uint{64}$
 \end{enumerate}
 
-%The consistency proof $\pi_{CP}$ allows the BFT Core to verify that the state transition from $h'$ to $h$ was computed correctly by the aggregation layer nodes maintaining the SMT for this shard.
-
-%Shard input record is created by the BFT Core in response to a certification request. The fields $n, e, h', h, v, h_B, f_B$ are copied from the certification request, and $h_t$ is added by the BFT Core.
-
-%The field descriptions above apply to a committed (certified) Input Record. In the state certification \emph{request}, the fields are interpreted as follows: $h'$ - root hash to be extended (that is, of the last certified round), $h$, $v$, $h_B$ - values proposed for certification and $n$ is incremented for the proposed round.
 
 \subsection{Statistical Record}\label{statistical-record}
 
@@ -486,6 +532,7 @@ Statistical record of type $\mathbb{SR}$ is a tuple $\mathsf{SR}=(n_e, \overline
 	\item $n_e$ -- number of non-empty rounds (adding at least one new leaf), of type $\uint{64}$
 	\item $\overline{\ell}_S$ -- memory usage of the SMT, of type $\uint{64}$
 	\item $\hat{\ell}_B$ -- maximum number of SMT additions processed during a round, of type $\uint{64}$
+	\item $\dots$ -- other necessary data: fees, etc.
 \end{enumerate}
 
 There is one Statistical Record of current epoch where the values are being updated, reflecting the current state since the beginning of the epoch; and one invariant Statistical Record of the preceding epoch of every shard of every public partition.
@@ -618,7 +665,7 @@ Epoch number\index{$e$ (epoch number)} can be interpreted as the version number 
 	\item $\mathcal{IR}$ -- shard input record of type $\mathbb{IR}$
 	\item $\ell_B$ -- number of added new SMT leaves during the round, type $\uint{64}$
 	\item $\ell_S$ -- SMT memory usage in bytes of type $\uint{64}$
-	\item $\pi_{CP}$ -- consistency proof of type $\mathbb{CP}$ (Sec.~\ref{sec:consistency-proof})
+	\item $\pi_{CP} \lor \bot$ -- consistency proof of type $\mathbb{CP}$ (Sec.~\ref{sec:consistency-proof})
 	\item $s$ -- signature authenticating the message
 \end{enumerate}
 
@@ -668,7 +715,7 @@ For every incoming certificate request $\mathsf{CR}=\langle \alpha, \beta, \sigm
 \item $\mathsf{CR}.\mathcal{IR}.n=\mathcal{SI}[\beta,\sigma].n + 1$ -- round number is correctly incremented
 \item $\mathsf{CR}.\mathcal{IR}.e=\mathcal{SI}[\beta,\sigma].e$ -- epoch number matches
 \item $\mathsf{CR}.\mathcal{IR}.h'=\mathcal{SI}[\beta,\sigma].h_-$ -- previous round's SMT root hash in IR matches the recorded one
-\item $\mathcal{CD}[\beta].\gamma_{CP}(\mathsf{CR}.\mathcal{IR}, \mathsf{CR}.\pi_{CP})$ -- consistency proof verification (Sec.~\ref{sec:consistency-proof}) succeeds: verify $\mathsf{VerifyConsistencyProof}(\mathsf{CR}.\pi_{CP}, \mathsf{CR}.\mathcal{IR}.h', \mathsf{CR}.\mathcal{IR}.h) = \TRUE$ and $|B| = \mathsf{CR}.\ell_B$ (batch size matches).
+	\item $\mathcal{CD}[\beta].\gamma_{CP}(\mathsf{CR}.\mathcal{IR}, \mathsf{CR}.\pi_{CP})$ -- consistency proof verification (Sec.~\ref{sec:consistency-proof}) succeeds: verify $\mathsf{VerifyConsistencyProof}(\mathsf{CR}.\pi_{CP}, B, \mathsf{CR}.\mathcal{IR}.h', \mathsf{CR}.\mathcal{IR}.h) = \TRUE$ and $|B| = \mathsf{CR}.\ell_B$ (batch size matches).
 \item $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta, \sigma].UC_-.IR.C^\mathsf{r}.t$ -- time reference is equal to the time field of the previous unicity seal
 \end{enumerate}
 Only one (majority-voted) certificate request (denoted by $\mathsf{CR}_{\beta,\sigma}$) is accepted from every shard.

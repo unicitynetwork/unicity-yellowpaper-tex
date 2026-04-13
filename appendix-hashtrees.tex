@@ -369,17 +369,23 @@ In addition to verifying the root hash, the accumulated sum $v_\mathsf{sum}$ at 
 
 \section{Radix Sparse Merkle Trees}\label{app:rsmt}
 
-A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. Each leaf hash commits to the full 256-bit key, and each internal node hash commits to an explicit bifurcation depth. Consequently, pre-existing node hashes are immutable when new keys are inserted---only the new leaf and the new internal node at the bifurcation point produce fresh hashes. The tree supports (non-)inclusion proofs and consistency proofs \footnote{Prototype implementation: \href{https://github.com/unicitynetwork/unicity-yellowpaper-tex/blob/main/ndrsmt3.py}{github.com/../ndrsmt3o.py}}
+A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. It authenticates a finite map $k \mapsto v$, where every stored key appears as exactly one leaf and every internal node records the absolute bit position at which its descendant keys bifurcate. The implementation documented here uses LSB-first bit order.\footnote{Reference Python implementation: \href{https://github.com/unicitynetwork/unicity-yellowpaper-tex/blob/main/ndrsmt3o.py}{\texttt{ndrsmt3o.py}}.} Each leaf hash commits to the full 256-bit key, and each internal node hash commits to the explicit bifurcation depth. Consequently, splitting an edge above an unchanged subtree does not alter that subtree's hash: batch insertion rehashes only the changed search frontier and the newly created nodes. The tree supports inclusion certificates, non-inclusion certificates and consistency proofs.
 
 \subsection{Tree Structure}
 
-Keys are elements of $\bytes{32}$ (256 bits), addressed in LSB-first order\footnote{See Appendix~\ref{app:ordering} for bit-string conventions.}: bit position $i$ corresponds to bit $(i \bmod 8)$ of byte $\lfloor i/8 \rfloor$, where bit 0 is the least significant bit of byte 0.
+Keys are elements of $\bytes{32}$ (256 bits), addressed in LSB-first order\footnote{See Appendix~\ref{app:ordering} for bit-string conventions.}. Bit position $i$ means the $i$-th least significant bit.
+
+\subsubsection{Node Format}
+
+Let $s$ denote the next key-bit position examined during a top-down traversal.
 
 \begin{itemize}
-	\item \textbf{Leaf node}: Stores a key $k \in \bytes{32}$ and a value $v \in \bytestr$. The hash commits to both the full key and the value.
-	\item \textbf{Internal node}: Bifurcates at a depth $d \in \{0, \ldots, 255\}$. The left child corresponds to bit $d$ of the key being 0, the right child to bit $d$ being 1. An internal node also stores a compressed common-prefix path for key-routing during traversal; this path is \emph{not} included in hashing.
-	\item \textbf{Root}: The single top-level node. An empty tree has root $\bot$.
+	\item \textbf{Empty tree}: The empty tree has root $\bot$.
+	\item \textbf{Leaf node}: A leaf stores a pair $(k, v)$ with $k \in \bytes{32}$ and $v \in \bytestr$. The full key $k$ anchors the leaf position in the tree.
+	\item \textbf{Internal node}: An internal node stores a tuple $(q, d, c_0, c_1)$, where $q \in \bits{d-s}$ is the maximal common path segment shared by all descendant keys from bit positions $s, \ldots, d-1$, $d \in \{0, \ldots, 255\}$ is the bifurcation depth, and $c_0$ and $c_1$ are the left and right child subtrees. A search key $k$ may descend through the node if and only if its bits $k[s], \ldots, k[d-1]$ equal $q$; the next bit $k[d]$ then selects child $c_0$ for $0$ and child $c_1$ for $1$.
 \end{itemize}
+
+The path segment $q$ is stored for routing but is not part of the Merkle hash. The commitment is determined entirely by the leaf contents, the child hashes and the absolute bifurcation depth.
 
 \subsection{Hash Computation}
 
@@ -423,6 +429,89 @@ Computes the hash of an RSMT internal node.
 		\State \Return $H(\mathtt{0x01} \,\|\, d \,\|\, h_L \,\|\, h_R)$
 	\EndFunction
 \end{algorithmic}
+
+The internal-node hash does not include the compressed path segment $q$. Every leaf hash already commits to the full key, and every internal-node hash commits to the absolute branching depth $d$.
+
+\subsection{Batch Insertion}\label{sec:rsmt-batch-insert}
+
+The batch insertion algorithm sorts the input batch once in the traversal order defined in Section~\ref{sec:rsmt-sort-order}, removes repeated keys within the batch, and then merges the resulting sorted list with the affected frontier of the existing tree. Existing keys are dropped from the batch during this merge.
+
+\subsubsection{Function $\textsc{rsmt\_batch\_insert\_np}$}\label{sec:rsmt-batch-insert-np}
+
+In the following, the helper procedure $\textsc{rsmt\_merge\_batch}$ recursively merges a contiguous slice of the sorted batch into the current subtree root, and $\textsc{rsmt\_build\_subtree}$ builds a new radix subtree from a non-empty sorted slice.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $T$ -- current RSMT
+	\item $B = \langle (k_1, v_1), \ldots, (k_m, v_m) \rangle$ -- unordered batch of candidate insertions
+\end{enumerate}
+
+\textbf{Output}:
+$T$ updated in place, with root replaced by the root of the post-state tree
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{rsmt\_batch\_insert\_np}{$T, B$}
+		\State sort $B$ by $\textsc{rsmt\_sort\_key}$ and remove repeated keys to obtain $B'$
+		\If{$B' = \langle \rangle$}
+			\State \Return
+		\EndIf
+		\State $T.\mathsf{root} \gets \Call{rsmt\_merge\_batch}{T.\mathsf{root}, B'; 0}$
+	\EndFunction
+\end{algorithmic}
+
+
+The helper procedure $\textsc{rsmt\_merge\_batch}(r, S; s)$ receives a current subtree root $r$, a contiguous slice $S$ of the traversal-sorted batch, and the next bit position $s$. The following pseudocode omits low-level bit manipulations.
+
+\begin{algorithmic}
+	\Function{rsmt\_merge\_batch}{$r, S; s$}
+		\If{$S = \langle \rangle$}
+			\State \Return $r$
+		\EndIf
+		\If{$r = \bot$}
+			\State \Return \Call{rsmt\_build\_subtree}{S; s}
+		\EndIf
+		\If{$r$ is a leaf $(k_\ell, v_\ell)$}
+			\State let $U$ be the traversal-order merge of $S$ with $(k_\ell, v_\ell)$, omitting any batch element whose key is $k_\ell$
+			\If{$\len{U} = 1$}
+				\State \Return $r$
+			\EndIf
+			\State \Return \Call{rsmt\_build\_subtree}{U; s}
+		\EndIf
+		\State parse $r$ as internal node $(q, d, r_0, r_1)$
+		\If{the first or last key of $S$ diverges from prefix $q$ before depth $d$}
+			\State let $t < d$ be the first divergent depth
+			\State partition $S$ into $S_0$ and $S_1$ according to bit $t$
+			\State let $b \in \{0,1\}$ be the branch of the old subtree at depth $t$, as determined by $q$
+			\If{$b = 0$}
+				\State $r_0' \gets \Call{rsmt\_merge\_batch}{r, S_0; t}$
+				\State $r_1' \gets \Call{rsmt\_merge\_batch}{\bot, S_1; t}$
+			\Else
+				\State $r_0' \gets \Call{rsmt\_merge\_batch}{\bot, S_0; t}$
+				\State $r_1' \gets \Call{rsmt\_merge\_batch}{r, S_1; t}$
+			\EndIf
+			\State \Return a new parent node at depth $t$ with children $r_0'$ and $r_1'$
+		\EndIf
+		\State partition $S$ into $S_0$ and $S_1$ according to bit $d$
+		\State $r_0' \gets \Call{rsmt\_merge\_batch}{r_0, S_0; d}$
+		\State $r_1' \gets \Call{rsmt\_merge\_batch}{r_1, S_1; d}$
+		\State \Return the node $(q, d, r_0', r_1')$
+	\EndFunction
+\end{algorithmic}
+
+Because $S$ is already sorted in traversal order, the implementation can locate the first relevant divergence by inspecting only the first and the last key of the slice. Thus each recursive call either descends into the already committed frontier or constructs a fresh subtree for a non-empty batch slice, without extra per-key membership lookups.
+
+The helper procedure $\textsc{rsmt\_build\_subtree}(S; s)$ is applied only to a non-empty traversal-sorted slice:
+
+\begin{enumerate}
+	\item If $\len{S} = 1$, create a leaf for the single pair in $S$ and return it.
+	\item Otherwise compute the first bit position $d \ge s$ at which the first and the last key of $S$ differ. This determines the unique bifurcation depth of the subtree root.
+	\item Partition $S$ into $S_0$ and $S_1$ according to bit $d$, recursively build the two child subtrees, and return the internal node whose compressed path is the common bit string from positions $s, \ldots, d-1$.
+\end{enumerate}
+
+Unlike the consistency-proof-producing batch insertion path, this proof-free variant does not return the subset of leaves that were actually inserted. That auxiliary list is only needed for pairing with a consistency proof.
+
+For an unordered batch of size $m$, the initial sort costs $O(m \log m)$. The recursive merge then touches only the affected search frontier of the existing tree and the newly created nodes, so the total running time remains within the same $O(m \log m)$ bound.
 
 
 \subsection{Inclusion Certificate}\label{sec:rsmt-inclusion-cert}
@@ -551,9 +640,11 @@ Verifies that key $k$ is absent from a tree with root hash $\rho$.
 
 A \emph{consistency proof} demonstrates that a batch $B$ of new key-value pairs was correctly inserted into a tree with root $\rho'$, producing a new tree with root $\rho$, without modifying or deleting any pre-existing data.
 
+The current implementation proves preservation of committed pre-state subtrees and incorporation of the declared batch into the post-state hash. It does \emph{not} additionally prove that the resulting post-state is the unique canonical radix sparse Merkle tree induced by the final key set. This stronger structural property is omitted for efficiency reasons: enforcing it would require additional witness data, larger inclusion proofs and more expensive verification.
+
 \subsubsection{Sort Order}\label{sec:rsmt-sort-order}
 
-The batch and proof use \emph{LSB-first traversal order}. The sort key of a 256-bit key $k$ is obtained by independently reversing the bits within each byte of $k$ (no byte reordering). This places bit~0 as the most significant sort bit, matching the tree's LSB-first branching order.
+The batch and proof use \emph{LSB-first traversal order}. The sort key of a 256-bit key $k$ is obtained by reversing the byte order of $k$ and then independently reversing the bits within each byte. This places the least significant bit of the key first in lexicographic order, matching the tree's branching order.
 
 \subsubsection{Proof Format}
 
@@ -666,9 +757,9 @@ A ZK-compressed consistency proof proves successful execution of the $\mathsf{rs
 	\begin{itemize}
 		\item $h'$ -- previous SMT root hash (matches $\mathcal{IR}.h'$)
 		\item $h$ -- current SMT root hash (matches $\mathcal{IR}.h$)
-		\item $j$ -- number of leaves in batch (matches $\ell_B$ in the Certification Request)
+%		\item $j$ -- number of leaves in batch (matches $\ell_B$ in the Certification Request)
 	\end{itemize}
-	\item \textbf{Private inputs (witness)}: proof $(B, \Pi)$
+	\item \textbf{Private inputs (witness)}: unique inserted batch and consistency proof $(B, \Pi_{CP})$
 \end{itemize}
 
 \subsubsection{Verification}
@@ -676,6 +767,6 @@ A ZK-compressed consistency proof proves successful execution of the $\mathsf{rs
 When receiving a ZK-compressed consistency proof, the verifier must:
 \begin{enumerate}
 	\item Verify that the proof is proving the right statement (hash-based consistency proof verification algorithm)
-	\item Verify the ZK proof, obtaining authentic public inputs $h'$, $h$, and $j$
-	\item Confirm these values match the claimed Input Record
+	\item Verify the ZK proof, obtaining authentic public inputs $h'$, $h$
+	\item Confirm these values match the claimed Input Reco	rd
 \end{enumerate}
