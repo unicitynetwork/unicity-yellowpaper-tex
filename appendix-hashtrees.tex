@@ -514,6 +514,65 @@ Unlike the consistency-proof-producing batch insertion path, this proof-free var
 For an unordered batch of size $m$, the initial sort costs $O(m \log m)$. The recursive merge then touches only the affected search frontier of the existing tree and the newly created nodes, so the total running time remains within the same $O(m \log m)$ bound.
 
 
+\subsection{Shard Split}\label{sec:rsmt-shard-split}
+
+When a shard $\sigma$ is split into two sub-shards $\sigma \| 0$ and $\sigma \| 1$ (Sec.~\ref{sec:sharding}), the RSMT maintained by the parent shard must be partitioned accordingly: each successor keeps only those leaves whose keys route to it under the sharding function $f_{\mathcal{SH}}$. In the LSB-first convention of Section~\ref{sec:rsmt-sort-order}, a key $k$ belongs to $\sigma \| b$ if bit $|\sigma|$ of $k$ equals $b$.
+
+\subsubsection{Function $\textsc{rsmt\_shard\_split}$}\label{sec:rsmt-shard-split-fn}
+
+Retains the sub-shard assigned by the bit $b$ and discards the complement.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $T$ -- RSMT of the current shard $\sigma$ (every leaf key agrees with $\sigma$ on bits $0, \ldots, |\sigma|-1$)
+	\item $s \in \{0, \ldots, 255\}$ -- split depth, equal to $|\sigma|$
+	\item $b \in \{0, 1\}$ -- selector bit of the sub-shard to retain
+\end{enumerate}
+
+\textbf{Output}: $T'$ -- RSMT with exactly those leaves of $T$ whose bit $s$ equals $b$
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{rsmt\_shard\_split}{$T, s, b$}
+		\If{$T.\mathsf{root} = \bot$}
+			\State \Return empty tree
+		\EndIf
+		\State $T'.\mathsf{root} \gets \Call{rsmt\_split\_node}{T.\mathsf{root}, s, b}$
+		\State \Return $T'$
+	\EndFunction
+\end{algorithmic}
+
+The helper $\textsc{rsmt\_split\_node}(r, s, b)$ descends the subtree rooted at $r$ to the first node whose bifurcation depth is at least $s$:
+
+\begin{algorithmic}
+	\Function{rsmt\_split\_node}{$r, s, b$}
+		\If{$r$ is a leaf $(k, v)$}
+			\If{bit $s$ of $k$ equals $b$} \Return $r$
+			\Else
+				\State \Return $\bot$
+			\EndIf
+		\EndIf
+		\State parse $r$ as internal node $(q, d, c_0, c_1)$
+		\If{$d = s$}
+			\State \Return $c_b$ \Comment{selector bit resolves the split}
+		\Else \Comment{$d > s$: all descendant keys agree on bit $s$}
+			\State let $b^* \in \{0,1\}$ be bit $s$ of any descendant key (equivalently, the bit of $q$ at offset $s$)
+			\If{$b^* = b$}
+				\State \Return $r$
+			\Else
+				\State \Return $\bot$
+			\EndIf
+		\EndIf
+	\EndFunction
+\end{algorithmic}
+
+\textbf{Properties}.
+\begin{itemize}
+	\item \emph{No rehashing}: Because internal-node hashes commit to the absolute bifurcation depth $d$ (Sec.~\ref{sec:rsmt-node-hash}) and leaf hashes commit to the full key (Sec.~\ref{sec:rsmt-leaf-hash}), every retained node keeps its pre-split hash. The post-split root hash equals the hash of whichever existing node the procedure returns.
+	\item \emph{Inclusion Proof change}: An inclusion certificate (Sec.~\ref{sec:rsmt-inclusion-cert}) that was valid against the pre-split root is now different, the sibling entry at depth $s$, if any, from both the bitmap and the sibling list is dropped. This is compensated by the Unicity Certificates being larger, due to extra entry in Shard Tree.
+	\item The procedure may be executed as many times as necessary to obtain necessary number of shards.
+\end{itemize}
+
 \subsection{Inclusion Certificate}\label{sec:rsmt-inclusion-cert}
 
 An \emph{Inclusion Certificate}\index{Inclusion Certificate!RSMT} $C^\mathsf{inc}$ demonstrates that a specific $(k, v)$ pair exists in a tree with root hash $\rho$.

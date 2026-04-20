@@ -170,3 +170,22 @@ This process creates and updates Sharding Schemes for partitions. The switch to 
 The Input data for shard management process is collected by the BFT Core. It maintains a rolling statistics record for every shard for the ongoing shard epoch; and keeps the aggregates of the previous epoch. The rolling amount is modified based on reported measurements in UC Requests, as sent by the aggregation layer nodes.
 
 Each shard is responsible for fetching the record certifying the previous epoch's aggregate statistics record, and submitting it as a transaction to the Governance Body. The aggregate fee record is certified by any UC of the following epoch.
+
+\subsection{Shard Split}
+
+If a sharding scheme update replaces a shard $\sigma$ by child shards $\sigma\|0$ and $\sigma\|1$, then the change is executed at the epoch boundary using the last certified state of $\sigma$ as the split source.
+
+The orchestration of shard split is executed as follows:
+\begin{enumerate}
+	\item Governance publishes the new sharding scheme and validator assignments for the child shards for epoch $e+1$.
+	\item During epoch $e$, the validators of shard $\sigma$ continue normal operation and finalize the last round of $\sigma$.
+	\item At the epoch switch, the validators joining $\sigma\|0$ and $\sigma\|1$ obtain the last certified state of $\sigma$. Majority of the validators after split should be pre-existing, these are already pre-synced and known to be able to execute.
+	\item Each joining validator creates a local copy of the full RSMT state of $\sigma$ in memory or on disk.
+	\item Each validator computes the child shard states by running the split procedure from Section~\ref{sec:rsmt-shard-split} against the synchronized state.
+	\item The child shards start epoch $e+1$ from the derived roots $h_{\sigma\|0}$ and $h_{\sigma\|1}$ and accept only requests whose state identifiers map to the respective child shard under the new sharding scheme.
+	\item Removal of branches and leaves that do not belong to the local child shard may be performed asynchronously after the child shard is already in service.
+\end{enumerate}
+
+This approach allows existing in-sync validators to reuse the already materialized tree topology. The split can be executed by local replication first and garbage collection later, instead of requiring an immediate  computation of the minimal child tree before the epoch can advance.
+
+From the viewpoint of availability, the old shard validators are expected to keep serving the certified pre-split state briefly after the epoch switch so that joining validators can synchronize. After the child shards have demonstrated successful operation, obsolete local data of the parent shard can be deleted according to the operator's retention policy.
