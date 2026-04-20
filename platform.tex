@@ -106,19 +106,25 @@ The aggregation layer nodes process Unicity Service Requests by validating them 
 Given a Unicity Service Request $Q = (\predi, \sthash, \txhash, u)$, the aggregation layer node performs the following checks:
 
 \begin{enumerate}
+	\item \textbf{Right shard check}: Compute the state identifier
+	\[
+	\mathsf{sid} = H(\predi, \sthash)
+	\]
+	and verify that the current shard $\sigma$ satisfies
+	\[
+	f_{\mathcal{CD}[\beta].\mathcal{SH}}(\mathsf{sid}) = \sigma .
+	\]
+	If this check fails, the request was sent to the wrong shard and must be rejected (or forwarded to the correct shard).
+
 	\item \textbf{Predicate evaluation}: Verify that the unlocking argument satisfies the predicate:
 	\[
 	\predi(\tau, H(\sthash, \txhash), u) = 1
 	\]
 
-	\item \textbf{Uniqueness check}: Compute the state identifier and check that it does not already exist as a leaf in the SMT:
-	\[
-	\mathsf{sid} = H(\predi, \sthash)
-	\]
-	Verify that the SMT does not contain a leaf with key $\mathsf{sid}$ (i.e., the state has not been spent before).
+	\item \textbf{Uniqueness check}: Verify that the SMT does not contain a leaf with key $\mathsf{sid}$ (i.e., the state has not been spent before).
 \end{enumerate}
 
-If both conditions are satisfied, the request is accepted and the aggregation layer node sets the SMT leaf:
+If all checks are satisfied, the request is accepted and the aggregation layer node sets the SMT leaf:
 \[
 \text{Set SMT leaf: } (\mathsf{sid}, \txhash)
 \]
@@ -135,7 +141,7 @@ After processing a batch of requests, the aggregation layer nodes compute the ne
 
 \section{Certificates}
 
-\emph{Certificates} are compact proofs of inclusion (or sometimes uniqueness, or exclusion) of some data item in an authenticated data structure. Certificates may be chained. Combining certificates, it is possible to put together \emph{proofs} (Sec.~\ref{se:proofs}) proving e.g. inclusion, non-inclusion or uniqueness of transactions.
+\emph{Certificates} are compact proofs of inclusion (or sometimes uniqueness, or exclusion) of some data item in an authenticated data structure. Certificates may be chained. Combining certificates, it is possible to put together \emph{proofs} (Sec.~\ref{se:proofs}) proving e.g. inclusion, non-inclusion or uniqueness of state, consumed by associated transaction.
 
 \begin{figure}[ht]
 	\begin{minipage}[h]{0.45\linewidth}
@@ -210,7 +216,7 @@ Appendix~\ref{app:rsmt} defines the corresponding wire formats and verification 
 
 \subsection{Shard Tree Certificate}\label{se:shard-tree-cert}
 
-\emph{Shard Tree Certificate}\index{$C^\mathsf{shard}$ (shard tree certificate)}\index{shard tree certificate} connects the SMT root hash from a shard aggregator to a leaf of unicity tree. It is a tuple $C^\mathsf{shard} = (\sigma; h^s_1, \ldots, h^s_{|\sigma|})$, where:
+\emph{Shard Tree Certificate}\index{$C^\mathsf{shard}$ (shard tree certificate)}\index{shard tree certificate} connects a shard's certified input hash to the partition's shard-tree root, from which the Unicity Tree certificate continues to the global root of trust. It is a tuple $C^\mathsf{shard} = (\sigma; h^s_1, \ldots, h^s_{|\sigma|})$, where:
 \begin{enumerate}
 	\item $\sigma=\sigma_1\sigma_2\ldots \sigma_{|\sigma|}$ is a shard identifier of type $\{0,1\}^\ast$
 	\item $h^s_1, \ldots, h^s_{|\sigma|}$ -- sibling hashes of type $\hashtype$
@@ -219,10 +225,7 @@ Appendix~\ref{app:rsmt} defines the corresponding wire formats and verification 
 For the single shard case, the sharding scheme is $\{\emptystr\}$ and the certificate is $(\emptystr, \bot)$.
 
 \subsubsection{Sharded SMT Structure}
-% TODO: no hierarchy of aggregator nodes
-In a sharded setting, each shard aggregator node maintains an SMT for its portion of the key space. The parent aggregator maintains a non-sparse tree (with all leaves present) where each leaf corresponds to a shard's SMT root hash.
-
-To facilitate integration, each shard aggregator computes its root hash as $h_{\mathsf{root}} = H(p, h_L, h_R)$ where $p$ is a 1-bit path consisting of the leftmost bit of the shard identifier. This ensures the shard root hash can be directly used as a leaf value in the parent aggregator's tree.
+In a sharded setting, each shard maintains the SMT for its portion of the key space and produces a certified shard input record $(IR, h_t)$. The Consensus Layer then deterministically builds the shard tree from the authenticated shard inputs of all shards in the partition (see Sec.~\ref{se:shard-tree} and Algorithm~\ref{alg:uc-gen}).
 
 \subsubsection{Creation: $\mathsf{CreateShardTreeCert}$}\label{se:create-shard-tree-cert}
 
@@ -350,6 +353,7 @@ Elements of the tuple form an authenticated chain, see function \nameref{VerifyU
 \subsubsection{Verication: $\mathsf{VerifyUnicityCert}$}\label{VerifyUnicityCert}\index{functions!VerifyUnicityCert}
 
 Verifies if unicity certificate is valid, based on unicity trust base as the root of trust.
+This function authenticates the certificate chain itself. It does not, by itself, prove that a particular state identifier belongs to the shard named in $C^\mathsf{shard}$; that binding is checked by the proof verification functions below.
 
 \textbf{Input}:
 \begin{enumerate}
@@ -372,7 +376,7 @@ Verifies if unicity certificate is valid, based on unicity trust base as the roo
 
 \subsection{Inclusion Proof}
 
-\emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state transition (mapping from state identifier to transaction hash) has been registered in the SMT and certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, where:
+\emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state identifier has been recorded in the SMT as a proof of the spend being unique, and that the resulting shard state was certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, where:
 \begin{enumerate}
 	\item $\mathsf{sid} \in \bytes{32}$ -- state identifier (SMT leaf key)
 	\item $\txhash \in \hashtype$ -- transaction data hash (SMT leaf value)
@@ -382,11 +386,12 @@ Verifies if unicity certificate is valid, based on unicity trust base as the roo
 
 \subsubsection{Verification: $\mathsf{VerifyInclusionProof}$}\label{VerifyInclusionProof}\index{functions!VerifyInclusionProof}
 
-$\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type $\mathbb{IP} \times \mathbb{UB} \to \bool$
+$\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type $\mathbb{IP} \times \mathbb{CD} \times \mathbb{UB} \to \bool$
 
 \textbf{Input}:
 \begin{enumerate}
 	\item $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$ -- inclusion proof
+	\item $\mathcal{CD}_\beta$ -- authenticated partition description of the partition identified by $UC.C^\mathsf{uni}.\beta$
 	\item $\mathcal{T}$ -- trust base
 \end{enumerate}
 
@@ -394,6 +399,10 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
+	\State ensure($H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
+	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
+	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
+	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Proof comes from the right shard}
 	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
 	\If {$\neg \Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, h, \mathsf{sid}, \txhash}$} \Return \FALSE \EndIf
 	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
@@ -410,11 +419,12 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 
 \subsubsection{Verification: $\mathsf{VerifyNonInclusionProof}$}\label{VerifyNonInclusionProof}\index{functions!VerifyNonInclusionProof}
 
-$\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function of type $\mathbb{EP} \times \mathbb{UB} \to \bool$
+$\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function of type $\mathbb{EP} \times \mathbb{CD} \times \mathbb{UB} \to \bool$
 
 \textbf{Input}:
 \begin{enumerate}
 	\item $\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$ -- non-inclusion proof
+	\item $\mathcal{CD}_\beta$ -- authenticated partition description of the partition identified by $UC.C^\mathsf{uni}.\beta$
 	\item $\mathcal{T}$ -- trust base
 	\item $\mathsf{sid} \in \bytes{32}$ -- queried state identifier
 \end{enumerate}
@@ -423,6 +433,10 @@ $\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function 
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
+	\State ensure($H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
+	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
+	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
+	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Proof comes from the right shard}
 	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
 	\If {$\neg \Call{rsmt\_verify\_non\_inclusion}{C^\mathsf{exc}, h, \mathsf{sid}}$} \Return \FALSE \EndIf
 	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf

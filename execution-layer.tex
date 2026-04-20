@@ -85,7 +85,7 @@ $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant
 \begin{enumerate}
 	\item $T_0.\sthash = H(T_0.D_\mathsf{mint}.\mathsf{id}, \mathsf{MINT\_SUFFIX})$
 	\item $\mathsf{Verify}(\mathsf{pk}_\mathsf{mint}, H(\sthash, \txhash), u_0) = 1$, where $\txhash = H(D_\mathsf{mint})$
-	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), \txhash, \pi_0) = 1$
+	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), \txhash, \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
 	\item Token type-specific checks on $\auxd'$ (e.g. mint justification validity)
 \end{enumerate}
 
@@ -119,7 +119,7 @@ A \emph{certified transfer transaction} is a tuple $(T, u, \txhash, \pi)$, where
 \begin{enumerate}
 	\item $T.\sthash = h$ \quad (state hash matches expected)
 	\item $\predi(\mathsf{time}(\pi), H(\sthash, \txhash), u) = 1$ \quad (predicate satisfied)
-	\item $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pi) = 1$ \quad (inclusion proof valid)
+	\item $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pi, \mathcal{CD}_\beta, \mathcal{T}) = 1$ \quad (inclusion proof valid and certified by the correct shard)
 	\item Additional token type-specific checks
 \end{enumerate}
 
@@ -387,7 +387,7 @@ Figure~\ref{fi:exec-transaction-flow} illustrates one complete token transfer, f
                     $T.\sthash \stackrel{?}{=} H(h^\textsf{prev}_\mathsf{st}, x_\textsf{prev})$ \\
                     $\tau \gets \mathsf{time}(\pinc)$ \\
                     $\predi(\tau, H(\sthash, \txhash), u) \stackrel{?}{=} 1$ \\
-                    $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pinc) \stackrel{?}{=} 1$ \\
+                    $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pinc, \mathcal{CD}_\beta, \mathcal{T}) \stackrel{?}{=} 1$ \\
                     Accept if all checks pass
                     }}{R}{}
                 \end{call}
