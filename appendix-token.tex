@@ -36,7 +36,7 @@ A predicate $\predi$ is encoded as a CBOR array with three elements:
 \hline
 \texttt{0x01} & Signature predicate ($\predi_\mathsf{sig}$) & 33-byte compressed public key \\
 \texttt{0x02} & Burn predicate ($\predi_\mathsf{burn}$)     & 32-byte reason hash \\
-\texttt{0x03} & Timelock predicate ($\predi_\mathsf{lock}$) & 2-element CBOR array;
+\texttt{0x03} & Timelock predicate ($\predi_\mathsf{tlock}$) & 2-element CBOR array;
     element 0 is a byte string containing a 33-byte compressed public key,
     element 1 is an unsigned integer representing a timestamp \\
 \end{longtable}
