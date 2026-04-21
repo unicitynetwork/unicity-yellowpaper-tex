@@ -31,11 +31,14 @@ A predicate $\predi$ is encoded as a CBOR array with three elements:
 \end{longtable}
 
 \noindent Built-in predicate type codes:
-\begin{longtable}{cl}
-\textbf{Type Code} & \textbf{Predicate} \\
+\begin{longtable}{clp{8cm}}
+\textbf{Type Code} & \textbf{Predicate} & \textbf{Parameters} \\
 \hline
-\texttt{0x01} & Signature predicate ($\predi_\mathsf{sig}$). Parameters: 33-byte compressed public key. \\
-\texttt{0x02} & Burn predicate ($\predi_\mathsf{burn}$). Parameters: 32-byte reason hash. \\
+\texttt{0x01} & Signature predicate ($\predi_\mathsf{sig}$) & 33-byte compressed public key \\
+\texttt{0x02} & Burn predicate ($\predi_\mathsf{burn}$)     & 32-byte reason hash \\
+\texttt{0x03} & Timelock predicate ($\predi_\mathsf{lock}$) & 2-element CBOR array;
+    element 0 is a byte string containing a 33-byte compressed public key,
+    element 1 is an unsigned integer representing a timestamp \\
 \end{longtable}
 
 \noindent The \emph{recipient} field in transactions stores a hash of the predicate encoding: $H(\mathsf{CBOR}(\predi'))$.
