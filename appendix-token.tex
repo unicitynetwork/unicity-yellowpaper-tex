@@ -20,28 +20,59 @@ This appendix specifies the concrete encodings for the Unicity Token defined in 
 
 \section{Predicate Encoding}\label{app:predicate-encoding}
 
-A predicate $\predi$ is encoded as a CBOR array with three elements:
+This section specifies the wire encoding of the standard predicates defined in Sec.~\ref{sec:predicates}. A predicate $\predi$ is encoded as a CBOR array with three elements:
 
 \begin{longtable}{clp{8cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
 0 & unsigned integer & Predicate engine identifier. Value $1$ denotes the built-in engine. \\
 1 & byte string & Predicate type code within the engine. \\
-2 & byte string & Serialized parameters. \\
+2 & byte string or CBOR item & Serialized parameters (encoding depends on the predicate type; see below). \\
 \end{longtable}
 
-\noindent Built-in predicate type codes:
-\begin{longtable}{clp{8cm}}
-\textbf{Type Code} & \textbf{Predicate} & \textbf{Parameters} \\
+\noindent Throughout this section, $\mathsf{pk}$ denotes a 33-byte compressed secp256k1 public key (see Sec.~\ref{app:signature-format}), and timestamps $\tau \in \mathbb{T}$ are encoded as CBOR unsigned integers (seconds; same convention as $C^\mathsf{r}.t_r$). Hashes are 32 bytes.
+
+\subsection{Built-in Predicate Type Codes}
+
+\begin{longtable}{llp{10cm}}
+\textbf{Code} & \textbf{Predicate} & \textbf{Parameters encoding} \\
 \hline
-\texttt{0x01} & Signature predicate ($\predi_\mathsf{sig}$) & 33-byte compressed public key \\
-\texttt{0x02} & Burn predicate ($\predi_\mathsf{burn}$)     & 32-byte reason hash \\
-\texttt{0x03} & Timelock predicate ($\predi_\mathsf{tlock}$) & 2-element CBOR array;
-    element 0 is a byte string containing a 33-byte compressed public key,
-    element 1 is an unsigned integer representing a timestamp \\
+\endhead
+\texttt{0x01} & $\predi_\mathsf{sig}$ (Signature) & Recipient public key $\mathsf{pk}$. \\
+\texttt{0x02} & $\predi_\mathsf{burn}$ (Burn) & reason hash $h_\mathsf{reason}$. \\
+\texttt{0x03} & $\predi_\mathsf{tlock}$ (Timelock) & CBOR array[2]: $[\mathsf{pk}\ (33\text{-byte bstr}),\ \tau_\mathsf{min}\ (\text{uint})]$. \\
+\texttt{0x04} & $\predi_\mathsf{p2pkh}$ (Pay-to-Public-Key-Hash) & public key hash $h_\mathsf{pk}$. \\
+\texttt{0x05} & $\predi_\mathsf{p2sh}$ (Pay-to-Script-Hash) & predicate hash $h_\predi = H(\mathsf{CBOR}(\predi'))$. \\
+\texttt{0x06} & $\predi_\mathsf{msig}$ (Multi-signature) & CBOR array of $n$ entries of $\mathsf{pk}_i$. \\
+\texttt{0x07} & $\predi_\mathsf{tsig}$ (Threshold-signature) & CBOR array[2]: $[k\ (\text{uint}),\ [\mathsf{pk}_1,\ldots,\mathsf{pk}_n]]$; $1 \le k \le n$. \\
+\texttt{0x08} & $\predi_\mathsf{htlc}$ (Hashed Timelock) & CBOR array[4]: $[\mathsf{pk},\ \mathsf{pk}',\ y\ (32\text{-byte bstr}),\ \tau_\mathsf{max}\ (\text{uint})]$. \\
 \end{longtable}
 
-\noindent The \emph{recipient} field in transactions stores a hash of the predicate encoding: $H(\mathsf{CBOR}(\predi'))$.
+\subsection{Unlocking Argument Encoding}
+
+The unlocking argument $u$ accompanying a Unicity Service Request (Sec.~\ref{sec:request-validation}) is encoded according to the current owner's predicate type. Signatures are 65 bytes in the $R\|S\|V$ format defined in Sec.~\ref{app:signature-format}.
+
+\begin{longtable}{cp{10cm}}
+\textbf{Pred.} & \textbf{Unlocking argument encoding} \\
+\hline
+\endhead
+$\predi_\mathsf{sig}$    & signature $s$. \\
+$\predi_\mathsf{burn}$   & None; the predicate never evaluates to $1$ and no unlocking argument exists. \\
+$\predi_\mathsf{tlock}$  & signature $s$. \\
+$\predi_\mathsf{p2pkh}$  & CBOR array[2]: $[\mathsf{pk},\ s]$. \\
+$\predi_\mathsf{p2sh}$   & CBOR array[2]: $[\mathsf{CBOR}(\predi')\ (\text{bstr}),\ u'\ (\text{bstr})]$, where $\predi'$ is the revealed predicate and $u'$ is the unlocking argument encoded according to $\predi'$'s type. \\
+$\predi_\mathsf{msig}$   & CBOR array of $n$ signatures $[s_1, \ldots, s_n]$, in the same order as the parameter public keys. \\
+$\predi_\mathsf{tsig}$   & CBOR array of $k$ entries, each a CBOR array[2]: $[s_i,\ j_i\ (\text{uint})]$, where $j_i \in \{1,\ldots,n\}$ is the index of the parameter public key used to produce $s_i$. Indices must be pairwise distinct. \\
+$\predi_\mathsf{htlc}$   & CBOR array[2]: $[x\ (\text{bstr}),\ s\ (65\text{-byte bstr})]$. For the claim path $x$ is the preimage with $H(x) = y$; for the refund path $x$ may be empty ($\mathtt{h'}$). \\
+\end{longtable}
+
+\subsection{Recipient Field}
+
+The \emph{recipient} field in both mint transactions and transactions stores the next owner's predicate $\predi'$ encoded as in Sec.~\ref{app:predicate-encoding}.
+
+By convention, a mint transaction uses $\predi' = \predi_\mathsf{sig}(\mathsf{pk'})$ (type code \texttt{0x01}) for the first owner.
+
+If a sender wishes to commit only to a hash of a complex predicate (hiding its structure until spend time), they can do so explicitly by setting $\predi' = \predi_\mathsf{p2sh}(H(\mathsf{CBOR}(\predi'')))$ (Sec.~\ref{sec:p2sh}); the P2SH predicate is itself encoded as a first-class predicate in the recipient field.
 
 
 \section{Transaction Encoding}\label{app:transaction-encoding}
@@ -50,25 +81,27 @@ A predicate $\predi$ is encoded as a CBOR array with three elements:
 
 A mint transaction is encoded as a CBOR array with three elements:
 
-\begin{longtable}{clp{8cm}}
+\begin{longtable}{clp{10cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
-0 & byte string & Recipient: hash of the first owner's predicate encoding \\
-1 & byte string & Token identifier $\mathsf{id}$ (32 bytes) \\
-2 & CBOR array[2] & Auxiliary payload: $[$token type $\mathsf{ty}$ (byte string)$,$ auxiliary data $\auxd'$ (byte string)$]$ \\
+0 & byte string & Recipient: CBOR-encoded first owner's predicate $\mathsf{CBOR}(\predi')$ (Sec.~\ref{app:predicate-encoding}); by convention $\predi' = \predi_\mathsf{sig}(\mathsf{pk'})$ \\
+1 & byte string & Token Identifier $\mathsf{id}$ (32 bytes) \\
+2 & byte string & Token Type $\mathsf{ty}$ (32 bytes) \\
+3 & byte string & Mint Reason $\mathsf{reason}$ (optional, arbitrary length) \\
+4 & byte string & Auxiliary Payload $\auxd'$ (optional, arbitrary length) \\
 \end{longtable}
 
 
 \subsection{Transfer Transaction}
 
-A transfer transaction is encoded as a CBOR array with five elements:
+A transfer transaction (spending a mint or prior transaction output) is encoded as a CBOR array with five elements:
 
-\begin{longtable}{clp{8cm}}
+\begin{longtable}{clp{10cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
 0 & byte string & Source state hash $\sthash$ (32 bytes) \\
-1 & byte string & Lock script: CBOR-encoded current owner predicate $\predi$ \\
-2 & byte string & Recipient: hash of the next owner's predicate encoding \\
+1 & byte string & Unlocking Argument: CBOR-encoded $\mathsf{CBOR}(u)$ (Sec.~\ref{app:predicate-encoding}); must unlock the recipient predicate of the preceding transaction \\
+2 & byte string & Recipient: CBOR-encoded next owner's predicate $\mathsf{CBOR}(\predi')$ (Sec.~\ref{app:predicate-encoding}) \\
 3 & byte string & Random value $x$ (32 bytes) \\
 4 & byte string & Auxiliary data $\auxd'$ \\
 \end{longtable}
@@ -81,7 +114,7 @@ A certified transaction (mint or transfer) is encoded as a CBOR array with two e
 \begin{longtable}{clp{8cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
-0 & CBOR array & The transaction (mint or transfer encoding) \\
+0 & CBOR array & The transaction \\
 1 & CBOR structure & Inclusion proof $\pi$ \\
 \end{longtable}
 
@@ -94,7 +127,7 @@ A token is encoded as a CBOR array with two elements:
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
 0 & CBOR array & Certified mint transaction \\
-1 & CBOR array & Array of certified transfer transactions (may be empty) \\
+1 & CBOR array & Array of certified transactions (may be empty) \\
 \end{longtable}
 
 
@@ -121,14 +154,14 @@ For transfer transactions, the next state hash:
 \sthash' = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, x))
 \]
 
-\subsection{Transaction Hash}
+\subsection{Transaction Hash} % the leaf's value of aggregator tree
 
 For mint transactions:
 \[
-\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', \mathsf{id}, [\mathsf{ty}, \auxd']))
+\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', \mathsf{id}, [\mathsf{ty}, \mathsf{reason}, \auxd']))
 \]
 
-For transfer transactions:
+For transactions:
 \[
 \txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', x, \auxd'))
 \]
@@ -138,12 +171,12 @@ where $\mathsf{CBOR}(\ldots)$ denotes the CBOR array encoding of the arguments a
 
 \section{Signature Format}\label{app:signature-format}
 
-The signature predicate ($\predi_\mathsf{sig}$) uses ECDSA over the secp256k1 curve.
+All standard predicates that verify digital signatures ($\predi_\mathsf{sig}$, $\predi_\mathsf{p2pkh}$, $\predi_\mathsf{tlock}$, $\predi_\mathsf{msig}$, $\predi_\mathsf{tsig}$, $\predi_\mathsf{htlc}$) use ECDSA over the secp256k1 curve with the following formats.
 
 \begin{itemize}
-	\item \textbf{Public keys}: compressed format, 33 bytes (1-byte prefix $\texttt{0x02}$ or $\texttt{0x03}$, followed by 32-byte $x$-coordinate)
-	\item \textbf{Signatures}: 65 bytes ($R \mathbin{\|} S \mathbin{\|} V$), where $R$ and $S$ are 32-byte integers and $V$ is a 1-byte recovery identifier
-	\item \textbf{Signed message}: $\mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, \txhash))$
+	\item \textbf{Public keys}: compressed format, 33 bytes (1-byte prefix $\texttt{0x02}$ or $\texttt{0x03}$, followed by 32-byte $x$-coordinate).
+	\item \textbf{Signatures}: 65 bytes ($R \mathbin{\|} S \mathbin{\|} V$), where $R$ and $S$ are 32-byte integers and $V$ is a 1-byte recovery identifier.
+	\item \textbf{Signed message}: the predicate message hash $m = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, \txhash))$, as defined in Sec.~\ref{sec:predicate-framework}.
 \end{itemize}
 
 

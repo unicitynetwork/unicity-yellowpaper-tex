@@ -62,9 +62,10 @@ A \emph{certified mint transaction} is a tuple $(T_0, u_0, \pi_0)$, where $T_0 =
 	\item $D_\mathsf{mint}$ -- mint transaction data, containing:
 	\begin{itemize}
 		\item $\mathsf{id} \in \idtype$ -- token identifier (globally unique)
-		\item $\mathsf{ty}$ -- token type identifier, classifying the token category
+		\item $\mathsf{ty}$ -- token type, classifying the token category, defining its mandatory validation rules
+		\item $\mathsf{reason}$ -- Mint Reason, content depends on the token type, justifying the act of minting this token, e.g., proving the authority of minting tokens of this specific type
 		\item $\predi'$ -- spending predicate of the first owner
-		\item $\auxd'$ -- auxiliary data (application-specific; e.g. mint justification, asset values for fungible tokens)
+		\item $\auxd'$ -- auxiliary data (application-specific; e.g. asset value for fungible tokens)
 	\end{itemize}
 	\item $u_0$ -- unlocking argument (signature with $\mathsf{sk}_\mathsf{mint}$)
 	\item $\pi_0$ -- inclusion proof from the Unicity Service
