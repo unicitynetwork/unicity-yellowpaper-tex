@@ -177,14 +177,27 @@ The predicate evaluates to $\predi_\mathsf{name}(\mathsf{par}; \tau, m, u) \in \
 
 \subsubsection{Time Reference}\label{sec:time-extraction}
 
-The Unicity Service evaluates the predicate at the current system time $\tau$ when processing a certification request. Verifiers of certified transactions evaluate the predicate at the system time $\mathsf{time}(\pi)$ extracted from the inclusion proof.\index{$\tau$}
+\index{$\tau$}\index{time extraction}
+Predicate evaluation must be deterministic and transparent: the Unicity Service (at certification time) and any later verifier (re-validating from an inclusion proof) must agree on the exact value of $\tau$ used. The system therefore fixes $\tau$ per Aggregator round, with the value coming through BFT Core consensus.
 
-\index{time extraction}
-Given an inclusion proof $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, the \emph{system time} is extracted as
+\paragraph{Per-round fixed reference time.}
+The BFT Core's Unicity Seal carries a wall-clock round-creation timestamp $C^\mathsf{r}.t_r$ (Sec.~\ref{se:unicity-certificate}), with one-second precision, agreed by BFT Core consensus. When Aggregator assembles a certification request for its round $n{+}1$, it copies the timestamp from the Unicity Seal of the \emph{previous} UC it is extending into the Shard Input Record field $\mathcal{IR}.t$ (Sec.~\ref{shard-input-record}):
 \[
-	\mathsf{time}(\pi^\mathsf{inc}) \;=\; UC.C^\mathsf{r}.t_r
+	\mathsf{CR}.\mathcal{IR}.t \;\gets\; UC_-.C^\mathsf{r}.t_r
 \]
-where $t_r$ is the round creation time from the Unicity Seal (Sec.~\ref{se:unicity-certificate}). This is a wall-clock timestamp with one-second precision, set and verified by the BFT Core at the time the round is committed.
+where $UC_-$ is the last valid Unicity Certificate of that shard (which the Aggregator is \emph{extending}). This is the \emph{reference time for request validation} of the round being validated. All predicates evaluated against Unicity Service requests in that round use this single value as $\tau$.
+
+\paragraph{BFT Core enforcement.}
+The BFT Core verifies the Aggregator's choice of reference time as part of request admission (Sec.~\ref{certification-request}, check $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta,\sigma].UC_-.C^\mathsf{r}.t_r$).
+
+\paragraph{Extraction from inclusion proofs.}
+Given an inclusion proof $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, the \emph{system time} used for predicate evaluation is extracted as
+\[
+	\mathsf{time}(\pi^\mathsf{inc}) \;=\; UC.\mathcal{IR}.t
+\]
+This is the same value the Aggregator used when admitting the request -- the previous seal's $t_r$, copied into $\mathcal{IR}.t$ and BFT-verified. Re-validation by any later verifier is therefore deterministic and yields the identical predicate evaluation outcome.
+
+Note that $UC.\mathcal{IR}.t \ne UC.C^\mathsf{r}.t_r$ in general: $\mathcal{IR}.t$ is the reference time of the round \emph{being} certified (taken from the prior seal), whereas $C^\mathsf{r}.t_r$ is the wall-clock time at which the new seal itself was produced. Predicate evaluation uses $\mathcal{IR}.t$.
 
 \subsection{Standard Predicates}\label{sec:standard-predicates}
 
