@@ -4,7 +4,7 @@
 
 \emph{Sharding scheme}\index{shard!$\mathcal{SH}$ (sharding scheme)} $\mathcal{SH}$ of type $\mathbb{SH}$ is an irreducible prefix-free code (Appendix~\ref{app:ordering}).
 
-If $\mathscr{SH} = \{\emptystr\}$, then there is a single shard.
+If $\mathcal{SH} = \{\emptystr\}$, then there is a single shard.
 
 In the description of a sharding scheme, the shard identifiers are listed in the topological order $\sigma_1 \prec \sigma_2 \prec \ldots \prec \sigma_n$ (Appendix~\ref{app:ordering}).
 
@@ -30,7 +30,7 @@ It is strongly recommended to avoid using the identifier $0$, so that an uniniti
 
 Unicity network's aggregation layer consists of multiple \emph{partitions}\index{partition}. Each partition is identified by a partition identifier $\beta \in \mathbb{C}$\index{$\beta$ (partition identifier)}\index{$\mathbb{C}$ (partition identifier type)}. Each partition runs an unicity proving service instance (Unicity Service), or some other utility service instance\footnote{Roughly, this is similar to Layer 1, Layer 2 division of Ethereum type blockchains}.
 
-A partition may be divided into one or more \emph{shards}\index{shard} according to a sharding scheme (Sec.~\ref{sec:sharding}). Each shard is implemented by one or more \emph{aggregation layer nodes}\index{aggregation layer node} that maintain the SMT for their portion of the key space.
+A partition may be divided into one or more \emph{shards}\index{shard} according to a sharding scheme (Sec.~\ref{sec:sharding}). Each shard is implemented by one or more \emph{aggregation layer nodes}\index{aggregation layer node} that maintain the SMT for their portion of the key space, with the invariant $\forall$ leaves $(k,\cdot)$ in shard $\sigma$'s SMT, $f_\mathcal{SH}(k) = \sigma$.
 
 \section{Partition Type and Partition Type Descriptor}
 
@@ -76,6 +76,32 @@ A \emph{partition description record}\index{$\mathcal{CD}$ (partition descriptio
 
 Instead of $\mathcal{CD}.\mathcal{SD}.x$ (where $x$ is any field of $\mathcal{SD}$), we use the shorthand notation $\mathcal{CD}.x$.
 For standard type partitions, the field $\mathcal{CD}.\mathcal{SD}$ does not exist. In this case, the notation $\mathcal{CD}.x$ will mean the constant value of $x$ of the standard type $\mathsf{st}$.
+
+\section{Shard Split}\label{sec:shard-split-lifecycle}
+
+A shard $\sigma$ of partition $\beta$ may be split into two sub-shards $\sigma \| 0$ and $\sigma \| 1$ for scaling reasons. The split affects (i) the sharding scheme recorded in the partition description, (ii) the per-shard SMTs maintained by aggregation layer nodes, and (iii) the per-shard state tracked by the BFT Core in $\mathcal{SI}$. The underlying tree operation is $\textsc{rsmt\_shard\_split}$ (Appendix~\ref{sec:rsmt-shard-split-fn}).
+
+\paragraph{Partition description update.} Replacing $\sigma$ by $\sigma\|0,\sigma\|1$ changes the sharding scheme $\mathcal{SH}$ and thus $H(\mathcal{CD}[\beta])$, which appears as $\mathsf{dhash}$ in the Unicity Tree Certificate (Sec.~\ref{se:unicity-tree-certificate}). A split is configuration change executed at epoch change: a new partition description $\mathcal{CD}[\beta]'$ with the updated $\mathcal{SH}'$ is activated at an epoch boundary, and the split takes effect in the first round of the new epoch. Old unicity certificates remain verifiable against the $\mathcal{CD}[\beta]$ that was in force at the time of their issuance; verifiers must select the partition description record corresponding to $UC.C^\mathsf{r}.e_r$ (or, alternatively, authenticate it by its $\mathsf{dhash}$).
+
+\paragraph{Aggregator state handover.} At the epoch boundary of the split, the aggregation layer nodes serving the new shard $\sigma\|b$ initialize their SMT by applying
+\[
+T_{\sigma\|b} \gets \textsc{rsmt\_shard\_split}(T_\sigma,\, |\sigma|,\, b)
+\]
+to the last pre-split tree $T_\sigma$ (whose root was $\mathcal{SI}[\beta,\sigma].h_-$). Let $\rho_{\sigma\|b}$ denote the root hash of $T_{\sigma\|b}$; if the retained subtree is empty, $\rho_{\sigma\|b} = \zerohash$. No rehashing is required for the retained subtree (Appendix~\ref{sec:rsmt-shard-split}).
+
+\paragraph{BFT Core state handover.} At the same epoch boundary, the BFT Core replaces $\mathcal{SI}[\beta,\sigma]$ with two fresh entries $\mathcal{SI}[\beta,\sigma\|0]$ and $\mathcal{SI}[\beta,\sigma\|1]$. For each $b\in\{0,1\}$:
+\begin{itemize}
+	\item $\mathcal{SI}[\beta,\sigma\|b].n \gets \mathcal{SI}[\beta,\sigma].n$ and $\mathcal{SI}[\beta,\sigma\|b].e \gets \mathcal{SI}[\beta,\sigma].e + 1$;
+	\item $\mathcal{SI}[\beta,\sigma\|b].h_- \gets \rho_{\sigma\|b}$, i.e.\ the root hash of the retained sub-shard SMT derived deterministically from the parent's last-certified root;
+	\item $\mathcal{SI}[\beta,\sigma\|b].UC_- \gets \mathcal{SI}[\beta,\sigma].UC_-$ (the parent's last certificate remains the authenticated pre-state reference);
+	\item the statistical records are reset as at any epoch change, and the validator set and leader for each sub-shard are assigned by the orchestration mechanism.
+\end{itemize}
+
+\paragraph{First post-split round.} The first certification request issued by $\sigma\|b$ after the split must satisfy the usual round chaining invariants of Sec.~\ref{sec:request-validation} with respect to the seeded values above. Specifically:
+\[
+\mathsf{CR}.\mathcal{IR}.h' = \rho_{\sigma\|b} = \mathcal{SI}[\beta,\sigma\|b].h_-,
+\]
+and if no new leaves are inserted during that round then $\mathsf{CR}.\mathcal{IR}.h = \rho_{\sigma\|b}$ and the batch $B$ is empty. The consistency proof $\pi_{CP}$ for this bridging round is therefore the empty-batch proof (accepted by $\textsc{rsmt\_verify\_consistency}$ when $B = \langle\rangle$ and $h' = h$, Appendix~\ref{sec:rsmt-verify-consistency}). Subsequent rounds proceed normally. The correctness of the $\rho_{\sigma\|b}$ seeding is not proved on-chain by the child shard; it follows deterministically from the parent's last-certified root by Appendix~\ref{sec:rsmt-shard-split-fn}, which any validator can recompute.
 
 \section{Unicity Service Request}
 
@@ -619,7 +645,7 @@ $\mathsf{genST}(\sigma)$:
 		$\chi(\sigma) \gets H(\mathsf{genST}(\sigma\| 0) \mathbin{\|} \mathsf{genST}(\sigma\| 1))$ and \textbf{return} $\chi(\sigma)$
 \end{enumerate}
 
-For the single shard case, the shard tree is $\{(\emptystr, H(\mathcal{IRT}[\sigma])\}$, i.e. it only has a single record for the root hash $\chi(\emptystr)=H(\mathcal{IRT}[\sigma])$.
+For the single shard case, the shard tree is $\{(\emptystr, H(\mathcal{IRT}[\sigma]))\}$, i.e. it only has a single record for the root hash $\chi(\emptystr)=H(\mathcal{IRT}[\sigma])$.
 
 \subsection{Unicity Tree}\index{Unicity Tree}
 
