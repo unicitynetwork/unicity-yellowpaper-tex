@@ -165,7 +165,7 @@
   UnlockingArgument = Bytes  ;~$\mathsf{CBOR}(u)$ -- CBOR-encoded unlocking argument (see above)
   Recipient = Bytes  ;~$\mathsf{CBOR}(\nu')$ -- CBOR-encoded next owner predicate
                     ;~(use $\predi_\mathsf{p2sh}$ to commit only to a hash)
-  x = Bytes32  ;~$x \overset{\$}{\leftarrow}  \{0,1\}^{32}$ -- random value for state derivation
+  StateMask = Bytes32  ;~$x \overset{\$}{\leftarrow}  \{0,1\}^{128}$ -- random value for state derivation
   Data = Bytes  ;~$\auxd'$ -- auxiliary data (optional, arbitrary length)
   TransactionHash = Hash  ;~$h_\mathsf{tx} = H(D)$ -- hash of transaction data
   UnlockScript = Bytes  ;~$u$ -- unlocking argument (e.g. signature)

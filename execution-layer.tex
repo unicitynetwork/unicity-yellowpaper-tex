@@ -43,7 +43,9 @@ When a transaction with random value $x \gets \{0,1\}^\ell$ is executed, the nex
 \sthash' = H(\sthash, x)
 \]
 
-The randomness of $x$ ensures that the next state identifier $H(\predi', \sthash')$ is unpredictable, preventing the Unicity Service from linking consecutive states of the same token.
+The randomness of \emph{state mask}\index{state mask} $x$ ensures that the next state identifier $H(\predi', \sthash')$ is unpredictable, preventing the Unicity Service from linking consecutive states of the same token.
+
+The state mask $x$ MUST be sampled with at least 128 bits of min-entropy.
 
 \subsection{Token Structure}\label{sec:token-structure}
 

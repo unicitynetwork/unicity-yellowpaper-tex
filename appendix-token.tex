@@ -17,10 +17,23 @@ This appendix specifies the concrete encodings for the Unicity Token defined in 
 	The corresponding public key $\mathsf{pk}_\mathsf{mint}$ is the secp256k1 public key for $\mathsf{sk}_\mathsf{mint}$. The private key is intentionally public; the key pair exists solely to provide a uniform request interface with the Unicity Service.
 \end{itemize}
 
+\newcommand{\encpred}{\mathsf{EncPred}}
+\newcommand{\decpred}{\mathsf{DecorePred}}
 
 \section{Predicate Encoding}\label{app:predicate-encoding}
 
-This section specifies the wire encoding of the standard predicates defined in Sec.~\ref{sec:predicates}. A predicate $\predi$ is encoded as a CBOR array with three elements:
+A predicate is a value $\predi$ whose authority over a token state is defined by its canonical byte encoding
+\[
+\encpred(\predi) \in \{0,1\}^* .
+\]
+
+Predicate equality means byte equality of canonical encodings:
+\[
+\predi_1 = \predi_2 \quad\Longleftrightarrow\quad
+\encpred(\predi_1) = \encpred(\predi_2).
+\]
+
+The encoding $\encpred$ is implemented as encoding to a CBOR array with three top-level elements:
 
 \begin{longtable}{clp{8cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
@@ -65,6 +78,71 @@ $\predi_\mathsf{msig}$   & CBOR array of $n$ signatures $[s_1, \ldots, s_n]$, in
 $\predi_\mathsf{tsig}$   & CBOR array of $k$ entries, each a CBOR array[2]: $[s_i,\ j_i\ (\text{uint})]$, where $j_i \in \{1,\ldots,n\}$ is the index of the parameter public key used to produce $s_i$. Indices must be pairwise distinct. \\
 $\predi_\mathsf{htlc}$   & CBOR array[2]: $[x\ (\text{bstr}),\ s\ (65\text{-byte bstr})]$. For the claim path $x$ is the preimage with $H(x) = y$; for the refund path $x$ may be empty ($\mathtt{h'}$). \\
 \end{longtable}
+
+
+\subsection{Predicate Soundness}\label{app:predicate-soundness}
+
+The following rules must apply to all predicates, including user-defined, custom programmable predicates.
+
+
+\begin{enumerate}
+  \item \textbf{Canonical encoding.}
+    $\encpred$ MUST be deterministic, injective on valid predicates, and encoded using deterministic CBOR. A conforming decoder MUST reject non-canonical CBOR encodings, trailing bytes, duplicate map keys, invalid field counts, invalid field types, invalid public keys, invalid thresholds, and any type-specific malformed parameters.
+
+  \item \textbf{Round-trip stability.}
+    For every accepted predicate byte string $b$:
+    \[
+      \encpred(\decpred(b)) = b.
+    \]
+    For every valid predicate object $\predi$, repeated evaluations of $\encpred(\predi)$ MUST return identical bytes.
+
+  \item \textbf{Predicate immutability.}
+    The value used in defined protocol steps is the canonical byte string $\encpred(\predi)$, not an in-memory object or function. Implementations MUST store and compare this byte string.
+
+    \item \textbf{State identifier binding.}
+    The state identifier MUST be derived from exactly the same canonical predicate bytes that are authenticated by the unlocking argument:
+    \[
+      \mathsf{sid} =
+      \mathsf{SHA\text{-}256}(
+        \mathsf{CBOR}(\encpred(\predi), \sthash)
+      ).
+    \]
+    Verification of an inclusion proof for a transaction spending state $(\predi,\sthash)$ MUST reject unless the predicate and source state
+  hash contained in the certified request are byte-identical to the transaction's current-owner predicate and source state hash.
+
+    \item \textbf{Deterministic verification relation.}
+    Each predicate type defines a deterministic verification relation
+    \[
+      \mathsf{VerifyPred}(\predi, u, \sthash, \txhash, C) \in \{0,1\},
+    \]
+    where $u$ is the unlocking argument and $C$ is explicit public verification context, such as a certified timestamp if required. For fixed inputs, the result MUST be stable and MUST NOT depend on hidden local state, network calls, randomness, or implementation-specific
+  object identity.
+
+
+
+    \item \textbf{Unlocking Argument canonicality.}
+    Each unlocking argument $u$ MUST have a deterministic CBOR encoding and a predicate-type-specific decoder. The decoder MUST reject malformed, non-canonical, ambiguous, duplicate, out-of-range, or trailing-byte encodings. Re-encoding an accepted unlocking argument MUST reproduce the accepted byte string.
+
+    \item \textbf{No side effects by unlock argument.}
+    The unlocking argument MAY provide witnesses required by the predicate, such as signatures, public keys for P2PKH, scripts for P2SH, or hash preimages. It MUST NOT alter the current-owner predicate, source state hash, transaction hash, or state identifier. If $u$ reveals a hidden predicate $\predi'$ for P2SH, verification MUST first check:
+    \[
+      \mathsf{SHA\text{-}256}(\encpred(\predi')) = h_\predi
+    \]
+    before even trying to parse $\predi'$.
+
+    \item \textbf{Explicit public context.}
+    Predicates that depend on time, block height, round number, or certificate metadata MUST define precisely which certified public field is used. Such predicates MUST NOT depend on any external data not committed by spending Unicity Certificate.
+
+    \item \textbf{User-defined predicate safety.}
+    Extension engines MUST define:
+    \[
+      (\mathsf{engine},\mathsf{code},\mathsf{params},\mathsf{unlock},\mathsf{VerifyPred})
+    \]
+    with canonical encodings for both parameters and unlocking arguments. Extension predicates MUST satisfy the same determinism,
+  immutability, and round-trip requirements as built-in predicates.
+  \end{enumerate}
+
+  \noindent These requirements ensure that a relying party, wallet, SDK, and Unicity Service all derive the same state identifier and verify the same authorization statement.
 
 \subsection{Recipient Field}
 
