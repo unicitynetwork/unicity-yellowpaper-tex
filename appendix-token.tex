@@ -18,7 +18,7 @@ This appendix specifies the concrete encodings for the Unicity Token defined in 
 \end{itemize}
 
 \newcommand{\encpred}{\mathsf{EncPred}}
-\newcommand{\decpred}{\mathsf{DecorePred}}
+\newcommand{\decpred}{\mathsf{DecodePred}}
 
 \section{Predicate Encoding}\label{app:predicate-encoding}
 
@@ -157,7 +157,8 @@ If a sender wishes to commit only to a hash of a complex predicate (hiding its s
 
 \subsection{Mint Transaction}
 
-A mint transaction is encoded as a CBOR array with three elements:
+A mint transaction is encoded as a CBOR array with five elements, ordered as
+$D_\mathsf{mint} = (\predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd')$:
 
 \begin{longtable}{clp{10cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
@@ -236,7 +237,7 @@ For transfer transactions, the next state hash:
 
 For mint transactions:
 \[
-\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', \mathsf{id}, [\mathsf{ty}, \mathsf{reason}, \auxd']))
+\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd'))
 \]
 
 For transactions:

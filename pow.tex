@@ -158,7 +158,7 @@ Mining follows the standard PoW longest-chain paradigm. A miner:
 
 \subsubsection{Block Validation}\label{sec:pow-block-validation}
 
-The steps to validade a block are documented by Algorithm~\ref{alg:pow-validate}.
+The steps to validate a block are documented by Algorithm~\ref{alg:pow-validate}.
 
 \begin{algorithm}[!htbp]
   \caption{PoW Block Validation}\label{alg:pow-validate}
@@ -207,18 +207,18 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
     \caption{Block Reward Token.}\label{ta:pow-reward}
     \begin{tabular}{|p{4cm}|p{9.5cm}|}\hline
       Field & Value \\\hline\hline
+      Owner predicate ($\predi'$) & Miner's chosen spending predicate \\\hline
       Token identifier ($\mathsf{id}$) & $\mathsf{tokenId}_\mathsf{reward}$: the identifier whose hash $\ell_0 = H(\mathsf{tokenId}_\mathsf{reward})$ is committed via \texttt{payloadRoot} of the mined block \\\hline
       Token type ($\mathsf{ty}$) & $\mathsf{ALPHA}$ \\\hline
-      Value & $\Call{RewardRate}{h}$, the reward rate at block height $h$ \\\hline
-      Owner predicate ($\predi'$) & Miner's chosen spending predicate \\\hline
-      Mint justification ($\auxd'$) & Composite structure defined in Table~\ref{ta:pow-mint-justification} \\\hline
+      Mint reason ($\mathsf{reason}$) & Composite proof structure defined in Table~\ref{ta:pow-mint-reason} \\\hline
+      Auxiliary payload ($\auxd'$) & Initial fungible payload containing value $\Call{RewardRate}{h}$ for $\mathsf{ALPHA}$ at block height $h$ \\\hline
     \end{tabular}
   \end{center}
 \end{table}
 
 \begin{table}[!htbp]
   \begin{center}
-    \caption{Mint Justification for Block Reward Token.}\label{ta:pow-mint-justification}
+    \caption{Mint Reason for Block Reward Token.}\label{ta:pow-mint-reason}
     \begin{tabular}{|p{0.5cm}|p{3.2cm}|p{2.5cm}|p{7cm}|}\hline
       No & Field & Type & Description \\\hline\hline
       1. & Mined block & $B_h$ & The PoW block at height $h$, proving the reward claim is committed in the block \\\hline
@@ -242,13 +242,14 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
       \State \Comment{Step 2: Collect continuation blocks}
       \State $\mathsf{blocks} \gets \{B_i\}_{i=h+1}^{h'}$
       \State
-      \State \Comment{Step 3: Construct mint justification}
-      \State $\auxd' \gets (B_h, \mathsf{blocks}, \mathsf{cert}_\mathsf{FG})$
+      \State \Comment{Step 3: Construct mint reason and auxiliary payload}
+      \State $\mathsf{reason} \gets (B_h, \mathsf{blocks}, \mathsf{cert}_\mathsf{FG})$
+      \State $\auxd' \gets \{(\mathsf{ALPHA}, \Call{RewardRate}{h})\}$
       \State
       \State \Comment{Step 4: Construct mint transaction (Sec.~\ref{sec:mint-tx})}
       \State $\mathsf{id} \gets \mathsf{tokenId}_\mathsf{reward}$  \Comment{Preimage of $\ell_0$ committed in $B_h.\texttt{payloadRoot}$}
       \State $\predi' \gets \Call{OwnerPredicate}{\mathsf{sk}_\mathsf{miner}}$
-      \State $D_\mathsf{mint} \gets (\mathsf{id}, \mathsf{ALPHA}, \predi', \auxd')$
+      \State $D_\mathsf{mint} \gets (\predi', \mathsf{id}, \mathsf{ALPHA}, \mathsf{reason}, \auxd')$
       \State
       \State \Comment{Step 5: Submit to Unicity Service}
       \State $\sthash \gets H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
@@ -260,13 +261,13 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
   \end{algorithmic}
 \end{algorithm}
 
-Verification of a reward token by a recipient requires checking the mint justification:
+Verification of a reward token by a recipient requires checking the mint reason and auxiliary payload:
 
 \begin{algorithm}[!htbp]
-  \caption{Block Reward Mint Justification Verification}\label{alg:pow-reward-verify}
+  \caption{Block Reward Mint Reason Verification}\label{alg:pow-reward-verify}
   \begin{algorithmic}[0]
     \Function{VerifyRewardMint}{$D_\mathsf{mint}, \mathcal{T}$}
-      \State $(B_h, \mathsf{blocks}, \mathsf{cert}_\mathsf{FG}) \gets D_\mathsf{mint}.\auxd'$
+      \State $(B_h, \mathsf{blocks}, \mathsf{cert}_\mathsf{FG}) \gets D_\mathsf{mint}.\mathsf{reason}$
       \State
       \State \Comment{1. Verify the mined block is valid and contains the reward claim}
       \State ensure($\Call{ValidatePoWBlock}{B_h, \mathcal{T}}$)
@@ -287,7 +288,8 @@ Verification of a reward token by a recipient requires checking the mint justifi
       \State ensure($\mathsf{cert}_\mathsf{FG}$ certifies $\mathsf{prev}$) \Comment{Certified block matches chain tip}
       \State
       \State \Comment{4. Verify reward value is correct for the block height}
-      \State ensure($D_\mathsf{mint}.\mathsf{value} = \Call{RewardRate}{B_h.\mathsf{height}}$)
+      \State ensure($D_\mathsf{mint}.\mathsf{ty} = \mathsf{ALPHA}$)
+      \State ensure($\Call{ValueOf}{D_\mathsf{mint}.\auxd', \mathsf{ALPHA}} = \Call{RewardRate}{B_h.\mathsf{height}}$)
       \State \Return $1$
     \EndFunction
   \end{algorithmic}

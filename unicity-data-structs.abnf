@@ -84,7 +84,7 @@
 ; Leaf-anchored: hashes commit to full 256-bit key and bifurcation depth.
 ; LSB-first bit addressing.
 
-  StateIdentifier = Bytes32  ;~$\mathsf{sid} = H(\nu, h_{\mathsf{st}})$ -- SMT leaf key
+  StateIdentifier = Bytes32  ;~$\mathsf{sid} = H(\mathsf{CBOR}(\nu, h_{\mathsf{st}}))$ -- SMT leaf key
   LeafData = TransactionHash    ;~$h_{\mathsf{tx}}$ -- SMT leaf value
   SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, h_{\mathsf{tx}})$
 
@@ -148,10 +148,10 @@
   MintTransaction = Recipient TokenId TokenType MintReason Data
       ;~$T\_0 = (\nu', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd')$ -- CBOR array[5]
 
-  TransferTransaction = SourceStateHash UnlockingArgument Recipient x Data
+  TransferTransaction = SourceStateHash UnlockingArgument Recipient StateMask Data
       ;~$T = (h_\mathsf{st}, u, \nu', x, \auxd')$ -- CBOR array[5]
 
-  CertifiedMintT ransaction = MintTransaction InclusionProof  ;~$(T_0, \pi)$ -- CBOR array[2]
+  CertifiedMintTransaction = MintTransaction InclusionProof  ;~$(T_0, \pi)$ -- CBOR array[2]
   CertifiedTransferTransaction = TransferTransaction InclusionProof  ;~$(T, \pi)$ -- CBOR array[2]
 
   Token = CertifiedMintTransaction *CertifiedTransferTransaction
@@ -160,13 +160,13 @@
 ; --- Fields ---
   TokenId = Bytes32  ;~$\mathsf{id}$ -- globally unique token identifier (32 bytes)
   TokenType = Bytes32  ;~$\mathsf{ty}$ -- token type classifier (32 bytes)
-  MintReason = Bytes  ;~$\mathsf{reason}$ -- mint justification (optional, arbitrary length)
+  MintReason = Bytes  ;~$\mathsf{reason}$ -- mint reason (justification)
   SourceStateHash = Hash  ;~$h_\mathsf{st}$ -- current state hash (32 bytes)
   UnlockingArgument = Bytes  ;~$\mathsf{CBOR}(u)$ -- CBOR-encoded unlocking argument (see above)
   Recipient = Bytes  ;~$\mathsf{CBOR}(\nu')$ -- CBOR-encoded next owner predicate
                     ;~(use $\predi_\mathsf{p2sh}$ to commit only to a hash)
-  StateMask = Bytes32  ;~$x \overset{\$}{\leftarrow}  \{0,1\}^{128}$ -- random value for state derivation
-  Data = Bytes  ;~$\auxd'$ -- auxiliary data (optional, arbitrary length)
+  StateMask = Bytes32  ;~$x \overset{\$}{\leftarrow}  \{0,1\}^{256}$ -- random value for state derivation
+  Data = Bytes  ;~$\auxd'$ -- auxiliary payload (optional, arbitrary length)
   TransactionHash = Hash  ;~$h_\mathsf{tx} = H(D)$ -- hash of transaction data
   UnlockScript = Bytes  ;~$u$ -- unlocking argument (e.g. signature)
 
@@ -180,7 +180,7 @@
 ; --- Hash Derivations ---
   ; $h_\mathsf{st} = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$~-- mint source state hash
   ; $h_\mathsf{st}' = H(h_\mathsf{st}, x)$~-- next state hash
-  ; $h_\mathsf{tx} = H(\mathsf{recipient}, \mathsf{id}, [\mathsf{ty}, \mathsf{reason}, \auxd'])$~-- mint transaction hash (value in Unicity Service)
+  ; $h_\mathsf{tx} = H(\mathsf{recipient}, \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd')$~-- mint transaction hash (value in Unicity Service)
   ; $h_\mathsf{tx} = H(\mathsf{recipient}, x, \auxd')$~-- transfer transaction hash (value in Unicity Service)
 
 ; --- Fungible Token Structures ---
