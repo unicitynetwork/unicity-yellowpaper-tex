@@ -488,6 +488,48 @@ Upon receiving a token, the maximalist verifier checks:
   \item The PoW block containing the relevant checkpoint has accumulated sufficient confirmations ($d_\mathsf{maxi}$) to be considered final under the longest chain rule.
 \end{enumerate}
 
+The procedure is summarized in Algorithm~\ref{alg:maxi-verify}. It is a wrapper around the standard token verification algorithm of Sec.~\ref{sec:token-verification}: it derives the Unicity Trust Base $\mathcal{T}_\mathsf{PoW}$ from the live PoW chain, then calls $\mathsf{VerifyToken}$. The PoW validator may be operated by the verifier locally or hosted by a trusted entity; in either case it is accessed over the standard PoW node RPC interface.
+
+\begin{algorithm}[!htbp]
+  \caption{Maximalist Token Verification}\label{alg:maxi-verify}
+  \begin{algorithmic}[0]
+    \State \emph{State}:
+    \State $\mathcal{N}_\mathsf{PoW}$: handle to a live, fully synced PoW validator
+    \State $d_\mathsf{maxi}$: required confirmation depth
+    \State
+    \Function{VerifyTokenMaxi}{$\mathcal{L}$}
+      \State \Comment{Input: token $\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$}
+      \State
+      \State \Comment{Step 1: Identify the latest UC referenced by the token}
+      \State $\pi_n \gets$ inclusion proof component of $T_n^\mathsf{cert}$ \Comment{Last transaction in the chain}
+      \State $UC^\star \gets \pi_n.UC$
+      \State $\alpha \gets UC^\star.C^\mathsf{r}.\alpha$ \Comment{Network identifier}
+      \State $e^\star \gets UC^\star.C^\mathsf{r}.e_r$ \Comment{BFT Core epoch in which $UC^\star$ was issued}
+      \State
+      \State \Comment{Step 2: Wait for epoch $e^\star$ closure to be checkpointed and PoW-finalized}
+      \State $h^\star \gets \bot$;\quad $h_\mathsf{tip} \gets 0$
+      \While{$h^\star = \bot \;\textbf{or}\; h_\mathsf{tip} - h^\star < d_\mathsf{maxi}$}
+        \State \Call{WaitForNewBlocks}{$\mathcal{N}_\mathsf{PoW}$}
+        \State $h_\mathsf{tip} \gets \mathcal{N}_\mathsf{PoW}.\Call{GetChainTip}{}.\mathsf{height}$
+        \State \Comment{Lowest PoW height carrying a $T_e$ with $e \ge e^\star{+}1$, or $\bot$ if none}:
+        \State $h^\star \gets \mathcal{N}_\mathsf{PoW}.\Call{HeightOfFirstCheckpoint}{e \ge e^\star + 1}$
+      \EndWhile
+      \State
+      \State \Comment{Step 3: Pull the locally verified Trust Base from the PoW node}
+      \State $\mathcal{T}_\mathsf{PoW} \gets \mathcal{N}_\mathsf{PoW}.\Call{GetVerifiedTrustBase}{\alpha}$
+        \Comment{Entries reconstructed from PoW snapshots (Sec.~\ref{sec:snapshot-publishing})}
+      \State ensure($\mathcal{T}_\mathsf{PoW}.\alpha = \alpha$)
+      \State ensure($e^\star \le \max\{e : T_e \in \mathcal{T}_\mathsf{PoW}\} - 1$) \Comment{Token's epoch is closed in $\mathcal{T}_\mathsf{PoW}$}
+      \State
+      \State \Comment{Step 4: Standard token verification under the PoW-derived trust base}
+      \State ensure($\Call{VerifyToken}{\mathcal{L}, \mathcal{T}_\mathsf{PoW}}$) \Comment{Algorithm of Sec.~\ref{sec:token-verification}}
+      \State
+      \State \Comment{Step 5: Validate aggregator node's trustless operation based on consistency proofs}
+      \State ensure($\Call{VerifyConsistency}{\mathcal{L}, \mathcal{N}_\mathsf{PoW}, \mathcal{T}_\mathsf{PoW}}$)
+      \State \Return $1$
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
 
 
 \subsection{Practical Token Verification}\label{sec:practical-verification}
@@ -496,7 +538,7 @@ In the practical\index{practical verification} model, the root of trust is the v
 
 The Unicity Trust Base is compact: it grows by one entry per BFT Core epoch (a few aggregate signatures per week). A verifier initializes by obtaining and verifying $\mathcal{T}$; subsequent updates are incremental.
 
-Token verification is fast: a transaction is finalized and an inclusion proof returned within a few seconds of submission to the Unicity Service. The recipient can verify the token independently, without consulting external data beyond the previously obtained $\mathcal{T}$.
+Token verification is fast: a transaction is finalized and an inclusion proof returned within a few seconds of submission to the Unicity Service. The recipient runs the standard $\mathsf{VerifyToken}$ algorithm of Sec.~\ref{sec:token-verification} directly against the locally maintained $\mathcal{T}$, without consulting external data beyond the previously obtained Trust Base.
 
 
 \subsection{Comparison}\label{sec:trust-comparison}
