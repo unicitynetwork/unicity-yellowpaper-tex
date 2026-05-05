@@ -146,7 +146,7 @@ Mining follows the standard PoW longest-chain paradigm. A miner:
   \item Selects the current chain tip as the parent block.
   \item Prepares the payload commitments (Sec.~\ref{sec:pow-payload}):
     \begin{enumerate}[nosep]
-      \item Chooses a unique reward token identifier $\mathsf{tokenId}_\mathsf{reward}$ and stores it (e.g., by using a pseudo-random seed and a counter).
+      \item Chooses a reward token identifier $\mathsf{tokenId}_\mathsf{reward}$ unique within the network identifier $\alpha$ and stores it (e.g., by using a pseudo-random seed and a counter).
       \item Obtains the new Unicity Trust Base entry $T_e$ if one is published, validates it against the authentic Unicity Trust Base (Sec.~\ref{sec:snapshot-publishing}); otherwise uses the CBOR nil value.
       \item Computes $\texttt{payloadRoot} \;=\; H(H(\mathsf{tokenId}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e)))$.
     \end{enumerate}
@@ -186,6 +186,7 @@ The steps to validate a block are documented by Algorithm~\ref{alg:pow-validate}
       \If{$\mathsf{cbor\_Te} \ne \Call{CborNil}{}$}
         \State $T_e \gets \Call{CborDecode}{\mathsf{cbor\_Te}}$
         \State $T_{e-1} \gets \mathcal{T}_\mathsf{local}[T_e.e - 1]$ \Comment{Last locally verified entry}
+        \State ensure($T_e.\alpha = T_{e-1}.\alpha = \mathcal{T}_\mathsf{local}.\alpha$) \Comment{Checkpoint is for the same network}
         \State ensure($T_e.e = T_{e-1}.e + 1$) \Comment{Sequential epoch number}
         \State ensure($T_e.h_{e-1} = H(T_{e-1})$) \Comment{Hash chain linkage}
         \State ensure($\Call{VerifySig}{T_e.s_{e-1},\; T_e,\; T_{e-1}.\mathcal{V}}$) \Comment{Signed by previous validators}
@@ -207,9 +208,10 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
     \caption{Block Reward Token.}\label{ta:pow-reward}
     \begin{tabular}{|p{4cm}|p{9.5cm}|}\hline
       Field & Value \\\hline\hline
+      Network identifier ($\alpha$) & The Unicity network instance in which the reward token can be minted \\\hline
+      Token type ($\mathsf{ty}$) & $\mathsf{ALPHA}$ \\\hline
       Owner predicate ($\predi'$) & Miner's chosen spending predicate \\\hline
       Token identifier ($\mathsf{id}$) & $\mathsf{tokenId}_\mathsf{reward}$: the identifier whose hash $\ell_0 = H(\mathsf{tokenId}_\mathsf{reward})$ is committed via \texttt{payloadRoot} of the mined block \\\hline
-      Token type ($\mathsf{ty}$) & $\mathsf{ALPHA}$ \\\hline
       Mint reason ($\mathsf{reason}$) & Composite proof structure defined in Table~\ref{ta:pow-mint-reason} \\\hline
       Auxiliary payload ($\auxd'$) & Initial fungible payload containing value $\Call{RewardRate}{h}$ for $\mathsf{ALPHA}$ at block height $h$ \\\hline
     \end{tabular}
@@ -232,7 +234,7 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
 \begin{algorithm}[!htbp]
   \caption{Block Reward Token Minting Process}\label{alg:pow-reward}
   \begin{algorithmic}[0]
-    \Function{MintRewardToken}{$B_h, \mathsf{sk}_\mathsf{miner}, \mathcal{T}$}
+    \Function{MintRewardToken}{$\alpha, B_h, \mathsf{sk}_\mathsf{miner}, \mathcal{T}$}
       \State \Comment{Precondition: $B_h$ is a valid PoW block mined by this miner}
       \State
       \State \Comment{Step 1: Wait for Finality Gadget certification}
@@ -249,12 +251,12 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
       \State \Comment{Step 4: Construct mint transaction (Sec.~\ref{sec:mint-tx})}
       \State $\mathsf{id} \gets \mathsf{tokenId}_\mathsf{reward}$  \Comment{Preimage of $\ell_0$ committed in $B_h.\texttt{payloadRoot}$}
       \State $\predi' \gets \Call{OwnerPredicate}{\mathsf{sk}_\mathsf{miner}}$
-      \State $D_\mathsf{mint} \gets (\predi', \mathsf{id}, \mathsf{ALPHA}, \mathsf{reason}, \auxd')$
+      \State $D_\mathsf{mint} \gets (\alpha, \predi', \mathsf{id}, \mathsf{ALPHA}, \mathsf{reason}, \auxd')$
       \State
       \State \Comment{Step 5: Submit to Unicity Service}
       \State $\sthash \gets H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
       \State $\txhash \gets H(D_\mathsf{mint})$
-      \State $u_0 \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, H(\sthash, \txhash))$
+      \State $u_0 \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, H(\sthash, \txhash))$  \Comment{Known constants, network specific}
       \State $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, u_0)$
       \State \Call{SubmitToUnicityService}{$Q$}
     \EndFunction
@@ -284,10 +286,12 @@ Verification of a reward token by a recipient requires checking the mint reason 
       \State
       \State \Comment{3. Verify Finality Gadget certificate covers the chain tip}
       \State ensure($\Call{VerifyUnicityCert}{\mathsf{cert}_\mathsf{FG}, \mathcal{T}}$)
+      \State ensure($\mathsf{cert}_\mathsf{FG}.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$)
       \State ensure($\mathsf{cert}_\mathsf{FG}.\beta = \beta_\mathsf{FP}$) \Comment{FG partition}
       \State ensure($\mathsf{cert}_\mathsf{FG}$ certifies $\mathsf{prev}$) \Comment{Certified block matches chain tip}
       \State
       \State \Comment{4. Verify reward value is correct for the block height}
+      \State ensure($D_\mathsf{mint}.\alpha = \mathcal{T}.\alpha$)
       \State ensure($D_\mathsf{mint}.\mathsf{ty} = \mathsf{ALPHA}$)
       \State ensure($\Call{ValueOf}{D_\mathsf{mint}.\auxd', \mathsf{ALPHA}} = \Call{RewardRate}{B_h.\mathsf{height}}$)
       \State \Return $1$
@@ -347,7 +351,7 @@ Snapshot publishing\index{snapshot publishing} is the process by which BFT Core 
     \State
     \Function{PrepareCheckpoint}{}
       \State \Comment{Query for new Trust Base entries}
-      \State $\mathcal{T}_\mathsf{new} \gets \Call{GetTrustBase}{\alpha, e_\mathsf{latest}+1}$
+      \State $\mathcal{T}_\mathsf{new} \gets \Call{GetTrustBase}{\mathcal{T}_\mathsf{local}.\alpha, e_\mathsf{latest}+1}$
         \Comment{Via REST API from BFT Core / aggregation nodes}
       \If{$\mathcal{T}_\mathsf{new} = \NULL$}
         \State \Return $\Call{CborNil}{}$ \Comment{No new checkpoint; payload leaf $\ell_1 = H(\mathsf{cbor}(\bot))$}
@@ -355,6 +359,7 @@ Snapshot publishing\index{snapshot publishing} is the process by which BFT Core 
       \State
       \State \Comment{Validate each new entry against the local Trust Base}
       \ForAll{$T_e \in \mathcal{T}_\mathsf{new}$}
+        \State ensure($T_e.\alpha = \mathcal{T}_\mathsf{local}.\alpha$) \Comment{Trust Base entry belongs to this network}
         \State ensure($T_e.e = e_\mathsf{latest} + 1$) \Comment{Sequential epochs}
         \State ensure($T_e.h_{e-1} = H(\mathcal{T}_\mathsf{local}[e_\mathsf{latest}])$) \Comment{Hash chain}
         \State ensure($\Call{VerifySig}{T_e.s_{e-1}, T_e, \mathcal{T}_\mathsf{local}[e_\mathsf{latest}].\mathcal{V}}$)

@@ -10,7 +10,7 @@ In the description of a sharding scheme, the shard identifiers are listed in the
 
 Every sharding scheme $\mathcal{SH}$ induces a sharding function $f_\mathcal{SH}\colon \idtype\to \mathcal{SH}$. The shard $f_\mathcal{SH}(\mathsf{sid})$ responsible for recording a token state with identifier $\mathsf{sid}$ is the shard whose identifier $\sigma_i$ is a prefix of $\mathsf{sid}$. With $\mathcal{SH}$ an irreducible prefix-free code, there is exactly one such $\sigma_i$.
 
-\section{Networks}
+\section{Networks}\label{sec:networks}
 
 In practice, there may be several instances of Unicity networks, each consisting of its own Consensus Layer and its own set of partitions. Each such network will have an identifier $\alpha$\index{$\alpha$ (network identifier)}:
 
@@ -392,9 +392,10 @@ This function authenticates the certificate chain itself. It does not, by itself
 \textbf{Computation}:
 
 \begin{algorithmic}[0]
+	\State ensure($UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$)
 	\State $r\gets \mathsf{CompShardTreeCert}(UC.C^\mathsf{shard}, UC.IR, UC.h_t)$
 	\State $r\gets \mathsf{CompUnicityTreeCert}(UC.C^\mathsf{uni}, r)$
-	\State \Return $\mathsf{VerifyUnicitySeal}(r, C^\mathsf{r}, \mathcal{T}) = 1$
+	\State \Return $\mathsf{VerifyUnicitySeal}(r, UC.C^\mathsf{r}, \mathcal{T}) = 1$
 \end{algorithmic}
 
 
@@ -417,7 +418,7 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 \textbf{Input}:
 \begin{enumerate}
 	\item $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$ -- inclusion proof
-	\item $\mathcal{CD}_\beta$ -- authenticated partition description of the partition identified by $UC.C^\mathsf{uni}.\beta$
+	\item $\mathcal{CD}_\beta$ -- partition description of the partition identified by $UC.C^\mathsf{uni}.\beta$
 	\item $\mathcal{T}$ -- trust base
 \end{enumerate}
 
@@ -425,7 +426,8 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
-	\State ensure($H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
+	\State ensure($UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$) \Comment{Certificate belongs to the same network as the trust base}
+	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
 	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
 	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
 	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Proof comes from the right shard}
@@ -459,7 +461,8 @@ $\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function 
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
-	\State ensure($H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
+	\State ensure($UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$) \Comment{Certificate belongs to the same network as the trust base}
+	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
 	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
 	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
 	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Proof comes from the right shard}
@@ -675,7 +678,7 @@ Unicity Tree is an indexed Merkle tree that aggregates the state of all partitio
 
 \emph{State of the BFT Core}\index{BFT Core!BFT Core state} is a tuple $(\alpha, n, e, r_-, \mathcal{T}, \mathcal{C}, \mathcal{CD}, \mathcal{SI})$, where:
 \begin{enumerate}
-	\item $\alpha$ -- network identifier of type $\alpha$
+	\item $\alpha$ -- network identifier of type $\mathbb{A}$
 	\item $n$ -- BFT Core's round number of type $\uint{64}$
 	\item $e$ -- BFT Core's epoch number of type $\uint{64}$
 	\item $r_-$ -- previous root hash of the unicity tree of type $\hashtype$

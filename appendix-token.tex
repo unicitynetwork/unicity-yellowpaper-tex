@@ -4,13 +4,15 @@ This appendix specifies the concrete encodings for the Unicity Token defined in 
 
 \section{Constants}\label{app:el-constants}
 
+The Unicity Mainnet ($\alpha = 1$) MUST use following public constants. Other networks MAY use the same.
+
 \begin{itemize}
 	\item $\mathsf{MINT\_SUFFIX} = \mathsf{SHA\text{-}256}(\texttt{"TOKENID"})$ -- a fixed 32-byte domain separator used to derive the source state hash of mint transactions.
 	\item $\mathsf{MINTER\_SECRET}$ = \\
 	  \hspace*{10mm}\texttt{0x495f414d5f554e4956455253414c5f4d494e5445525f464f525f} \\
 	  \hspace*{10mm} (ASCII: \texttt{"I\_AM\_UNIVERSAL\_MINTER\_FOR\_"}) \\
 	  -- a fixed 26-byte constant used to derive deterministic minting key pairs.
-	\item The minting key pair for a token with identifier $\mathsf{id}$ is derived as:
+	\item The minting key pair for a token with network identifier $\alpha$ and token identifier $\mathsf{id}$ is derived as:
 	\[
 	\mathsf{sk}_\mathsf{mint} = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{MINTER\_SECRET}, \mathsf{id}))
 	\]
@@ -157,17 +159,18 @@ If a sender wishes to commit only to a hash of a complex predicate (hiding its s
 
 \subsection{Mint Transaction}
 
-A mint transaction is encoded as a CBOR array with five elements, ordered as
-$D_\mathsf{mint} = (\predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd')$:
+A mint transaction is encoded as a CBOR array with six elements, ordered as
+$D_\mathsf{mint} = (\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd')$:
 
 \begin{longtable}{clp{10cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
-0 & byte string & Recipient: CBOR-encoded first owner's predicate $\mathsf{CBOR}(\predi')$ (Sec.~\ref{app:predicate-encoding}); by convention $\predi' = \predi_\mathsf{sig}(\mathsf{pk'})$ \\
-1 & byte string & Token Identifier $\mathsf{id}$ (32 bytes) \\
-2 & byte string & Token Type $\mathsf{ty}$ (32 bytes) \\
-3 & byte string & Mint Reason $\mathsf{reason}$ (optional, arbitrary length) \\
-4 & byte string & Auxiliary Payload $\auxd'$ (optional, arbitrary length) \\
+0 & unsigned integer & Network Identifier $\alpha$ (Sec.~\ref{sec:networks}) \\
+1 & byte string & Recipient: CBOR-encoded first owner's predicate $\mathsf{CBOR}(\predi')$ (Sec.~\ref{app:predicate-encoding}); by convention $\predi' = \predi_\mathsf{sig}(\mathsf{pk'})$ \\
+2 & byte string & Token Identifier $\mathsf{id}$ (32 bytes; unique within network $\alpha$) \\
+3 & byte string & Token Type $\mathsf{ty}$ (32 bytes) \\
+4 & byte string & Mint Reason $\mathsf{reason}$ (optional, arbitrary length) \\
+5 & byte string & Auxiliary Payload $\auxd'$ (optional, arbitrary length) \\
 \end{longtable}
 
 
@@ -237,7 +240,7 @@ For transfer transactions, the next state hash:
 
 For mint transactions:
 \[
-\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd'))
+\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd'))
 \]
 
 For transactions:
