@@ -511,40 +511,20 @@ $\mathsf{VerifyConsistencyProof}$ -- consistency proof verification function of 
 
 The verification algorithm ($\textsc{rsmt\_verify\_consistency}$) is defined in Appendix~\ref{sec:rsmt-verify-consistency}.
 
-The intended proof system properties are as follows. Specified algorithms enforce Items~1--4 below. Item~5 is a stronger structural property that is intentionally skipped.
-\begin{enumerate}
-	\item \textbf{Completeness}: If an honest aggregation layer node starts from the tree committed by $h'$ and inserts exactly the batch $B$, then it can produce $\pi_{CP}$ such that $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$.
+The proof system must enforce the following property:
+
+\begin{itemize}
 	\item \textbf{Soundness of prior-state preservation}: Let $M_0, M_1 \colon \bytes{32} \to \hashtype\opt$ denote the partial maps committed by $h'$ and $h$, respectively. If $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$, then
 	\[
 		\forall\, \mathsf{sid} \in \bytes{32}\colon\; M_0(\mathsf{sid}) \ne \bot \Rightarrow M_1(\mathsf{sid}) = M_0(\mathsf{sid}).
 	\]
 	That is, no previously committed SMT leaf can be deleted or modified.
-	\item \textbf{Batch incorporation}: If $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$, then
-	\[
-		\forall\, i \in \{1, \ldots, j\}\colon\; M_1(\mathsf{sid}_i) = h_{\mathsf{tx},i}.
-	\]
-	Thus every declared inserted leaf appears in the post-state under the key determined by its state identifier.
-	\item \textbf{No phantom insertions}: If $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$, then
-	\[
-		\begin{aligned}
-			\forall\, \mathsf{sid} \in \bytes{32}\colon\;& M_1(\mathsf{sid}) \ne \bot \land M_0(\mathsf{sid}) = \bot \\
-			&\Rightarrow \exists\, i \in \{1, \ldots, j\}\colon\; (\mathsf{sid}, M_1(\mathsf{sid})) = (\mathsf{sid}_i, h_{\mathsf{tx},i}).
-		\end{aligned}
-	\]
-	Therefore every new post-state leaf is justified by the declared batch.
-	\item \textbf{Canonical inserts} (stronger structural property): Let $\mathsf{root}_{\mathsf{canon}}(M)$ denote the root hash of the unique well-formed radix sparse Merkle tree induced by a finite map $M$. The strongest desirable statement is
-	\[
-		h = \mathsf{root}_{\mathsf{canon}}(M_0 \cup B).
-	\]
-	Equivalently, the post-state topology is uniquely determined by the committed keys and every leaf in the domain of $M_0 \cup B$ admits a valid inclusion certificate against $h$.
-\end{enumerate}
 
-Equivalently, if $B$ is interpreted as a finite partial map with pairwise distinct keys disjoint from the domain of $M_0$, then acceptance of $\pi_{CP}$ implies
-\[
-	M_1 = M_0 \cup B.
-\]
+\end{itemize}
 
-The specification deliberately omits Item~5 for efficiency reasons. In the worst case, a Byzantine aggregation layer node may obtain certification for a non-canonical post-state root that still preserves all previously committed leaves and incorporates the declared batch, yet leaves some committed leaves without valid inclusion certificates. Thus the loss is in structural canonicity and proof availability, not in prior-state preservation or batch incorporation.
+This property is required to avoid potential double-spending with the help of malicious operators.
+
+The security model where an untrusted Aggregator machine generates (non-)inclusion proofs, anchored by committed root hashes, allows us to avoid stronger consistency guarantees like \emph{completeness} (free service is not a big issue), \emph{batch incorporation} (failure to inserting some leaves results in denial of service at worst), \emph{batch binding} (inclusion proofs do it better), \emph{no phantom insertions} (free service), \emph{canonical inserts} (denial of service at worst).
 
 
 %%%%%%%% BFT Core
