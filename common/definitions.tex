@@ -50,3 +50,21 @@
 \newcommand{\unisrv}{\mathsf{US}}
 \newcommand{\certver}{{\mathcal{V}_\mathsf{cert}}}
 \newcommand{\pinc}{{\pi_\mathsf{inc}}}
+\newcommand{\encpred}{\mathsf{EncPred}}
+\newcommand{\decpred}{\mathsf{DecodePred}}
+
+%
+% Network-id correction markup (yellow highlight for in-progress edits).
+% Inline:  \nidcorr{...}  — yellow background, intended for short tokens
+%                            that fit on one line.
+% Block:   \begin{nidblock} ... \end{nidblock}
+%                          — yellow left margin bar, page-breakable, math/list-safe.
+%
+\usepackage{framed}
+\definecolor{nidyellow}{rgb}{1,0.92,0.4}
+\newcommand{\nidcorr}[1]{{\setlength{\fboxsep}{1pt}\colorbox{nidyellow}{#1}}}
+\newenvironment{nidblock}%
+  {\par\smallskip%
+   \def\FrameCommand{{\color{nidyellow}\vrule width 4pt}\hspace{6pt}}%
+   \MakeFramed{\advance\hsize-\width\FrameRestore}}%
+  {\endMakeFramed\par\smallskip}

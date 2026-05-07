@@ -60,15 +60,16 @@ where $T_0^\mathsf{cert}$ is a certified mint transaction and $T_i^\mathsf{cert}
 \index{mint transaction!structure}
 A \emph{certified mint transaction} is a tuple $(T_0, u_0, \pi_0)$, where $T_0 = (\sthash, D_\mathsf{mint})$ and
 \[
-D_\mathsf{mint} = (\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd') .
+D_\mathsf{mint} = (\nidcorr{$R$}, \alpha, \predi', \nidcorr{$\mathsf{salt}$}, \mathsf{ty}, \mathsf{reason}, \auxd') .
 \]
 \begin{itemize}
 	\item $\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$ -- source state hash, for state identifier derivation
 	\item $D_\mathsf{mint}$ -- mint transaction data, containing in this order:
 	\begin{itemize}
-		\item $\alpha \in \mathbb{A}$ -- network identifier, binding the token to a specific Unicity network instance
-		\item $\predi'$ -- spending predicate of the first owner
-		\item $\mathsf{id} \in \idtype$ -- token identifier, unique within network $\alpha$
+		\item \nidcorr{$R$ -- realm identifier (Sec.~\ref{sec:realms}), one of the SDK-hardcoded constants $\{\mathsf{MAINNET}, \mathsf{TESTNET}, \mathsf{PRIVATE}, \ldots\}$; bound for the entire token lifecycle}
+		\item $\alpha \in \mathbb{A}$ -- network identifier of the genesis oracle, with $\alpha \in R$
+		\item $\predi'$ -- spending predicate of the first owner; MUST satisfy $\predi'.\alpha \in R$
+		\item \nidcorr{$\mathsf{salt} \in \bits{256}$ -- a uniformly random 256-bit salt; together with $\alpha$ it uniquely fixes the token identity (see token-id derivation below)}
 		\item $\mathsf{ty}$ -- token type, classifying the token category, defining its mandatory validation rules
 		\item $\mathsf{reason}$ -- mint reason; content depends on the token type. Justifies minting this token, e.g., by proving minting authority
 		\item $\auxd'$ -- auxiliary payload (application-specific; e.g. asset value for fungible tokens)
@@ -78,6 +79,21 @@ D_\mathsf{mint} = (\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \
 \end{itemize}
 
 $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant. The minting key pair $(\mathsf{sk}_\mathsf{mint}, \mathsf{pk}_\mathsf{mint})$ is a public constant; it serves only to provide a uniform request interface with the Unicity Service. Values: Appendix~\ref{app:el-constants}.
+
+\begin{nidblock}
+\paragraph{Token-id derivation and global uniqueness.}\label{sec:token-id-derivation}
+The token identifier $\mathsf{id}$ used in $\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$ is no longer chosen freely; it is derived in a verifiable way from the genesis network and the salt:
+\[
+\mathsf{id} \;=\; H(\mathsf{TOKENID\_TAG},\;\alpha,\;\mathsf{salt}),
+\]
+where $\mathsf{TOKENID\_TAG}$ is a fixed domain separator. As a consequence:
+\begin{enumerate}
+  \item $\mathsf{id}$ provably commits to the genesis network identifier $\alpha$: any verifier that knows $(\alpha,\mathsf{salt})$ can recompute $\mathsf{id}$, and no $\mathsf{id}$ can be re-derived under any $\alpha' \ne \alpha$ (under the second-preimage resistance of $H$).
+  \item Because each network's unicity oracle already enforces uniqueness of every $\mathsf{sid}$ it certifies (and therefore of every minted $\mathsf{id}$ within that network), and because the same $\mathsf{id}$ cannot belong to two different networks, no two tokens with the same $\mathsf{id}$ can be minted globally -- not even across distinct networks of the same realm.
+  \item Per-state network changes do not affect $\mathsf{id}$: subsequent states in the token's history MAY reference network identifiers $\alpha' \ne \alpha$ (within the same realm $R$), but the token identity is forever pinned to the genesis pair $(\alpha,\mathsf{salt})$.
+\end{enumerate}
+The token identifier therefore disappears as an independent free field of the mint transaction: $D_\mathsf{mint}$ stores $(R,\alpha,\predi',\mathsf{salt},\mathsf{ty},\mathsf{reason},\auxd')$, and $\mathsf{id}$ is computed from $(\alpha,\mathsf{salt})$ by every party that needs it.
+\end{nidblock}
 
 \paragraph{Certifying a mint transaction} $T_0 = (\sthash, D_\mathsf{mint})$:
 \begin{enumerate}
@@ -90,8 +106,11 @@ $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant
 
 \paragraph{Verifying a certified mint transaction} $(T_0, u_0, \pi_0)$ against trust base $\mathcal{T}$, using known, fixed mint keys:
 \begin{enumerate}
-	\item require $T_0.D_\mathsf{mint}.\alpha = \pi_0.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$
-	\item $T_0.\sthash = H(T_0.D_\mathsf{mint}.\mathsf{id}, \mathsf{MINT\_SUFFIX})$
+	\item \nidcorr{require $T_0.D_\mathsf{mint}.R$ to be a realm hardcoded in the SDK and $T_0.D_\mathsf{mint}.\alpha \in T_0.D_\mathsf{mint}.R$}
+	\item \nidcorr{require $T_0.D_\mathsf{mint}.\alpha = \pi_0.UC.C^\mathsf{r}.\alpha$ \quad (genesis proof from the very network the token is bound to)}
+	\item \nidcorr{require $T_0.D_\mathsf{mint}.\predi'.\alpha = T_0.D_\mathsf{mint}.\alpha$ \quad (first-owner predicate is bound to the same network)}
+	\item \nidcorr{$\mathsf{id} \gets H(\mathsf{TOKENID\_TAG}, T_0.D_\mathsf{mint}.\alpha, T_0.D_\mathsf{mint}.\mathsf{salt})$ \quad (derive token id from $\alpha$ and salt)}
+	\item \nidcorr{$T_0.\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$}
 	\item $\mathsf{Verify}(\mathsf{pk}_\mathsf{mint}, H(\sthash, \txhash), u_0) = 1$, where $\txhash = H(D_\mathsf{mint})$
 	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), \txhash, \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
 	\item Token type-specific checks on $\mathsf{reason}$ and $\auxd'$ (e.g. mint reason validity and auxiliary payload format and semantics check)
@@ -126,9 +145,10 @@ A \emph{certified transfer transaction} is a tuple $(T, u, \txhash, \pi)$, where
 \paragraph{Verifying a certified transfer transaction} $(T, u, \txhash, \pi)$ in state $(\predi, h)$:
 \begin{enumerate}
 	\item $T.\sthash = h$ \quad (state hash matches expected)
-	\item $\pi.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$ \quad (inclusion proof is from the same network as the trust base)
+	\item \nidcorr{$\pi.UC.C^\mathsf{r}.\alpha = \predi.\alpha$ \quad (inclusion proof is from the very oracle the predicate is bound to; proofs from any other network MUST be rejected)}
+	\item \nidcorr{$\predi.\alpha \in R$, where $R$ is the realm bound at genesis (Sec.~\ref{sec:realms})}
 	\item $\predi(\mathsf{time}(\pi), H(\sthash, \txhash), u) = 1$ \quad (predicate satisfied)
-	\item $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pi, \mathcal{CD}_\beta, \mathcal{T}) = 1$ \quad (inclusion proof valid and certified by the correct shard)
+	\item \nidcorr{$\mathcal{V}(H(\predi, T.\sthash), \txhash, \pi, \mathcal{CD}_\beta, \mathcal{T}_{\predi.\alpha}) = 1$ \quad (inclusion proof verified against the trust base of network $\predi.\alpha$, valid and certified by the correct shard)}
 	\item Additional token type-specific checks
 \end{enumerate}
 
@@ -148,18 +168,25 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 \textbf{Computation}:
 \begin{algorithmic}[0]
 	\State \Parse $T_0^\mathsf{cert}$ \textbf{as} $(T_0, u_0, \pi_0)$
-	\If {$T_0.D_\mathsf{mint}.\alpha \ne \mathcal{T}.\alpha$} \Return \FALSE \EndIf
+	\State \nidcorr{$R \gets T_0.D_\mathsf{mint}.R$} \Comment{realm bound at genesis (Sec.~\ref{sec:realms})}
+	\If {\nidcorr{$T_0.D_\mathsf{mint}.\alpha \notin R$}} \Return \FALSE \EndIf
 	\If {$\neg \Call{VerifyMintTransaction}{T_0, u_0, \pi_0, \mathcal{T}}$} \Return \FALSE \EndIf
 	\State $\predi^0 \gets T_0.D_\mathsf{mint}.\predi'$
 	\State $h^0 \gets H(T_0.D_\mathsf{mint}.\mathsf{id}, \mathsf{MINT\_SUFFIX})$
 	\For {$i \gets 1 \ldots n$}
 		\State \Parse $T_i^\mathsf{cert}$ \textbf{as} $(T_i, u_i, \txhash_i, \pi_i)$
+		\If {\nidcorr{$\predi^{i-1}.\alpha \notin R$ \textbf{or} $\pi_i.UC.C^\mathsf{r}.\alpha \notin R$}} \Return \FALSE \EndIf \Comment{realm consistency}
 		\If {$\neg \Call{VerifyTransferTransaction}{T_i, u_i, \txhash_i, \pi_i, \predi^{i-1}, h^{i-1}, \mathcal{T}}$} \Return \FALSE \EndIf
 		\State $\predi^{i} \gets T_i.D.\predi'$
 		\State $h^{i} \gets H(h^{i-1}, T_i.D.x)$
 	\EndFor
 	\State \Return \TRUE
 \end{algorithmic}
+
+\begin{nidblock}
+\paragraph{Realm-binding invariant.}\label{sec:realm-invariant}
+A token's realm $R$ is fixed at the genesis (mint) transaction. Every per-state network identifier observed along the history -- the mint's $\alpha$, every recipient predicate's $\alpha$, and every inclusion proof's $UC.C^\mathsf{r}.\alpha$ -- MUST belong to that single realm $R$. A history that mixes network identifiers from two different realms (e.g.\ one mainnet state and one testnet state) is invalid even if every individual unicity proof verifies in isolation. The realm membership is provided by the SDK from a hardcoded table (Sec.~\ref{sec:realms}); a verifier MUST consult only that hardcoded table and MUST NOT trust any realm assertion conveyed inside the token itself.
+\end{nidblock}
 
 $\Call{VerifyMintTransaction}{}$ and $\Call{VerifyTransferTransaction}{}$ are defined by verification steps in chapters \ref{sec:mint-tx}, \ref{sec:transfer-tx}.
 
@@ -183,6 +210,28 @@ A \emph{predicate} $\predi_\mathsf{name}(\mathsf{par}; \cdot)$ is a boolean func
 \end{itemize}
 
 The predicate evaluates to $\predi_\mathsf{name}(\mathsf{par}; \tau, m, u) \in \{0, 1\}$.
+
+\begin{nidblock}
+\paragraph{Mandatory network-id parameter.}\label{sec:predicate-network-binding}
+Every predicate MUST carry a network identifier $\alpha \in \mathbb{A}$ as a distinguished parameter, written explicitly as the first parameter:
+\[
+\predi_\mathsf{name}(\alpha,\mathsf{par};\,\tau,m,u).
+\]
+Semantically, $\alpha$ designates the Unicity oracle (Sec.~\ref{sec:networks-oracle}) whose unicity proof the predicate accepts. A unicity proof obtained from any network $\alpha' \ne \alpha$ MUST be rejected when verifying a transaction that spends a state guarded by such a predicate. This rejection is a hard verification step (see Sec.~\ref{sec:transfer-tx}) and is independent of the trust base used to verify the proof's signatures: even a fully-valid Unicity Certificate from a wrong network does not unlock the state.
+
+Because $\alpha$ is a predicate parameter, it is part of the canonical encoding $\encpred(\predi)$ (Sec.~\ref{app:predicate-encoding}) and therefore part of the state identifier
+\[
+\mathsf{sid} = H(\encpred(\predi),\sthash).
+\]
+Consequently, the same logical owner key under two different networks yields two distinct states with two distinct $\mathsf{sid}$ -- the two networks cannot collide on a shared spent-state registry, and one network's spend cannot be used to invalidate the other's.
+
+\paragraph{Address derivation for unlock-pubkey predicates.}\label{sec:address-derivation}
+For predicate kinds whose authority is a single public key $\mathsf{pk}$ (the \emph{unlock-pubkey} family: $\predi_\mathsf{sig}$, $\predi_\mathsf{p2pkh}$, $\predi_\mathsf{tlock}$, and the per-key components of $\predi_\mathsf{msig}$/$\predi_\mathsf{tsig}$/$\predi_\mathsf{htlc}$), the user-facing \emph{address} -- the recipient identifier exchanged out-of-band before constructing a transaction -- MUST be derived from \emph{both} the public key and the network identifier:
+\[
+\mathsf{addr}(\alpha,\mathsf{pk}) \;=\; H(\mathsf{ADDR\_TAG},\;\alpha,\;\mathsf{pk}),
+\]
+where $\mathsf{ADDR\_TAG}$ is a fixed domain separator. Two addresses derived from the same key under two different networks are unlinkable at the address layer and unspendable across networks at the predicate layer. SDKs MUST refuse to encode an address unless $\alpha$ is supplied alongside $\mathsf{pk}$, and MUST refuse to construct a transaction whose recipient predicate's $\alpha$ does not match the $\alpha$ committed by the address.
+\end{nidblock}
 
 
 \subsubsection{Time Reference}\label{sec:time-extraction}
@@ -214,59 +263,71 @@ Note that $UC.\mathcal{IR}.t \ne UC.C^\mathsf{r}.t_r$ in general: $\mathcal{IR}.
 \subsubsection{Signature Predicate}
 
 \index{predicate!signature ($\predi_\mathsf{sig}$)}
-The \emph{signature predicate} $\predi_\mathsf{sig}(\mathsf{pk};\cdot)$ with a single public key $\mathsf{pk}$ as parameter is equivalent to digital signature verification. This is the basic ``pay to public key'' ownership model.
+The \emph{signature predicate} \nidcorr{$\predi_\mathsf{sig}(\alpha,\mathsf{pk};\cdot)$} with network identifier $\alpha$ and a single public key $\mathsf{pk}$ as parameters is equivalent to digital signature verification under the oracle of network $\alpha$. This is the basic ``pay to public key'' ownership model.
 
 \begin{itemize}
-	\item \textbf{Parameters}: $\mathsf{pk}$ (public key)
+	\item \textbf{Parameters}: \nidcorr{$(\alpha,\mathsf{pk})$, where $\alpha$ is the bound network identifier and $\mathsf{pk}$ is the public key}
 	\item \textbf{Unlocking argument}: $u = \sigma$ (digital signature)
-	\item \textbf{Definition}: $\predi_\mathsf{sig}(\mathsf{pk}; \tau, m, \sigma) = 1$ iff $\mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1$
+	\item \textbf{Definition}: \nidcorr{$\predi_\mathsf{sig}(\alpha,\mathsf{pk}; \tau, m, \sigma) = 1$ iff $\mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1$}
 \end{itemize}
+
+\begin{nidblock}
+The address used to receive payments under this predicate is $\mathsf{addr}(\alpha,\mathsf{pk}) = H(\mathsf{ADDR\_TAG},\alpha,\mathsf{pk})$ (Sec.~\ref{sec:address-derivation}); the same $\mathsf{pk}$ under a different $\alpha$ yields a distinct, non-equivalent address.
+\end{nidblock}
 
 \subsubsection{P2PKH Predicate}
 
 \index{predicate!P2PKH ($\predi_\mathsf{p2pkh}$)}
-The \emph{Pay-to-Public-Key-Hash} predicate $\predi_\mathsf{p2pkh}(h_\mathsf{pk};\cdot)$ stores only the hash of the public key, requiring the spender to reveal the full public key alongside the signature.
+The \emph{Pay-to-Public-Key-Hash} predicate \nidcorr{$\predi_\mathsf{p2pkh}(\alpha,h_\mathsf{pk};\cdot)$} stores only the hash of the public key, requiring the spender to reveal the full public key alongside the signature; the predicate is bound to the unicity oracle of network $\alpha$.
 
 \begin{itemize}
-	\item \textbf{Parameters}: $h_\mathsf{pk} \in \hashtype$ (public key hash)
+	\item \textbf{Parameters}: \nidcorr{$(\alpha,h_\mathsf{pk})$ with $\alpha \in \mathbb{A}$ and $h_\mathsf{pk} \in \hashtype$ the public key hash}
 	\item \textbf{Unlocking argument}: $u = (\mathsf{pk}, \sigma)$
-	\item \textbf{Definition}: $\predi_\mathsf{p2pkh}(h_\mathsf{pk}; \tau, m, (\mathsf{pk}, \sigma)) = 1$ iff $H(\mathsf{pk}) = h_\mathsf{pk} \;\land\; \mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1$
+	\item \textbf{Definition}: \nidcorr{$\predi_\mathsf{p2pkh}(\alpha,h_\mathsf{pk}; \tau, m, (\mathsf{pk}, \sigma)) = 1$ iff $H(\mathsf{pk}) = h_\mathsf{pk} \;\land\; \mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1$}
 \end{itemize}
+
+\begin{nidblock}
+For P2PKH the address is the predicate hash itself, $H(\encpred(\predi_\mathsf{p2pkh}(\alpha,h_\mathsf{pk})))$, whose canonical encoding already incorporates $\alpha$ (Sec.~\ref{app:predicate-encoding}). The recipient MUST therefore derive $h_\mathsf{pk}$ as $H(\mathsf{pk})$ and bind it to the network identifier of the oracle they will request the unicity proof from.
+\end{nidblock}
 
 \subsubsection{P2SH Predicate}\label{sec:p2sh}
 
 \index{predicate!P2SH ($\predi_\mathsf{p2sh}$)}
-The \emph{Pay-to-Script-Hash} predicate $\predi_\mathsf{p2sh}(h_\predi;\cdot)$ generalizes P2PKH by storing the hash of an arbitrary predicate rather than just a public key hash. The recipient is identified by $h_\predi = H(\mathsf{CBOR}(\predi'))$, which provides a uniform-size recipient field regardless of predicate complexity and preserves privacy by hiding the predicate type until the token is spent.
+The \emph{Pay-to-Script-Hash} predicate \nidcorr{$\predi_\mathsf{p2sh}(\alpha,h_\predi;\cdot)$} generalizes P2PKH by storing the hash of an arbitrary predicate rather than just a public key hash. The recipient is identified by $h_\predi = H(\mathsf{CBOR}(\predi'))$, which provides a uniform-size recipient field regardless of predicate complexity and preserves privacy by hiding the predicate type until the token is spent.
 
 \begin{itemize}
-	\item \textbf{Parameters}: $h_\predi \in \hashtype$ (predicate hash)
+	\item \textbf{Parameters}: \nidcorr{$(\alpha,h_\predi)$ with $\alpha \in \mathbb{A}$ the bound network and $h_\predi \in \hashtype$ the inner predicate hash}
 	\item \textbf{Unlocking argument}: $u = (\predi', u')$ where $\predi'$ is the full predicate and $u'$ is its unlocking argument
-	\item \textbf{Definition}: $\predi_\mathsf{p2sh}(h_\predi; \tau, m, (\predi', u')) = 1$ iff $H(\mathsf{CBOR}(\predi')) = h_\predi \;\land\; \predi'(\tau, m, u') = 1$
+	\item \textbf{Definition}: \nidcorr{$\predi_\mathsf{p2sh}(\alpha,h_\predi; \tau, m, (\predi', u')) = 1$ iff $H(\mathsf{CBOR}(\predi')) = h_\predi \;\land\; \predi'.\alpha = \alpha \;\land\; \predi'(\tau, m, u') = 1$}
 \end{itemize}
 
 When spending, the full predicate $\predi'$ is revealed in the lock script field of the transfer transaction, and verifiers check that $H(\mathsf{CBOR}(\predi'))$ matches the recipient hash from the previous transaction.
 
+\begin{nidblock}
+The revealed inner predicate $\predi'$ MUST be bound to the same network identifier $\alpha$ as the outer P2SH wrapper, so that the network-id binding cannot be smuggled across the hash commitment.
+\end{nidblock}
+
 \subsubsection{Multi-Signature Predicate}
 
 \index{predicate!multi-signature ($\predi_\mathsf{msig}$)}
-The \emph{multi-signature predicate} $\predi_\mathsf{msig}(\mathsf{pk}_1, \ldots, \mathsf{pk}_n;\cdot)$ requires $n$ valid signatures from $n$ specified public keys (all-of-$n$).
+The \emph{multi-signature predicate} \nidcorr{$\predi_\mathsf{msig}(\alpha,\mathsf{pk}_1, \ldots, \mathsf{pk}_n;\cdot)$} requires $n$ valid signatures from $n$ specified public keys (all-of-$n$), with the predicate bound to the unicity oracle of network $\alpha$.
 
 \begin{itemize}
-	\item \textbf{Parameters}: $(\mathsf{pk}_1, \ldots, \mathsf{pk}_n)$
+	\item \textbf{Parameters}: \nidcorr{$(\alpha,\mathsf{pk}_1, \ldots, \mathsf{pk}_n)$}
 	\item \textbf{Unlocking argument}: $u = (\sigma_1, \ldots, \sigma_n)$
-	\item \textbf{Definition}: $\predi_\mathsf{msig}(\mathsf{pk}_1, \ldots, \mathsf{pk}_n; \tau, m, u) = 1$ iff $\mathsf{Verify}(\mathsf{pk}_i, m, \sigma_i) = 1$ for every $i \in \{1, \ldots, n\}$
+	\item \textbf{Definition}: \nidcorr{$\predi_\mathsf{msig}(\alpha,\mathsf{pk}_1, \ldots, \mathsf{pk}_n; \tau, m, u) = 1$ iff $\mathsf{Verify}(\mathsf{pk}_i, m, \sigma_i) = 1$ for every $i \in \{1, \ldots, n\}$}
 \end{itemize}
 
 
 \subsubsection{Threshold-Signature Predicate}
 
 \index{predicate!threshold-signature ($\predi_\mathsf{tsig}$)}
-The \emph{threshold-signature predicate} $\predi_\mathsf{tsig}(k, \mathsf{pk}_1, \ldots, \mathsf{pk}_n;\cdot)$ requires $k$-of-$n$ valid signatures from distinct public keys.
+The \emph{threshold-signature predicate} \nidcorr{$\predi_\mathsf{tsig}(\alpha,k, \mathsf{pk}_1, \ldots, \mathsf{pk}_n;\cdot)$} requires $k$-of-$n$ valid signatures from distinct public keys, bound to the unicity oracle of network $\alpha$.
 
 \begin{itemize}
-	\item \textbf{Parameters}: $(k, \mathsf{pk}_1, \ldots, \mathsf{pk}_n)$ where $k \in \{1, \ldots, n\}$
+	\item \textbf{Parameters}: \nidcorr{$(\alpha,k, \mathsf{pk}_1, \ldots, \mathsf{pk}_n)$} where $k \in \{1, \ldots, n\}$
 	\item \textbf{Unlocking argument}: $u = ((\sigma_1, j_1), \ldots, (\sigma_k, j_k))$ where $j_i$ is the index of the public key used for $\sigma_i$
-	\item \textbf{Definition}: $\predi_\mathsf{tsig}(k, \mathsf{pk}_1, \ldots, \mathsf{pk}_n; \tau, m, u) = 1$ iff:
+	\item \textbf{Definition}: \nidcorr{$\predi_\mathsf{tsig}(\alpha,k, \mathsf{pk}_1, \ldots, \mathsf{pk}_n; \tau, m, u) = 1$} iff:
 	\begin{enumerate}
 		\item $\mathsf{Verify}(\mathsf{pk}_{j_i}, m, \sigma_i) = 1$ for every $i \in \{1, \ldots, k\}$
 		\item All indices $j_i$ are distinct: $j_i = j_{i'}$ implies $i = i'$
@@ -279,12 +340,12 @@ The distinctness requirement prevents satisfying the predicate by presenting $k$
 \subsubsection{Burn Predicate}\label{sec:burn-predicate}
 
 \index{predicate!burn ($\predi_\mathsf{burn}$)}
-The \emph{burn predicate} $\predi_\mathsf{burn}(h_\mathsf{reason})$ cannot be unlocked. A token transferred to a burn predicate is permanently spent.
+The \emph{burn predicate} \nidcorr{$\predi_\mathsf{burn}(\alpha,h_\mathsf{reason})$} cannot be unlocked. A token transferred to a burn predicate is permanently spent.
 
 \begin{itemize}
-	\item \textbf{Parameters}: $h_\mathsf{reason} \in \hashtype$ (reason hash, linking the burn to its purpose)
+	\item \textbf{Parameters}: \nidcorr{$(\alpha,h_\mathsf{reason})$ with $h_\mathsf{reason} \in \hashtype$ the reason hash linking the burn to its purpose}
 	\item \textbf{Unlocking argument}: none
-	\item \textbf{Definition}: $\predi_\mathsf{burn}(h_\mathsf{reason}; \tau, m, u) = 0$ for all arguments
+	\item \textbf{Definition}: \nidcorr{$\predi_\mathsf{burn}(\alpha,h_\mathsf{reason}; \tau, m, u) = 0$ for all arguments}
 \end{itemize}
 
 The burn predicate is used in token splitting (Sec.~\ref{sec:token-splitting}), where the reason hash references the aggregation root of the split proof.
@@ -293,12 +354,12 @@ The burn predicate is used in token splitting (Sec.~\ref{sec:token-splitting}), 
 \subsubsection{Timelock Predicate}
 
 \index{predicate!timelock ($\predi_\mathsf{tlock}$)}
-The \emph{timelock predicate} $\predi_\mathsf{tlock}(\mathsf{pk}, \tau_\mathsf{min};\cdot)$ prevents spending until the system time reaches a specified threshold. This is used to implement e.g. vesting schedules and lock-up periods for tokens.
+The \emph{timelock predicate} \nidcorr{$\predi_\mathsf{tlock}(\alpha,\mathsf{pk}, \tau_\mathsf{min};\cdot)$} prevents spending until the system time reaches a specified threshold. This is used to implement e.g. vesting schedules and lock-up periods for tokens.
 
 \begin{itemize}
-	\item \textbf{Parameters}: $(\mathsf{pk}, \tau_\mathsf{min})$ where $\mathsf{pk}$ is a public key and $\tau_\mathsf{min} \in \mathbb{T}$ is the unlock time
+	\item \textbf{Parameters}: \nidcorr{$(\alpha,\mathsf{pk}, \tau_\mathsf{min})$ where $\alpha \in \mathbb{A}$ is the bound network identifier, $\mathsf{pk}$ is a public key and $\tau_\mathsf{min} \in \mathbb{T}$ is the unlock time}
 	\item \textbf{Unlocking argument}: $u = \sigma$ (digital signature)
-	\item \textbf{Definition}: $\predi_\mathsf{tlock}(\mathsf{pk}, \tau_\mathsf{min}; \tau, m, \sigma) = 1$ iff $\tau \ge \tau_\mathsf{min} \;\land\; \mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1$
+	\item \textbf{Definition}: \nidcorr{$\predi_\mathsf{tlock}(\alpha,\mathsf{pk}, \tau_\mathsf{min}; \tau, m, \sigma) = 1$ iff $\tau \ge \tau_\mathsf{min} \;\land\; \mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1$}
 \end{itemize}
 
 The token remains locked until system time $\tau \ge \tau_\mathsf{min}$, after which it can be spent by producing a valid signature under $\mathsf{pk}$ and forming a witness unlocking the predicate and appending a spending transaction to the token ledger.
@@ -307,12 +368,12 @@ The token remains locked until system time $\tau \ge \tau_\mathsf{min}$, after w
 \subsubsection{Hashed Timelock Predicate}
 
 \index{predicate!hashed timelock ($\predi_\mathsf{htlc}$)}
-The \emph{hashed timelock predicate} $\predi_\mathsf{htlc}(\mathsf{pk}, \mathsf{pk}', y, \tau_\mathsf{max};\cdot)$ combines hash-locked and time-locked spending paths. The parameter $\mathsf{pk}$ is the refund key (original sender), $\mathsf{pk}'$ is the claim key (intended recipient), $y \in \hashtype$ is a hash lock, and $\tau_\mathsf{max} \in \mathbb{T}$ is a timeout.
+The \emph{hashed timelock predicate} \nidcorr{$\predi_\mathsf{htlc}(\alpha,\mathsf{pk}, \mathsf{pk}', y, \tau_\mathsf{max};\cdot)$} combines hash-locked and time-locked spending paths. The parameter $\mathsf{pk}$ is the refund key (original sender), $\mathsf{pk}'$ is the claim key (intended recipient), $y \in \hashtype$ is a hash lock, and $\tau_\mathsf{max} \in \mathbb{T}$ is a timeout. \nidcorr{The predicate is bound to the unicity oracle of network $\alpha$.}
 
 \begin{itemize}
-	\item \textbf{Parameters}: $(\mathsf{pk}, \mathsf{pk}', y, \tau_\mathsf{max})$
+	\item \textbf{Parameters}: \nidcorr{$(\alpha,\mathsf{pk}, \mathsf{pk}', y, \tau_\mathsf{max})$}
 	\item \textbf{Unlocking argument}: $u = (x, \sigma)$ where $x$ is a preimage candidate and $\sigma$ is a digital signature
-	\item \textbf{Definition}: $\predi_\mathsf{htlc}(\mathsf{pk}, \mathsf{pk}', y, \tau_\mathsf{max}; \tau, m, (x, \sigma)) = 1$ iff (a) or (b):
+	\item \textbf{Definition}: \nidcorr{$\predi_\mathsf{htlc}(\alpha,\mathsf{pk}, \mathsf{pk}', y, \tau_\mathsf{max}; \tau, m, (x, \sigma)) = 1$} iff (a) or (b):
 	\begin{itemize}
 		\item[(a)] \emph{Claim path}: $\mathsf{Verify}(\mathsf{pk}', m, \sigma) = 1 \;\land\; y = H(x) \;\land\; \tau \le \tau_\mathsf{max}$
 		\item[(b)] \emph{Refund path}: $\mathsf{Verify}(\mathsf{pk}, m, \sigma) = 1 \;\land\; \tau > \tau_\mathsf{max}$

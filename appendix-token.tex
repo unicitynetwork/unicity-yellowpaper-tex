@@ -8,6 +8,8 @@ The Unicity Mainnet ($\alpha = 1$) MUST use following public constants. Other ne
 
 \begin{itemize}
 	\item $\mathsf{MINT\_SUFFIX} = \mathsf{SHA\text{-}256}(\texttt{"TOKENID"})$ -- a fixed 32-byte domain separator used to derive the source state hash of mint transactions.
+	\item \nidcorr{$\mathsf{TOKENID\_TAG} = \mathsf{SHA\text{-}256}(\texttt{"UNICITY\_TOKENID\_v1"})$ -- a fixed 32-byte domain separator used to derive the token identifier from the genesis network identifier and the mint salt (Sec.~\ref{sec:token-id-derivation}).}
+	\item \nidcorr{$\mathsf{ADDR\_TAG} = \mathsf{SHA\text{-}256}(\texttt{"UNICITY\_ADDR\_v1"})$ -- a fixed 32-byte domain separator used to derive unlock-pubkey addresses from the network identifier and the public key (Sec.~\ref{sec:address-derivation}).}
 	\item $\mathsf{MINTER\_SECRET}$ = \\
 	  \hspace*{10mm}\texttt{0x495f414d5f554e4956455253414c5f4d494e5445525f464f525f} \\
 	  \hspace*{10mm} (ASCII: \texttt{"I\_AM\_UNIVERSAL\_MINTER\_FOR\_"}) \\
@@ -16,11 +18,9 @@ The Unicity Mainnet ($\alpha = 1$) MUST use following public constants. Other ne
 	\[
 	\mathsf{sk}_\mathsf{mint} = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{MINTER\_SECRET}, \mathsf{id}))
 	\]
-	The corresponding public key $\mathsf{pk}_\mathsf{mint}$ is the secp256k1 public key for $\mathsf{sk}_\mathsf{mint}$. The private key is intentionally public; the key pair exists solely to provide a uniform request interface with the Unicity Service.
+	The corresponding public key $\mathsf{pk}_\mathsf{mint}$ is the secp256k1 public key for $\mathsf{sk}_\mathsf{mint}$. The private key is intentionally public; the key pair exists solely to provide a uniform request interface with the Unicity Service. \nidcorr{Note that with the token-id derivation $\mathsf{id} = H(\mathsf{TOKENID\_TAG},\alpha,\mathsf{salt})$, the minting key is uniquely fixed by $(\alpha,\mathsf{salt})$ as well.}
+	\item \nidcorr{Realm membership tables (the canonical assignment of network identifiers $\alpha$ to realms $\mathsf{MAINNET}/\mathsf{TESTNET}/\mathsf{PRIVATE}$, Sec.~\ref{sec:realms}) are public constants distributed and hardcoded by every conforming SDK; they MUST NOT be reconfigurable at runtime by application code or by data carried inside a token.}
 \end{itemize}
-
-\newcommand{\encpred}{\mathsf{EncPred}}
-\newcommand{\decpred}{\mathsf{DecodePred}}
 
 \section{Predicate Encoding}\label{app:predicate-encoding}
 
@@ -35,14 +35,15 @@ Predicate equality means byte equality of canonical encodings:
 \encpred(\predi_1) = \encpred(\predi_2).
 \]
 
-The encoding $\encpred$ is implemented as encoding to a CBOR array with three top-level elements:
+The encoding $\encpred$ is implemented as encoding to a CBOR array with \nidcorr{four} top-level elements:
 
 \begin{longtable}{clp{8cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
 0 & unsigned integer & Predicate engine identifier. Value $1$ denotes the built-in engine. \\
 1 & byte string & Predicate type code within the engine. \\
-2 & byte string or CBOR item & Serialized parameters (encoding depends on the predicate type; see below). \\
+\nidcorr{2} & \nidcorr{unsigned integer} & \nidcorr{Bound network identifier $\alpha \in \mathbb{A}$ (Sec.~\ref{sec:networks-oracle}); the predicate accepts unicity proofs only from this network's oracle.} \\
+\nidcorr{3} & byte string or CBOR item & Serialized parameters (encoding depends on the predicate type; see below). \\
 \end{longtable}
 
 \noindent Throughout this section, $\mathsf{pk}$ denotes a 33-byte compressed secp256k1 public key (see Sec.~\ref{app:signature-format}), and timestamps $\tau \in \mathbb{T}$ are encoded as CBOR unsigned integers (seconds; same convention as $C^\mathsf{r}.t_r$). Hashes are 32 bytes.
@@ -159,18 +160,19 @@ If a sender wishes to commit only to a hash of a complex predicate (hiding its s
 
 \subsection{Mint Transaction}
 
-A mint transaction is encoded as a CBOR array with six elements, ordered as
-$D_\mathsf{mint} = (\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd')$:
+A mint transaction is encoded as a CBOR array with \nidcorr{seven} elements, ordered as
+\nidcorr{$D_\mathsf{mint} = (R, \alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$}:
 
 \begin{longtable}{clp{10cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
-0 & unsigned integer & Network Identifier $\alpha$ (Sec.~\ref{sec:networks}) \\
-1 & byte string & Recipient: CBOR-encoded first owner's predicate $\mathsf{CBOR}(\predi')$ (Sec.~\ref{app:predicate-encoding}); by convention $\predi' = \predi_\mathsf{sig}(\mathsf{pk'})$ \\
-2 & byte string & Token Identifier $\mathsf{id}$ (32 bytes; unique within network $\alpha$) \\
-3 & byte string & Token Type $\mathsf{ty}$ (32 bytes) \\
-4 & byte string & Mint Reason $\mathsf{reason}$ (optional, arbitrary length) \\
-5 & byte string & Auxiliary Payload $\auxd'$ (optional, arbitrary length) \\
+\nidcorr{0} & \nidcorr{unsigned integer} & \nidcorr{Realm Identifier $R$ (Sec.~\ref{sec:realms}); SDK-hardcoded constant, fixed for the entire token lifecycle} \\
+\nidcorr{1} & unsigned integer & Network Identifier $\alpha$ (Sec.~\ref{sec:networks}); MUST satisfy $\alpha \in R$ \\
+\nidcorr{2} & byte string & Recipient: CBOR-encoded first owner's predicate $\mathsf{CBOR}(\predi')$ (Sec.~\ref{app:predicate-encoding}); by convention $\predi' = \predi_\mathsf{sig}(\alpha,\mathsf{pk'})$ \\
+\nidcorr{3} & \nidcorr{byte string} & \nidcorr{Mint Salt $\mathsf{salt}$ (32 bytes, uniformly random); the token identifier is derived as $\mathsf{id} = H(\mathsf{TOKENID\_TAG},\alpha,\mathsf{salt})$ (Sec.~\ref{sec:token-id-derivation})} \\
+4 & byte string & Token Type $\mathsf{ty}$ (32 bytes) \\
+5 & byte string & Mint Reason $\mathsf{reason}$ (optional, arbitrary length) \\
+6 & byte string & Auxiliary Payload $\auxd'$ (optional, arbitrary length) \\
 \end{longtable}
 
 
@@ -240,8 +242,14 @@ For transfer transactions, the next state hash:
 
 For mint transactions:
 \[
-\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd'))
+\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\nidcorr{$R$}, \alpha, \predi', \nidcorr{$\mathsf{salt}$}, \mathsf{ty}, \mathsf{reason}, \auxd'))
 \]
+\begin{nidblock}
+The token identifier $\mathsf{id}$ used in the source state hash $\sthash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{id}, \mathsf{MINT\_SUFFIX}))$ is itself derived from the genesis network identifier and the salt:
+\[
+\mathsf{id} \;=\; \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{TOKENID\_TAG},\;\alpha,\;\mathsf{salt})).
+\]
+\end{nidblock}
 
 For transactions:
 \[

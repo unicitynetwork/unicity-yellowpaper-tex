@@ -26,6 +26,25 @@ To reduce the risk of confusion, it is recommended for each major deployment to 
 
 It is strongly recommended to avoid using the identifier $0$, so that an uninitialized identifier (which defaults to $0$ in many programming languages) would not match any actual network.
 
+\begin{nidblock}
+\paragraph{Network identifier as oracle binding.}\label{sec:networks-oracle}
+The network identifier $\alpha$ identifies a specific \emph{Unicity oracle} -- the service authoritative for producing single-spend (unicity) proofs for transactions of states issued under that network. Two distinct networks $\alpha_1 \ne \alpha_2$ are independent oracles: each maintains its own spent-state registry and could, in isolation, certify conflicting spends of the same logical state. To eliminate this attack surface, every state $(\predi,\sthash)$ MUST be bound to a single network $\alpha$, and the unicity proof for spending that state MUST come from that very network. Inclusion proofs whose Unicity Certificate carries any other network identifier MUST be rejected at verification time, even if they would otherwise verify against a valid trust base. The binding mechanism is the predicate itself: $\alpha$ is a parameter of the predicate (Sec.~\ref{sec:predicate-framework}), and it is part of the canonical encoding $\encpred(\predi)$ that defines the state identifier $\mathsf{sid} = H(\predi,\sthash)$.
+
+\paragraph{Realms.}\label{sec:realms}
+A token state transition history may legitimately reference different network identifiers across consecutive states (e.g.\ ownership of a fungible token may move between two cooperating mainnet networks). To make such histories trust-equivalent for every relying party without ad-hoc trust decisions, we define a \emph{realm}\index{realm} as a publicly fixed set of network identifiers $R \subseteq \mathbb{A}$ whose oracles are mutually accepted within the realm. The realm membership is a global convention; SDKs and verifying clients MUST hardcode the realm-to-network-id mapping and MUST NOT accept user-supplied or dynamically negotiated realm definitions.
+
+We define at least three realms:
+\begin{description}
+  \item[$\mathsf{MAINNET}$] -- all production-grade Unicity networks providing unicity proofs for transactions of tokens carrying real-value assets.
+  \item[$\mathsf{TESTNET}$] -- networks providing unicity proofs for transactions of tokens that do not carry real-value assets (test, staging, demonstration).
+  \item[$\mathsf{PRIVATE}$] -- networks providing unicity proofs for transactions of tokens issued for custom / consortium projects.
+\end{description}
+
+The realms are pairwise disjoint: $\mathsf{MAINNET}\cap\mathsf{TESTNET}=\mathsf{MAINNET}\cap\mathsf{PRIVATE}=\mathsf{TESTNET}\cap\mathsf{PRIVATE}=\emptyset$.
+
+A token is bound to a single realm $R$ at genesis (Sec.~\ref{sec:mint-tx}). Every state in its transition history -- from the mint transaction up to and including any burn -- MUST reference a network identifier $\alpha \in R$. A token whose history contains two states referencing network identifiers from two different realms is invalid and MUST be rejected by every verifier, even if all its individual unicity proofs verify in isolation. Within a single realm, the per-state network identifier MAY change from one state to the next, allowing tokens to move between mutually-trusted oracles of the same realm without violating the realm-binding invariant.
+\end{nidblock}
+
 \section{Partitions and Shards}
 
 Unicity network's aggregation layer consists of multiple \emph{partitions}\index{partition}. Each partition is identified by a partition identifier $\beta \in \mathbb{C}$\index{$\beta$ (partition identifier)}\index{$\mathbb{C}$ (partition identifier type)}. Each partition runs an unicity proving service instance (Unicity Service), or some other utility service instance\footnote{Roughly, this is similar to Layer 1, Layer 2 division of Ethereum type blockchains}.
