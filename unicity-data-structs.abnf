@@ -159,7 +159,8 @@
       ;~$\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$ -- CBOR array[2]: [genesis, [transfers...]]
 
 ; --- Fields ---
-  Salt = Bytes32  ;~$\mathsf{salt}$ -- 32-byte random salt (min-entropy $\ge 128$ bits); token identifier $\mathsf{id} = H(\mathsf{salt}, \alpha)$ is derived and globally unique across networks under collision-resistance of $H$
+  Salt = Bytes32  ;~$\mathsf{salt}$ -- 32-byte minter-chosen salt, required to be unique among the minter's choices
+  ; used to derive token identifier $\mathsf{id} = H(\mathsf{salt}, \alpha)$
   TokenType = Bytes32  ;~$\mathsf{ty}$ -- token type classifier (32 bytes)
   MintReason = Bytes  ;~$\mathsf{reason}$ -- mint reason (justification)
   SourceStateHash = Hash  ;~$h_\mathsf{st}$ -- current state hash (32 bytes)

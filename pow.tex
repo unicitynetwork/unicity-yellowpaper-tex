@@ -100,7 +100,7 @@ When no Trust Base entry is published, $\mathsf{cbor}(T_e)$ is the CBOR encoding
     \caption{PoW Block Payload (\texttt{vPayload}), serialized as a CBOR sequence.}\label{ta:pow-block-payload}
     \begin{tabular}{|p{0.5cm}|p{3.5cm}|p{1.5cm}|p{7.5cm}|}\hline
       No & Field & Size & Description \\\hline\hline
-      1. & $H(\mathsf{salt}_\mathsf{reward})$ & 32 B & Reward commitment leaf: hash of the reward salt, a 32-byte uniformly random value chosen by the miner (min-entropy $\ge 128$ bits). The preimage $\mathsf{salt}_\mathsf{reward}$ remains in the miner's custody and is revealed only at minting time as the $\mathsf{salt}$ field of the mint transaction, from which the token identifier $\mathsf{id} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$ is derived (Sec.~\ref{sec:mint-tx}). \\\hline
+      1. & $H(\mathsf{salt}_\mathsf{reward})$ & 32 B & Reward commitment leaf: hash of the reward salt $\mathsf{salt}_\mathsf{reward}$, a 32-byte secret sampled with at least $128$ bits of min-entropy and held in the miner's custody. The salt acts as a commit-reveal preimage: knowledge of $\mathsf{salt}_\mathsf{reward}$ is what entitles a party to mint the corresponding reward token, hence the salt MUST be unpredictable to all other parties until the miner reveals it at minting time as the $\mathsf{salt}$ field of the mint transaction. The derived token identifier is $\mathsf{id} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$ (Sec.~\ref{sec:mint-tx}). \\\hline
       2. & $\mathsf{cbor}(T_e)$ & variable & CBOR encoding of the Unicity Trust Base entry $T_e$ for the new epoch, or CBOR nil if the UTB epoch has not changed since the last published checkpoint. \\\hline
     \end{tabular}
   \end{center}
@@ -146,7 +146,7 @@ Mining follows the standard PoW longest-chain paradigm. A miner:
   \item Selects the current chain tip as the parent block.
   \item Prepares the payload commitments (Sec.~\ref{sec:pow-payload}):
     \begin{enumerate}[nosep]
-      \item Samples a 32-byte salt $\mathsf{salt}_\mathsf{reward} \overset{\$}{\leftarrow} \{0,1\}^{256}$ (min-entropy $\ge 128$ bits) and stores it. The derived reward token identifier is $\mathsf{id}_\mathsf{reward} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$, globally unique across networks under collision-resistance of $H$.
+      \item Samples a 32-byte salt $\mathsf{salt}_\mathsf{reward} \overset{\$}{\leftarrow} \{0,1\}^{256}$ (min-entropy $\ge 128$ bits) and stores it as a secret. The salt is a commit-reveal preimage and MUST remain unpredictable to all other parties until revealed at minting time (Sec.~\ref{sec:pow-reward-minting}); deterministic derivations from publicly observable block data are NOT acceptable. The derived reward token identifier is $\mathsf{id}_\mathsf{reward} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$, globally unique across networks under collision-resistance of $H$.
       \item Obtains the new Unicity Trust Base entry $T_e$ if one is published, validates it against the authentic Unicity Trust Base (Sec.~\ref{sec:snapshot-publishing}); otherwise uses the CBOR nil value.
       \item Computes $\texttt{payloadRoot} \;=\; H(H(\mathsf{salt}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e)))$.
     \end{enumerate}

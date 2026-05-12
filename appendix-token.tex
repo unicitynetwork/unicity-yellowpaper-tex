@@ -167,13 +167,13 @@ $D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}
 \hline
 0 & unsigned integer & Network Identifier $\alpha$ (Sec.~\ref{sec:networks}) \\
 1 & byte string & Recipient: CBOR-encoded first owner's predicate $\mathsf{CBOR}(\predi')$ (Sec.~\ref{app:predicate-encoding}); by convention $\predi' = \predi_\mathsf{sig}(\mathsf{pk'})$ \\
-2 & byte string & Token identifier salt $\mathsf{salt}$ (32 bytes; sampled uniformly at random with at least 128 bits of min-entropy). \\
+2 & byte string & Token identifier salt $\mathsf{salt}$ (32 bytes). \\
 3 & byte string & Token Type $\mathsf{ty}$ (32 bytes) \\
 4 & byte string & Mint Reason $\mathsf{reason}$ (optional, arbitrary length) \\
 5 & byte string & Auxiliary Payload $\auxd'$ (optional, arbitrary length) \\
 \end{longtable}
 
-The implicit token identifier is derived as $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (Sec.~\ref{app:hash-derivations}).
+The implicit token identifier is derived as $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (Sec.~\ref{app:hash-derivations}) from the unique salt chosen by the minter.
 
 \subsection{Transfer Transaction}
 

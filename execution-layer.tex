@@ -68,7 +68,7 @@ D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason},
 	\begin{itemize}
 		\item $\alpha \in \mathbb{A}$ -- network identifier, binding the token to a specific Unicity network instance
 		\item $\predi'$ -- spending predicate of the first owner
-		\item $\mathsf{salt} \in \{0,1\}^{256}$ -- token identifier salt, sampled uniformly at random with at least $128$ bits of min-entropy
+		\item $\mathsf{salt} \in \{0,1\}^{256}$ -- token identifier salt, chosen by the minter and required to be unique among the minter's salt choices (e.g.\ by uniform random sampling or by a local counter); $\mathsf{salt}$ has no masking role and need not be high-entropy
 		\item $\mathsf{ty}$ -- token type, classifying the token category, defining its mandatory validation rules
 		\item $\mathsf{reason}$ -- mint reason; content depends on the token type. Justifies minting this token, e.g., by proving minting authority
 		\item $\auxd'$ -- auxiliary payload (application-specific; e.g. asset value for fungible tokens)
@@ -476,7 +476,7 @@ where $v(\mathsf{aid})$ is the original value and $v_j(\mathsf{aid})$ is the val
 
 The split proceeds as follows:
 \begin{enumerate}
-	\item For each asset identifier $\mathsf{aid} \in \mathcal{A}$, construct a \emph{Sparse Merkle Sum Tree} $\mathcal{S}_\mathsf{aid}$ with leaves keyed by new token identifiers $\mathsf{id}_j = H(\mathsf{salt}_j, \alpha)$ derived from fresh, independently sampled salts $\mathsf{salt}_j \in \{0,1\}^{256}$, and valued by the respective asset amounts $v_j(\mathsf{aid})$.
+	\item For each asset identifier $\mathsf{aid} \in \mathcal{A}$, construct a \emph{Sparse Merkle Sum Tree} $\mathcal{S}_\mathsf{aid}$ with leaves keyed by new token identifiers $\mathsf{id}_j = H(\mathsf{salt}_j, \alpha)$ derived from distinct minter-chosen salts $\mathsf{salt}_j \in \{0,1\}^{256}$ (uniqueness among the minter's choices required; no masking role, no min-entropy requirement), and valued by the respective asset amounts $v_j(\mathsf{aid})$.
 	\item Construct an \emph{aggregation tree} $\mathcal{G}$ combining the root hashes of all per-asset sum trees.
 	\item \textbf{Burn the original token}: create a transfer transaction from $\mathcal{L}$ to the burn predicate $\predi_\mathsf{burn}(h_\mathsf{agg})$, where $h_\mathsf{agg}$ is the root hash of the aggregation tree $\mathcal{G}$. Certify this burn transaction via the Unicity Service.
 	\item \textbf{Mint each new token} $j \in \{1, \ldots, k\}$: create a mint transaction for token $\mathsf{id}_j$ on network $\alpha$ with $\mathsf{reason}$ set to a \emph{split reason proof} containing:
