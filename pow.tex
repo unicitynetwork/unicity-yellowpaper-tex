@@ -91,7 +91,7 @@ This 80-byte prefix is also the input to the RandomX function. The \texttt{hashR
 
 The \texttt{payloadRoot} field commits to two payload elements via a hash tree. Let $\mathsf{cbor}(\cdot)$ denote CBOR encoding\footnote{Concise Binary Object Representation (CBOR), RFC~7049.} and let $T_e$ be the Unicity Trust Base entry for the current epoch (or the CBOR nil value $\bot$ if no new entry is published in this block). The computation and validation rule is defined as:
 \[
-  \texttt{payloadRoot} \;=\; H(H(\mathsf{tokenId}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e))) \;.
+  \texttt{payloadRoot} \;=\; H(H(\mathsf{salt}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e))) \;.
 \]
 When no Trust Base entry is published, $\mathsf{cbor}(T_e)$ is the CBOR encoding of the nil value.
 
@@ -100,7 +100,7 @@ When no Trust Base entry is published, $\mathsf{cbor}(T_e)$ is the CBOR encoding
     \caption{PoW Block Payload (\texttt{vPayload}), serialized as a CBOR sequence.}\label{ta:pow-block-payload}
     \begin{tabular}{|p{0.5cm}|p{3.5cm}|p{1.5cm}|p{7.5cm}|}\hline
       No & Field & Size & Description \\\hline\hline
-      1. & $H(\mathsf{tokenId}_\mathsf{reward})$ & 32 B & Reward commitment leaf: hash of the reward token identifier chosen by the miner. The preimage $\mathsf{tokenId}_\mathsf{reward}$ remains in the miner's custody and is revealed only at minting time. \\\hline
+      1. & $H(\mathsf{salt}_\mathsf{reward})$ & 32 B & Reward commitment leaf: hash of the reward salt, a 32-byte uniformly random value chosen by the miner (min-entropy $\ge 128$ bits). The preimage $\mathsf{salt}_\mathsf{reward}$ remains in the miner's custody and is revealed only at minting time as the $\mathsf{salt}$ field of the mint transaction, from which the token identifier $\mathsf{id} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$ is derived (Sec.~\ref{sec:mint-tx}). \\\hline
       2. & $\mathsf{cbor}(T_e)$ & variable & CBOR encoding of the Unicity Trust Base entry $T_e$ for the new epoch, or CBOR nil if the UTB epoch has not changed since the last published checkpoint. \\\hline
     \end{tabular}
   \end{center}
@@ -146,9 +146,9 @@ Mining follows the standard PoW longest-chain paradigm. A miner:
   \item Selects the current chain tip as the parent block.
   \item Prepares the payload commitments (Sec.~\ref{sec:pow-payload}):
     \begin{enumerate}[nosep]
-      \item Chooses a reward token identifier $\mathsf{tokenId}_\mathsf{reward}$ unique within the network identifier $\alpha$ and stores it (e.g., by using a pseudo-random seed and a counter).
+      \item Samples a 32-byte salt $\mathsf{salt}_\mathsf{reward} \overset{\$}{\leftarrow} \{0,1\}^{256}$ (min-entropy $\ge 128$ bits) and stores it. The derived reward token identifier is $\mathsf{id}_\mathsf{reward} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$, globally unique across networks under collision-resistance of $H$.
       \item Obtains the new Unicity Trust Base entry $T_e$ if one is published, validates it against the authentic Unicity Trust Base (Sec.~\ref{sec:snapshot-publishing}); otherwise uses the CBOR nil value.
-      \item Computes $\texttt{payloadRoot} \;=\; H(H(\mathsf{tokenId}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e)))$.
+      \item Computes $\texttt{payloadRoot} \;=\; H(H(\mathsf{salt}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e)))$.
     \end{enumerate}
   \item Assembles the header with current timestamp, difficulty target from ASERT, \texttt{payloadRoot}, and \texttt{hashPrevBlock} $= H(\text{parent})$.
   \item Iterates \texttt{nNonce} values. For each candidate, computes the block hash $h_B = H(\texttt{nVersion} \| \texttt{hashPrevBlock} \| \texttt{payloadRoot} \| \texttt{nTime} \| \texttt{nBits} \| \texttt{nNonce})$ and the RandomX commitment $\texttt{hashRandomX} = \Call{RandomX}{h_B}$, until \texttt{hashRandomX} meets the difficulty target \texttt{nBits}.
@@ -211,7 +211,7 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
       Network identifier ($\alpha$) & The Unicity network instance in which the reward token can be minted \\\hline
       Token type ($\mathsf{ty}$) & $\mathsf{ALPHA}$ \\\hline
       Owner predicate ($\predi'$) & Miner's chosen spending predicate \\\hline
-      Token identifier ($\mathsf{id}$) & $\mathsf{tokenId}_\mathsf{reward}$: the identifier whose hash $\ell_0 = H(\mathsf{tokenId}_\mathsf{reward})$ is committed via \texttt{payloadRoot} of the mined block \\\hline
+      Token identifier salt ($\mathsf{salt}$) & $\mathsf{salt}_\mathsf{reward}$: the 32-byte salt whose hash $\ell_0 = H(\mathsf{salt}_\mathsf{reward})$ is committed via \texttt{payloadRoot} of the mined block. The derived token identifier is $\mathsf{id} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$ \\\hline
       Mint reason ($\mathsf{reason}$) & Composite proof structure defined in Table~\ref{ta:pow-mint-reason} \\\hline
       Auxiliary payload ($\auxd'$) & Initial fungible payload containing value $\Call{RewardRate}{h}$ for $\mathsf{ALPHA}$ at block height $h$ \\\hline
     \end{tabular}
@@ -249,12 +249,12 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
       \State $\auxd' \gets \{(\mathsf{ALPHA}, \Call{RewardRate}{h})\}$
       \State
       \State \Comment{Step 4: Construct mint transaction (Sec.~\ref{sec:mint-tx})}
-      \State $\mathsf{id} \gets \mathsf{tokenId}_\mathsf{reward}$  \Comment{Preimage of $\ell_0$ committed in $B_h.\texttt{payloadRoot}$}
+      \State $\mathsf{salt} \gets \mathsf{salt}_\mathsf{reward}$  \Comment{Preimage of $\ell_0 = H(\mathsf{salt}_\mathsf{reward})$ committed in $B_h.\texttt{payloadRoot}$}
       \State $\predi' \gets \Call{OwnerPredicate}{\mathsf{sk}_\mathsf{miner}}$
-      \State $D_\mathsf{mint} \gets (\alpha, \predi', \mathsf{id}, \mathsf{ALPHA}, \mathsf{reason}, \auxd')$
+      \State $D_\mathsf{mint} \gets (\alpha, \predi', \mathsf{salt}, \mathsf{ALPHA}, \mathsf{reason}, \auxd')$
       \State
       \State \Comment{Step 5: Submit to Unicity Service}
-      \State $\sthash \gets H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
+      \State $\sthash \gets H(H(\mathsf{salt}, \alpha), \mathsf{MINT\_SUFFIX})$ \Comment{$\mathsf{id} = H(\mathsf{salt}, \alpha)$, then mint source state hash}
       \State $\txhash \gets H(D_\mathsf{mint})$
       \State $u_0 \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, H(\sthash, \txhash))$  \Comment{Known constants, network specific}
       \State $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, u_0)$
@@ -274,7 +274,7 @@ Verification of a reward token by a recipient requires checking the mint reason 
       \State \Comment{1. Verify the mined block is valid and contains the reward claim}
       \State ensure($\Call{ValidatePoWBlock}{B_h, \mathcal{T}}$)
       \State $(\ell_0,\; \_) \gets \Call{CborDecode}{B_h.\texttt{vPayload}}$
-      \State ensure($\ell_0 = H(D_\mathsf{mint}.\mathsf{id})$) \Comment{Reward commitment matches token id}
+      \State ensure($\ell_0 = H(D_\mathsf{mint}.\mathsf{salt})$) \Comment{Reward commitment matches the salt revealed in the mint transaction}
       \State
       \State \Comment{2. Verify chain of blocks from mined block to certified block}
       \State $\mathsf{prev} \gets H(B_h)$ \Comment{$H$ over fields 1--6 of $B_h$}

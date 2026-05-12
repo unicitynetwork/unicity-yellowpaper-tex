@@ -60,7 +60,7 @@ where $T_0^\mathsf{cert}$ is a certified mint transaction and $T_i^\mathsf{cert}
 \index{mint transaction!structure}
 A \emph{certified mint transaction} is a tuple $(T_0, u_0, \pi_0)$, where $T_0 = (\sthash, D_\mathsf{mint})$ and
 \[
-D_\mathsf{mint} = (\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd') .
+D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd') .
 \]
 \begin{itemize}
 	\item $\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$ -- source state hash, for state identifier derivation
@@ -68,7 +68,7 @@ D_\mathsf{mint} = (\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \
 	\begin{itemize}
 		\item $\alpha \in \mathbb{A}$ -- network identifier, binding the token to a specific Unicity network instance
 		\item $\predi'$ -- spending predicate of the first owner
-		\item $\mathsf{id} \in \idtype$ -- token identifier, unique within network $\alpha$
+		\item $\mathsf{salt} \in \{0,1\}^{256}$ -- token identifier salt, sampled uniformly at random with at least $128$ bits of min-entropy
 		\item $\mathsf{ty}$ -- token type, classifying the token category, defining its mandatory validation rules
 		\item $\mathsf{reason}$ -- mint reason; content depends on the token type. Justifies minting this token, e.g., by proving minting authority
 		\item $\auxd'$ -- auxiliary payload (application-specific; e.g. asset value for fungible tokens)
@@ -76,6 +76,12 @@ D_\mathsf{mint} = (\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \
 	\item $u_0$ -- unlocking argument (signature with $\mathsf{sk}_\mathsf{mint}$)
 	\item $\pi_0$ -- inclusion proof from the Unicity Service
 \end{itemize}
+
+The \emph{token identifier}\index{token!identifier} is derived as
+\[
+\mathsf{id} \;:=\; H(\mathsf{salt}, \alpha) \;\in\; \idtype \;.
+\]
+This ensures that two tokens minted on different networks cannot induce colliding state identifiers.
 
 $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant. The minting key pair $(\mathsf{sk}_\mathsf{mint}, \mathsf{pk}_\mathsf{mint})$ is a public constant; it serves only to provide a uniform request interface with the Unicity Service. Values: Appendix~\ref{app:el-constants}.
 
@@ -91,11 +97,13 @@ $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant
 \paragraph{Verifying a certified mint transaction} $(T_0, u_0, \pi_0)$ against trust base $\mathcal{T}$, using known, fixed mint keys:
 \begin{enumerate}
 	\item require $T_0.D_\mathsf{mint}.\alpha = \pi_0.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$
-	\item $T_0.\sthash = H(T_0.D_\mathsf{mint}.\mathsf{id}, \mathsf{MINT\_SUFFIX})$
+	\item derive $\mathsf{id} \gets H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha)$;\; require $T_0.\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
 	\item $\mathsf{Verify}(\mathsf{pk}_\mathsf{mint}, H(\sthash, \txhash), u_0) = 1$, where $\txhash = H(D_\mathsf{mint})$
 	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), \txhash, \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
 	\item Token type-specific checks on $\mathsf{reason}$ and $\auxd'$ (e.g. mint reason validity and auxiliary payload format and semantics check)
 \end{enumerate}
+
+Correctness of the token id derivation is enforced implicitly by step~2: $\sthash$ is bound to $\mathsf{id}$ by the source-state-hash check, and $\mathsf{id}$ is recomputed from $(\mathsf{salt}, \alpha)$.
 
 
 \subsubsection{Transfer Transaction}\label{sec:transfer-tx}
@@ -151,7 +159,7 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 	\If {$T_0.D_\mathsf{mint}.\alpha \ne \mathcal{T}.\alpha$} \Return \FALSE \EndIf
 	\If {$\neg \Call{VerifyMintTransaction}{T_0, u_0, \pi_0, \mathcal{T}}$} \Return \FALSE \EndIf
 	\State $\predi^0 \gets T_0.D_\mathsf{mint}.\predi'$
-	\State $h^0 \gets H(T_0.D_\mathsf{mint}.\mathsf{id}, \mathsf{MINT\_SUFFIX})$
+	\State $h^0 \gets H(H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha), \mathsf{MINT\_SUFFIX})$
 	\For {$i \gets 1 \ldots n$}
 		\State \Parse $T_i^\mathsf{cert}$ \textbf{as} $(T_i, u_i, \txhash_i, \pi_i)$
 		\If {$\neg \Call{VerifyTransferTransaction}{T_i, u_i, \txhash_i, \pi_i, \predi^{i-1}, h^{i-1}, \mathcal{T}}$} \Return \FALSE \EndIf
@@ -468,7 +476,7 @@ where $v(\mathsf{aid})$ is the original value and $v_j(\mathsf{aid})$ is the val
 
 The split proceeds as follows:
 \begin{enumerate}
-	\item For each asset identifier $\mathsf{aid} \in \mathcal{A}$, construct a \emph{Sparse Merkle Sum Tree} $\mathcal{S}_\mathsf{aid}$ with leaves keyed by new token identifiers $\mathsf{id}_j$ unique within network $\alpha$ and valued by the respective asset amounts $v_j(\mathsf{aid})$.
+	\item For each asset identifier $\mathsf{aid} \in \mathcal{A}$, construct a \emph{Sparse Merkle Sum Tree} $\mathcal{S}_\mathsf{aid}$ with leaves keyed by new token identifiers $\mathsf{id}_j = H(\mathsf{salt}_j, \alpha)$ derived from fresh, independently sampled salts $\mathsf{salt}_j \in \{0,1\}^{256}$, and valued by the respective asset amounts $v_j(\mathsf{aid})$.
 	\item Construct an \emph{aggregation tree} $\mathcal{G}$ combining the root hashes of all per-asset sum trees.
 	\item \textbf{Burn the original token}: create a transfer transaction from $\mathcal{L}$ to the burn predicate $\predi_\mathsf{burn}(h_\mathsf{agg})$, where $h_\mathsf{agg}$ is the root hash of the aggregation tree $\mathcal{G}$. Certify this burn transaction via the Unicity Service.
 	\item \textbf{Mint each new token} $j \in \{1, \ldots, k\}$: create a mint transaction for token $\mathsf{id}_j$ on network $\alpha$ with $\mathsf{reason}$ set to a \emph{split reason proof} containing:

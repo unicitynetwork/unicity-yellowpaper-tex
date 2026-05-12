@@ -160,19 +160,20 @@ If a sender wishes to commit only to a hash of a complex predicate (hiding its s
 \subsection{Mint Transaction}
 
 A mint transaction is encoded as a CBOR array with six elements, ordered as
-$D_\mathsf{mint} = (\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd')$:
+$D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$:
 
 \begin{longtable}{clp{10cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
 0 & unsigned integer & Network Identifier $\alpha$ (Sec.~\ref{sec:networks}) \\
 1 & byte string & Recipient: CBOR-encoded first owner's predicate $\mathsf{CBOR}(\predi')$ (Sec.~\ref{app:predicate-encoding}); by convention $\predi' = \predi_\mathsf{sig}(\mathsf{pk'})$ \\
-2 & byte string & Token Identifier $\mathsf{id}$ (32 bytes; unique within network $\alpha$) \\
+2 & byte string & Token identifier salt $\mathsf{salt}$ (32 bytes; sampled uniformly at random with at least 128 bits of min-entropy). \\
 3 & byte string & Token Type $\mathsf{ty}$ (32 bytes) \\
 4 & byte string & Mint Reason $\mathsf{reason}$ (optional, arbitrary length) \\
 5 & byte string & Auxiliary Payload $\auxd'$ (optional, arbitrary length) \\
 \end{longtable}
 
+The implicit token identifier is derived as $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (Sec.~\ref{app:hash-derivations}).
 
 \subsection{Transfer Transaction}
 
@@ -217,6 +218,14 @@ A token is encoded as a CBOR array with two elements:
 
 All hash derivations use SHA-256 over CBOR-encoded inputs.
 
+\subsection{Token Identifier}
+
+The token identifier is derived from the mint-transaction salt and network identifier:
+\[
+\mathsf{id} = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{salt}, \alpha))
+\]
+where $\mathsf{salt}$ is the 32-byte field at index 2 of $D_\mathsf{mint}$ and $\alpha$ is the network identifier at index 0.
+
 \subsection{State Identifier}
 
 The state identifier is derived from the predicate and state hash:
@@ -228,7 +237,7 @@ The state identifier is derived from the predicate and state hash:
 
 For mint transactions:
 \[
-\sthash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{id}, \mathsf{MINT\_SUFFIX}))
+\sthash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{id}, \mathsf{MINT\_SUFFIX})), \quad \text{where } \mathsf{id} = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{salt}, \alpha))
 \]
 
 For transfer transactions, the next state hash:
@@ -240,7 +249,7 @@ For transfer transactions, the next state hash:
 
 For mint transactions:
 \[
-\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\alpha, \predi', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd'))
+\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd'))
 \]
 
 For transactions:
