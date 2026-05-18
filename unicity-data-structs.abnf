@@ -145,8 +145,9 @@
   ;   htlc        : CBOR array[2]: [x (bstr), s (65-byte bstr)]
 
 ; --- Transactions ---
-  MintTransaction = Recipient TokenId TokenType MintReason Data
-      ;~$T\_0 = (\nu', \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd')$ -- CBOR array[5]
+  MintTransaction = NetworkIdentifier Recipient Salt TokenType MintReason Data
+      ;~$T\_0 = (\alpha, \nu', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$ -- CBOR array[6]
+      ;~Token identifier is derived: $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (see Hash Derivations)
 
   TransferTransaction = SourceStateHash UnlockingArgument Recipient StateMask Data
       ;~$T = (h_\mathsf{st}, u, \nu', x, \auxd')$ -- CBOR array[5]
@@ -158,7 +159,8 @@
       ;~$\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$ -- CBOR array[2]: [genesis, [transfers...]]
 
 ; --- Fields ---
-  TokenId = Bytes32  ;~$\mathsf{id}$ -- globally unique token identifier (32 bytes)
+  Salt = Bytes32  ;~$\mathsf{salt}$ -- 32-byte minter-chosen salt, required to be unique among the minter's choices
+  ; used to derive token identifier $\mathsf{id} = H(\mathsf{salt}, \alpha)$
   TokenType = Bytes32  ;~$\mathsf{ty}$ -- token type classifier (32 bytes)
   MintReason = Bytes  ;~$\mathsf{reason}$ -- mint reason (justification)
   SourceStateHash = Hash  ;~$h_\mathsf{st}$ -- current state hash (32 bytes)
@@ -178,9 +180,10 @@
       ;~$Q = (\nu, h_\mathsf{st}, h_\mathsf{tx}, u)$ -- CBOR array[4], submitted to Unicity Service
 
 ; --- Hash Derivations ---
+  ; $\mathsf{id} = H(\mathsf{salt}, \alpha)$~-- token identifier (derived; globally unique across networks)
   ; $h_\mathsf{st} = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$~-- mint source state hash
   ; $h_\mathsf{st}' = H(h_\mathsf{st}, x)$~-- next state hash
-  ; $h_\mathsf{tx} = H(\mathsf{recipient}, \mathsf{id}, \mathsf{ty}, \mathsf{reason}, \auxd')$~-- mint transaction hash (value in Unicity Service)
+  ; $h_\mathsf{tx} = H(\alpha, \mathsf{recipient}, \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$~-- mint transaction hash (the value in Unicity Service if seen as key-value store)
   ; $h_\mathsf{tx} = H(\mathsf{recipient}, x, \auxd')$~-- transfer transaction hash (value in Unicity Service)
 
 ; --- Fungible Token Structures ---

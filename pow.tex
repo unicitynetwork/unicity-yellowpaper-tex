@@ -91,7 +91,7 @@ This 80-byte prefix is also the input to the RandomX function. The \texttt{hashR
 
 The \texttt{payloadRoot} field commits to two payload elements via a hash tree. Let $\mathsf{cbor}(\cdot)$ denote CBOR encoding\footnote{Concise Binary Object Representation (CBOR), RFC~7049.} and let $T_e$ be the Unicity Trust Base entry for the current epoch (or the CBOR nil value $\bot$ if no new entry is published in this block). The computation and validation rule is defined as:
 \[
-  \texttt{payloadRoot} \;=\; H(H(\mathsf{tokenId}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e))) \;.
+  \texttt{payloadRoot} \;=\; H(H(\mathsf{salt}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e))) \;.
 \]
 When no Trust Base entry is published, $\mathsf{cbor}(T_e)$ is the CBOR encoding of the nil value.
 
@@ -100,7 +100,7 @@ When no Trust Base entry is published, $\mathsf{cbor}(T_e)$ is the CBOR encoding
     \caption{PoW Block Payload (\texttt{vPayload}), serialized as a CBOR sequence.}\label{ta:pow-block-payload}
     \begin{tabular}{|p{0.5cm}|p{3.5cm}|p{1.5cm}|p{7.5cm}|}\hline
       No & Field & Size & Description \\\hline\hline
-      1. & $H(\mathsf{tokenId}_\mathsf{reward})$ & 32 B & Reward commitment leaf: hash of the reward token identifier chosen by the miner. The preimage $\mathsf{tokenId}_\mathsf{reward}$ remains in the miner's custody and is revealed only at minting time. \\\hline
+      1. & $H(\mathsf{salt}_\mathsf{reward})$ & 32 B & Reward commitment leaf: hash of the reward salt $\mathsf{salt}_\mathsf{reward}$, a 32-byte secret sampled with at least $128$ bits of min-entropy and held in the miner's custody. The salt acts as a commit-reveal preimage: knowledge of $\mathsf{salt}_\mathsf{reward}$ is what entitles a party to mint the corresponding reward token, hence the salt MUST be unpredictable to all other parties until the miner reveals it at minting time as the $\mathsf{salt}$ field of the mint transaction. The derived token identifier is $\mathsf{id} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$ (Sec.~\ref{sec:mint-tx}). \\\hline
       2. & $\mathsf{cbor}(T_e)$ & variable & CBOR encoding of the Unicity Trust Base entry $T_e$ for the new epoch, or CBOR nil if the UTB epoch has not changed since the last published checkpoint. \\\hline
     \end{tabular}
   \end{center}
@@ -146,9 +146,9 @@ Mining follows the standard PoW longest-chain paradigm. A miner:
   \item Selects the current chain tip as the parent block.
   \item Prepares the payload commitments (Sec.~\ref{sec:pow-payload}):
     \begin{enumerate}[nosep]
-      \item Chooses a unique reward token identifier $\mathsf{tokenId}_\mathsf{reward}$ and stores it (e.g., by using a pseudo-random seed and a counter).
+      \item Samples a 32-byte salt $\mathsf{salt}_\mathsf{reward} \overset{\$}{\leftarrow} \{0,1\}^{256}$ (min-entropy $\ge 128$ bits) and stores it as a secret. The salt is a commit-reveal preimage and MUST remain unpredictable to all other parties until revealed at minting time (Sec.~\ref{sec:pow-reward-minting}); deterministic derivations from publicly observable block data are NOT acceptable. The derived reward token identifier is $\mathsf{id}_\mathsf{reward} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$, globally unique across networks under collision-resistance of $H$.
       \item Obtains the new Unicity Trust Base entry $T_e$ if one is published, validates it against the authentic Unicity Trust Base (Sec.~\ref{sec:snapshot-publishing}); otherwise uses the CBOR nil value.
-      \item Computes $\texttt{payloadRoot} \;=\; H(H(\mathsf{tokenId}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e)))$.
+      \item Computes $\texttt{payloadRoot} \;=\; H(H(\mathsf{salt}_\mathsf{reward}) \;\|\; H(\mathsf{cbor}(T_e)))$.
     \end{enumerate}
   \item Assembles the header with current timestamp, difficulty target from ASERT, \texttt{payloadRoot}, and \texttt{hashPrevBlock} $= H(\text{parent})$.
   \item Iterates \texttt{nNonce} values. For each candidate, computes the block hash $h_B = H(\texttt{nVersion} \| \texttt{hashPrevBlock} \| \texttt{payloadRoot} \| \texttt{nTime} \| \texttt{nBits} \| \texttt{nNonce})$ and the RandomX commitment $\texttt{hashRandomX} = \Call{RandomX}{h_B}$, until \texttt{hashRandomX} meets the difficulty target \texttt{nBits}.
@@ -186,6 +186,7 @@ The steps to validate a block are documented by Algorithm~\ref{alg:pow-validate}
       \If{$\mathsf{cbor\_Te} \ne \Call{CborNil}{}$}
         \State $T_e \gets \Call{CborDecode}{\mathsf{cbor\_Te}}$
         \State $T_{e-1} \gets \mathcal{T}_\mathsf{local}[T_e.e - 1]$ \Comment{Last locally verified entry}
+        \State ensure($T_e.\alpha = T_{e-1}.\alpha = \mathcal{T}_\mathsf{local}.\alpha$) \Comment{Checkpoint is for the same network}
         \State ensure($T_e.e = T_{e-1}.e + 1$) \Comment{Sequential epoch number}
         \State ensure($T_e.h_{e-1} = H(T_{e-1})$) \Comment{Hash chain linkage}
         \State ensure($\Call{VerifySig}{T_e.s_{e-1},\; T_e,\; T_{e-1}.\mathcal{V}}$) \Comment{Signed by previous validators}
@@ -207,9 +208,10 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
     \caption{Block Reward Token.}\label{ta:pow-reward}
     \begin{tabular}{|p{4cm}|p{9.5cm}|}\hline
       Field & Value \\\hline\hline
-      Owner predicate ($\predi'$) & Miner's chosen spending predicate \\\hline
-      Token identifier ($\mathsf{id}$) & $\mathsf{tokenId}_\mathsf{reward}$: the identifier whose hash $\ell_0 = H(\mathsf{tokenId}_\mathsf{reward})$ is committed via \texttt{payloadRoot} of the mined block \\\hline
+      Network identifier ($\alpha$) & The Unicity network instance in which the reward token can be minted \\\hline
       Token type ($\mathsf{ty}$) & $\mathsf{ALPHA}$ \\\hline
+      Owner predicate ($\predi'$) & Miner's chosen spending predicate \\\hline
+      Token identifier salt ($\mathsf{salt}$) & $\mathsf{salt}_\mathsf{reward}$: the 32-byte salt whose hash $\ell_0 = H(\mathsf{salt}_\mathsf{reward})$ is committed via \texttt{payloadRoot} of the mined block. The derived token identifier is $\mathsf{id} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$ \\\hline
       Mint reason ($\mathsf{reason}$) & Composite proof structure defined in Table~\ref{ta:pow-mint-reason} \\\hline
       Auxiliary payload ($\auxd'$) & Initial fungible payload containing value $\Call{RewardRate}{h}$ for $\mathsf{ALPHA}$ at block height $h$ \\\hline
     \end{tabular}
@@ -232,7 +234,7 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
 \begin{algorithm}[!htbp]
   \caption{Block Reward Token Minting Process}\label{alg:pow-reward}
   \begin{algorithmic}[0]
-    \Function{MintRewardToken}{$B_h, \mathsf{sk}_\mathsf{miner}, \mathcal{T}$}
+    \Function{MintRewardToken}{$\alpha, B_h, \mathsf{sk}_\mathsf{miner}, \mathcal{T}$}
       \State \Comment{Precondition: $B_h$ is a valid PoW block mined by this miner}
       \State
       \State \Comment{Step 1: Wait for Finality Gadget certification}
@@ -247,14 +249,14 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
       \State $\auxd' \gets \{(\mathsf{ALPHA}, \Call{RewardRate}{h})\}$
       \State
       \State \Comment{Step 4: Construct mint transaction (Sec.~\ref{sec:mint-tx})}
-      \State $\mathsf{id} \gets \mathsf{tokenId}_\mathsf{reward}$  \Comment{Preimage of $\ell_0$ committed in $B_h.\texttt{payloadRoot}$}
+      \State $\mathsf{salt} \gets \mathsf{salt}_\mathsf{reward}$  \Comment{Preimage of $\ell_0 = H(\mathsf{salt}_\mathsf{reward})$ committed in $B_h.\texttt{payloadRoot}$}
       \State $\predi' \gets \Call{OwnerPredicate}{\mathsf{sk}_\mathsf{miner}}$
-      \State $D_\mathsf{mint} \gets (\predi', \mathsf{id}, \mathsf{ALPHA}, \mathsf{reason}, \auxd')$
+      \State $D_\mathsf{mint} \gets (\alpha, \predi', \mathsf{salt}, \mathsf{ALPHA}, \mathsf{reason}, \auxd')$
       \State
       \State \Comment{Step 5: Submit to Unicity Service}
-      \State $\sthash \gets H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
+      \State $\sthash \gets H(H(\mathsf{salt}, \alpha), \mathsf{MINT\_SUFFIX})$ \Comment{$\mathsf{id} = H(\mathsf{salt}, \alpha)$, then mint source state hash}
       \State $\txhash \gets H(D_\mathsf{mint})$
-      \State $u_0 \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, H(\sthash, \txhash))$
+      \State $u_0 \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, H(\sthash, \txhash))$  \Comment{Known constants, network specific}
       \State $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, u_0)$
       \State \Call{SubmitToUnicityService}{$Q$}
     \EndFunction
@@ -272,7 +274,7 @@ Verification of a reward token by a recipient requires checking the mint reason 
       \State \Comment{1. Verify the mined block is valid and contains the reward claim}
       \State ensure($\Call{ValidatePoWBlock}{B_h, \mathcal{T}}$)
       \State $(\ell_0,\; \_) \gets \Call{CborDecode}{B_h.\texttt{vPayload}}$
-      \State ensure($\ell_0 = H(D_\mathsf{mint}.\mathsf{id})$) \Comment{Reward commitment matches token id}
+      \State ensure($\ell_0 = H(D_\mathsf{mint}.\mathsf{salt})$) \Comment{Reward commitment matches the salt revealed in the mint transaction}
       \State
       \State \Comment{2. Verify chain of blocks from mined block to certified block}
       \State $\mathsf{prev} \gets H(B_h)$ \Comment{$H$ over fields 1--6 of $B_h$}
@@ -284,10 +286,12 @@ Verification of a reward token by a recipient requires checking the mint reason 
       \State
       \State \Comment{3. Verify Finality Gadget certificate covers the chain tip}
       \State ensure($\Call{VerifyUnicityCert}{\mathsf{cert}_\mathsf{FG}, \mathcal{T}}$)
+      \State ensure($\mathsf{cert}_\mathsf{FG}.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$)
       \State ensure($\mathsf{cert}_\mathsf{FG}.\beta = \beta_\mathsf{FP}$) \Comment{FG partition}
       \State ensure($\mathsf{cert}_\mathsf{FG}$ certifies $\mathsf{prev}$) \Comment{Certified block matches chain tip}
       \State
       \State \Comment{4. Verify reward value is correct for the block height}
+      \State ensure($D_\mathsf{mint}.\alpha = \mathcal{T}.\alpha$)
       \State ensure($D_\mathsf{mint}.\mathsf{ty} = \mathsf{ALPHA}$)
       \State ensure($\Call{ValueOf}{D_\mathsf{mint}.\auxd', \mathsf{ALPHA}} = \Call{RewardRate}{B_h.\mathsf{height}}$)
       \State \Return $1$
@@ -347,7 +351,7 @@ Snapshot publishing\index{snapshot publishing} is the process by which BFT Core 
     \State
     \Function{PrepareCheckpoint}{}
       \State \Comment{Query for new Trust Base entries}
-      \State $\mathcal{T}_\mathsf{new} \gets \Call{GetTrustBase}{\alpha, e_\mathsf{latest}+1}$
+      \State $\mathcal{T}_\mathsf{new} \gets \Call{GetTrustBase}{\mathcal{T}_\mathsf{local}.\alpha, e_\mathsf{latest}+1}$
         \Comment{Via REST API from BFT Core / aggregation nodes}
       \If{$\mathcal{T}_\mathsf{new} = \NULL$}
         \State \Return $\Call{CborNil}{}$ \Comment{No new checkpoint; payload leaf $\ell_1 = H(\mathsf{cbor}(\bot))$}
@@ -355,6 +359,7 @@ Snapshot publishing\index{snapshot publishing} is the process by which BFT Core 
       \State
       \State \Comment{Validate each new entry against the local Trust Base}
       \ForAll{$T_e \in \mathcal{T}_\mathsf{new}$}
+        \State ensure($T_e.\alpha = \mathcal{T}_\mathsf{local}.\alpha$) \Comment{Trust Base entry belongs to this network}
         \State ensure($T_e.e = e_\mathsf{latest} + 1$) \Comment{Sequential epochs}
         \State ensure($T_e.h_{e-1} = H(\mathcal{T}_\mathsf{local}[e_\mathsf{latest}])$) \Comment{Hash chain}
         \State ensure($\Call{VerifySig}{T_e.s_{e-1}, T_e, \mathcal{T}_\mathsf{local}[e_\mathsf{latest}].\mathcal{V}}$)
@@ -483,6 +488,48 @@ Upon receiving a token, the maximalist verifier checks:
   \item The PoW block containing the relevant checkpoint has accumulated sufficient confirmations ($d_\mathsf{maxi}$) to be considered final under the longest chain rule.
 \end{enumerate}
 
+The procedure is summarized in Algorithm~\ref{alg:maxi-verify}. It is a wrapper around the standard token verification algorithm of Sec.~\ref{sec:token-verification}: it derives the Unicity Trust Base $\mathcal{T}_\mathsf{PoW}$ from the live PoW chain, then calls $\mathsf{VerifyToken}$. The PoW validator may be operated by the verifier locally or hosted by a trusted entity; in either case it is accessed over the standard PoW node RPC interface.
+
+\begin{algorithm}[!htbp]
+  \caption{Maximalist Token Verification}\label{alg:maxi-verify}
+  \begin{algorithmic}[0]
+    \State \emph{State}:
+    \State $\mathcal{N}_\mathsf{PoW}$: handle to a live, fully synced PoW validator
+    \State $d_\mathsf{maxi}$: required confirmation depth
+    \State
+    \Function{VerifyTokenMaxi}{$\mathcal{L}$}
+      \State \Comment{Input: token $\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$}
+      \State
+      \State \Comment{Step 1: Identify the latest UC referenced by the token}
+      \State $\pi_n \gets$ inclusion proof component of $T_n^\mathsf{cert}$ \Comment{Last transaction in the chain}
+      \State $UC^\star \gets \pi_n.UC$
+      \State $\alpha \gets UC^\star.C^\mathsf{r}.\alpha$ \Comment{Network identifier}
+      \State $e^\star \gets UC^\star.C^\mathsf{r}.e_r$ \Comment{BFT Core epoch in which $UC^\star$ was issued}
+      \State
+      \State \Comment{Step 2: Wait for epoch $e^\star$ closure to be checkpointed and PoW-finalized}
+      \State $h^\star \gets \bot$;\quad $h_\mathsf{tip} \gets 0$
+      \While{$h^\star = \bot \;\textbf{or}\; h_\mathsf{tip} - h^\star < d_\mathsf{maxi}$}
+        \State \Call{WaitForNewBlocks}{$\mathcal{N}_\mathsf{PoW}$}
+        \State $h_\mathsf{tip} \gets \mathcal{N}_\mathsf{PoW}.\Call{GetChainTip}{}.\mathsf{height}$
+        \State \Comment{Lowest PoW height carrying a $T_e$ with $e \ge e^\star{+}1$, or $\bot$ if none}:
+        \State $h^\star \gets \mathcal{N}_\mathsf{PoW}.\Call{HeightOfFirstCheckpoint}{e \ge e^\star + 1}$
+      \EndWhile
+      \State
+      \State \Comment{Step 3: Pull the locally verified Trust Base from the PoW node}
+      \State $\mathcal{T}_\mathsf{PoW} \gets \mathcal{N}_\mathsf{PoW}.\Call{GetVerifiedTrustBase}{\alpha}$
+        \Comment{Entries reconstructed from PoW snapshots (Sec.~\ref{sec:snapshot-publishing})}
+      \State ensure($\mathcal{T}_\mathsf{PoW}.\alpha = \alpha$)
+      \State ensure($e^\star \le \max\{e : T_e \in \mathcal{T}_\mathsf{PoW}\} - 1$) \Comment{Token's epoch is closed in $\mathcal{T}_\mathsf{PoW}$}
+      \State
+      \State \Comment{Step 4: Standard token verification under the PoW-derived trust base}
+      \State ensure($\Call{VerifyToken}{\mathcal{L}, \mathcal{T}_\mathsf{PoW}}$) \Comment{Algorithm of Sec.~\ref{sec:token-verification}}
+      \State
+      \State \Comment{Step 5: Validate aggregator node's trustless operation based on consistency proofs}
+      \State ensure($\Call{VerifyConsistency}{\mathcal{L}, \mathcal{N}_\mathsf{PoW}, \mathcal{T}_\mathsf{PoW}}$)
+      \State \Return $1$
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
 
 
 \subsection{Practical Token Verification}\label{sec:practical-verification}
@@ -491,7 +538,7 @@ In the practical\index{practical verification} model, the root of trust is the v
 
 The Unicity Trust Base is compact: it grows by one entry per BFT Core epoch (a few aggregate signatures per week). A verifier initializes by obtaining and verifying $\mathcal{T}$; subsequent updates are incremental.
 
-Token verification is fast: a transaction is finalized and an inclusion proof returned within a few seconds of submission to the Unicity Service. The recipient can verify the token independently, without consulting external data beyond the previously obtained $\mathcal{T}$.
+Token verification is fast: a transaction is finalized and an inclusion proof returned within a few seconds of submission to the Unicity Service. The recipient runs the standard $\mathsf{VerifyToken}$ algorithm of Sec.~\ref{sec:token-verification} directly against the locally maintained $\mathcal{T}$, without consulting external data beyond the previously obtained Trust Base.
 
 
 \subsection{Comparison}\label{sec:trust-comparison}
