@@ -98,7 +98,8 @@ $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant
 \begin{enumerate}
 	\item require $T_0.D_\mathsf{mint}.\alpha = \pi_0.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$
 	\item derive $\mathsf{id} \gets H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha)$;\; require $T_0.\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
-	\item $\mathsf{Verify}(\mathsf{pk}_\mathsf{mint}, H(\sthash, \txhash), u_0) = 1$, where $\txhash = H(D_\mathsf{mint})$
+	\item $\txhash \gets H(D_\mathsf{mint})$;\; require $\txhash = \pi_0.\txhash$
+	\item $\mathsf{Verify}(\mathsf{pk}_\mathsf{mint}, H(\sthash, \txhash), u_0) = 1$
 	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), \txhash, \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
 	\item Token type-specific checks on $\mathsf{reason}$ and $\auxd'$ (e.g. mint reason validity and auxiliary payload format and semantics check)
 \end{enumerate}
@@ -109,7 +110,7 @@ Correctness of the token id derivation is enforced implicitly by step~2: $\sthas
 \subsubsection{Transfer Transaction}\label{sec:transfer-tx}
 
 \index{transfer transaction!structure}
-A \emph{certified transfer transaction} is a tuple $(T, u, \txhash, \pi)$, where $T = (\sthash, D)$:
+A \emph{certified transfer transaction} is a tuple $(T, u, \pi)$, where $T = (\sthash, D)$:
 \begin{itemize}
 	\item $D = (\predi', x, \auxd')$ -- transaction data:
 	\begin{itemize}
@@ -117,7 +118,6 @@ A \emph{certified transfer transaction} is a tuple $(T, u, \txhash, \pi)$, where
 		\item $x \gets \{0,1\}^\ell$ -- random value for state hash derivation
 		\item $\auxd'$ -- auxiliary data for the next state
 	\end{itemize}
-	\item $\txhash = H(D)$ -- transaction data hash
 	\item $u$ -- unlocking argument satisfying the current predicate $\predi$
 	\item $\pi$ -- inclusion proof from the Unicity Service
 \end{itemize}
@@ -131,10 +131,11 @@ A \emph{certified transfer transaction} is a tuple $(T, u, \txhash, \pi)$, where
 	\item $\pi \gets \unisrv(Q)$
 \end{enumerate}
 
-\paragraph{Verifying a certified transfer transaction} $(T, u, \txhash, \pi)$ in state $(\predi, h)$:
+\paragraph{Verifying a certified transfer transaction} $(T, u, \pi)$ in state $(\predi, h)$:
 \begin{enumerate}
 	\item $T.\sthash = h$ \quad (state hash matches expected)
 	\item $\pi.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$ \quad (inclusion proof is from the same network as the trust base)
+	\item $\txhash \gets H(T.D)$;\; require $\txhash = \pi.\txhash$ \quad (transaction data binds to the certified SMT leaf)
 	\item $\predi(\mathsf{time}(\pi), H(\sthash, \txhash), u) = 1$ \quad (predicate satisfied)
 	\item $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pi, \mathcal{CD}_\beta, \mathcal{T}) = 1$ \quad (inclusion proof valid and certified by the correct shard)
 	\item Additional token type-specific checks
@@ -161,8 +162,8 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 	\State $\predi^0 \gets T_0.D_\mathsf{mint}.\predi'$
 	\State $h^0 \gets H(H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha), \mathsf{MINT\_SUFFIX})$
 	\For {$i \gets 1 \ldots n$}
-		\State \Parse $T_i^\mathsf{cert}$ \textbf{as} $(T_i, u_i, \txhash_i, \pi_i)$
-		\If {$\neg \Call{VerifyTransferTransaction}{T_i, u_i, \txhash_i, \pi_i, \predi^{i-1}, h^{i-1}, \mathcal{T}}$} \Return \FALSE \EndIf
+		\State \Parse $T_i^\mathsf{cert}$ \textbf{as} $(T_i, u_i, \pi_i)$
+		\If {$\neg \Call{VerifyTransferTransaction}{T_i, u_i, \pi_i, \predi^{i-1}, h^{i-1}, \mathcal{T}}$} \Return \FALSE \EndIf
 		\State $\predi^{i} \gets T_i.D.\predi'$
 		\State $h^{i} \gets H(h^{i-1}, T_i.D.x)$
 	\EndFor
@@ -410,14 +411,14 @@ Figure~\ref{fi:exec-transaction-flow} illustrates one complete token transfer, f
             \end{messcall}
 
             % Sender sends certified transaction to recipient
-            \begin{messcall}{S}{$\mathcal{L} \cup (T, u, \txhash, \pinc)$}{R}
+            \begin{messcall}{S}{$\mathcal{L} \cup (T, u, \pinc)$}{R}
                 \postlevel
                 \postlevel
                 \postlevel
                 \postlevel
                 \begin{call}{R}{\shortstack[l]{
                     $T.\sthash \stackrel{?}{=} H(h^\textsf{prev}_\mathsf{st}, x_\textsf{prev})$ \\
-                    % $\pinc.UC.C^\mathsf{r}.\alpha \stackrel{?}{=} \mathcal{T}.\alpha$ \\
+                    $\txhash \gets H(D);\;\; \txhash \stackrel{?}{=} \pinc.\txhash$ \\
                     $\tau \gets \mathsf{time}(\pinc)$ \\
                     $\predi(\tau, H(\sthash, \txhash), u) \stackrel{?}{=} 1$ \\
                     $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pinc, \mathcal{CD}_\beta, \mathcal{T}) \stackrel{?}{=} 1$ \\
