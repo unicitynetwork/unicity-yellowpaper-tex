@@ -256,8 +256,8 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
       \State \Comment{Step 5: Submit to Unicity Service}
       \State $\sthash \gets H(H(\mathsf{salt}, \alpha), \mathsf{MINT\_SUFFIX})$ \Comment{$\mathsf{id} = H(\mathsf{salt}, \alpha)$, then mint source state hash}
       \State $\txhash \gets H(D_\mathsf{mint})$
-      \State $u_0 \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, H(\sthash, \txhash))$  \Comment{Known constants, network specific}
-      \State $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, u_0)$
+      \State $\sigma \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, H(\sthash, \txhash))$  \Comment{Known constants, network specific}
+      \State $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, \sigma)$
       \State \Call{SubmitToUnicityService}{$Q$}
     \EndFunction
   \end{algorithmic}

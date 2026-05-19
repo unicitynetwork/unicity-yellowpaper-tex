@@ -58,7 +58,7 @@ where $T_0^\mathsf{cert}$ is a certified mint transaction and $T_i^\mathsf{cert}
 \subsubsection{Mint Transaction}\label{sec:mint-tx}
 
 \index{mint transaction!structure}
-A \emph{certified mint transaction} is a tuple $(T_0, u_0, \pi_0)$, where $T_0 = (\sthash, D_\mathsf{mint})$ and
+A \emph{certified mint transaction} is a tuple $(T_0, \pi_0)$, where $T_0 = (\sthash, D_\mathsf{mint})$ and
 \[
 D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd') .
 \]
@@ -73,7 +73,6 @@ D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason},
 		\item $\mathsf{reason}$ -- mint reason; content depends on the token type. Justifies minting this token, e.g., by proving minting authority
 		\item $\auxd'$ -- auxiliary payload (application-specific; e.g. asset value for fungible tokens)
 	\end{itemize}
-	\item $u_0$ -- unlocking argument (signature with $\mathsf{sk}_\mathsf{mint}$)
 	\item $\pi_0$ -- inclusion proof from the Unicity Service
 \end{itemize}
 
@@ -94,12 +93,11 @@ $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant
 	\item $\pi_0 \gets \unisrv(Q)$
 \end{enumerate}
 
-\paragraph{Verifying a certified mint transaction} $(T_0, u_0, \pi_0)$ against trust base $\mathcal{T}$, using known, fixed mint keys:
+\paragraph{Verifying a certified mint transaction} $(T_0, \pi_0)$ against trust base $\mathcal{T}$, using known, fixed mint keys:
 \begin{enumerate}
 	\item require $T_0.D_\mathsf{mint}.\alpha = \pi_0.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$
 	\item derive $\mathsf{id} \gets H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha)$;\; require $T_0.\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
 	\item $\txhash \gets H(D_\mathsf{mint})$;\; require $\txhash = \pi_0.\txhash$
-	\item $\mathsf{Verify}(\mathsf{pk}_\mathsf{mint}, H(\sthash, \txhash), u_0) = 1$
 	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), \txhash, \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
 	\item Token type-specific checks on $\mathsf{reason}$ and $\auxd'$ (e.g. mint reason validity and auxiliary payload format and semantics check)
 \end{enumerate}
@@ -156,9 +154,9 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
-	\State \Parse $T_0^\mathsf{cert}$ \textbf{as} $(T_0, u_0, \pi_0)$
+	\State \Parse $T_0^\mathsf{cert}$ \textbf{as} $(T_0, \pi_0)$
 	\If {$T_0.D_\mathsf{mint}.\alpha \ne \mathcal{T}.\alpha$} \Return \FALSE \EndIf
-	\If {$\neg \Call{VerifyMintTransaction}{T_0, u_0, \pi_0, \mathcal{T}}$} \Return \FALSE \EndIf
+	\If {$\neg \Call{VerifyMintTransaction}{T_0, \pi_0, \mathcal{T}}$} \Return \FALSE \EndIf
 	\State $\predi^0 \gets T_0.D_\mathsf{mint}.\predi'$
 	\State $h^0 \gets H(H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha), \mathsf{MINT\_SUFFIX})$
 	\For {$i \gets 1 \ldots n$}
