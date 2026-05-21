@@ -274,7 +274,8 @@ Verification of a reward token by a recipient requires checking the mint reason 
       \State \Comment{1. Verify the mined block is valid and contains the reward claim}
       \State ensure($\Call{ValidatePoWBlock}{B_h, \mathcal{T}}$)
       \State $(\ell_0,\; \_) \gets \Call{CborDecode}{B_h.\texttt{vPayload}}$
-      \State ensure($\ell_0 = H(H(D_\mathsf{mint}.\mathsf{salt}, D_\mathsf{mint}.\alpha))$) \Comment{Reward commitment matches the token id generated from the salt revealed in the mint transaction}
+      \State $\mathsf{tokenId}_\mathsf{reward} \gets H(D_\mathsf{mint}.\mathsf{salt}, D_\mathsf{mint}.\alpha)$ \Comment{Reward token identifier}
+      \State ensure($\ell_0 = H(\mathsf{tokenId}_\mathsf{reward})$) \Comment{Token identifier matches the reward commitment}
       \State
       \State \Comment{2. Verify chain of blocks from mined block to certified block}
       \State $\mathsf{prev} \gets H(B_h)$ \Comment{$H$ over fields 1--6 of $B_h$}
