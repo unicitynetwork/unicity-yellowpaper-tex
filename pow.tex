@@ -210,7 +210,7 @@ The reward is a Unicity token minted through the standard minting process (Sec.~
       Field & Value \\\hline\hline
       Network identifier ($\alpha$) & The Unicity network instance in which the reward token can be minted \\\hline
       Owner predicate ($\predi'$) & Miner's chosen spending predicate \\\hline
-      Token identifier salt ($\mathsf{salt}$) & the 32-byte reward token salt $\mathsf{salt}_\mathsf{reward}$ that yields the reward token identifier $\mathsf{tokenId}_\mathsf{reward} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$ whose hash $\ell_0 = H(\mathsf{tokenId}_\mathsf{reward})$ was committed via \texttt{payloadRoot} of the mined block. \\\hline
+      Token identifier salt ($\mathsf{salt}$) & The 32-byte reward token salt $\mathsf{salt}_\mathsf{reward}$ that yields the reward token identifier $\mathsf{tokenId}_\mathsf{reward} = H(\mathsf{salt}_\mathsf{reward}, \alpha)$ whose hash $\ell_0 = H(\mathsf{tokenId}_\mathsf{reward})$ was committed via \texttt{payloadRoot} of the mined block. \\\hline
       Token type ($\mathsf{ty}$) & $\mathsf{ALPHA}$ \\\hline
       Mint reason ($\mathsf{reason}$) & Composite proof structure defined in Table~\ref{ta:pow-mint-reason} \\\hline
       Auxiliary payload ($\auxd'$) & Initial fungible payload containing value $\Call{RewardRate}{h}$ for $\mathsf{ALPHA}$ at block height $h$ \\\hline
