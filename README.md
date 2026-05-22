@@ -1,8 +1,37 @@
 # Unicity Yellowpaper
 
-## Pre-built PDF:
+Low-level specification for the Unicity protocol. The Yellowpaper is the
+best entry point for engineering details that are intentionally brief in
+the higher-level papers, including consensus-layer operation, data
+availability, and how aggregation shards operate as clusters of machines.
 
-[Unicity Yellowpaper (PDF)](https://github.com/unicitynetwork/unicity-yellowpaper-tex/releases/download/latest/unicity-yellowpaper.pdf)
+## Download
+
+- Latest PDF:
+  [unicity-yellowpaper.pdf](https://github.com/unicitynetwork/unicity-yellowpaper-tex/releases/download/latest/unicity-yellowpaper.pdf)
+- Source repository:
+  [github.com/unicitynetwork/unicity-yellowpaper-tex](https://github.com/unicitynetwork/unicity-yellowpaper-tex/)
+
+## Unicity Paper Map
+
+- [Unicity Whitepaper](https://github.com/unicitynetwork/whitepaper)
+  ([PDF](https://github.com/unicitynetwork/whitepaper/releases/download/latest/Unicity.pdf)) -
+  protocol overview, tokenomics, and network architecture.
+- [Unicity Yellowpaper](https://github.com/unicitynetwork/unicity-yellowpaper-tex)
+  ([PDF](https://github.com/unicitynetwork/unicity-yellowpaper-tex/releases/download/latest/unicity-yellowpaper.pdf)) -
+  low-level protocol specification, including consensus-layer engineering
+  details, data availability, and aggregation shard operation.
+- [Unicity Infrastructure: the Aggregation Layer / Unicity Bluepaper](https://github.com/unicitynetwork/aggr-layer-paper)
+  ([PDF](https://github.com/unicitynetwork/aggr-layer-paper/releases/download/latest/aggregation-layer.pdf)) -
+  aggregation-layer design, sharded SMT commitments, inclusion and
+  non-inclusion proofs, and the ZK consistency proof model.
+- [Unicity Execution Layer](https://github.com/unicitynetwork/execution-model-tex)
+  ([PDF](https://github.com/unicitynetwork/execution-model-tex/releases/download/latest/unicity-execution-layer.pdf)) -
+  off-chain transaction execution, service-side privacy, user-wallet
+  privacy, and formal security proofs.
+- [Unicity: Predicates and Atomic Swaps](https://github.com/unicitynetwork/unicity-predicates-tex)
+  ([PDF](https://github.com/unicitynetwork/unicity-predicates-tex/releases/download/latest/unicity-predicates.pdf)) -
+  programmable spending conditions ("smart contracts") with a use-case, trustless atomic swaps.
 
 
 ## Building locally:
