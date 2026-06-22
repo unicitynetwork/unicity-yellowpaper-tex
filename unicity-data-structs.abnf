@@ -194,22 +194,21 @@
   Value = 1*32OCTET
       ;~$1 \leq v < 2^{256}$, minimal unsigned big-endian byte string
 
-  ; Split protocol version 2. These productions describe the decoded tagged
-  ; CBOR values. SplitManifestBytes and SplitMintReasonBytes are the complete
-  ; deterministic tagged encodings carried in transaction byte-string fields.
+  ; These productions describe the decoded tagged CBOR values.
+  ; SplitManifestBytes and SplitMintReasonBytes are the complete deterministic
+  ; tagged encodings carried in transaction byte-string fields.
 
   SplitManifestBytes = Bytes
       ;~CBOR tag 39046 applied to \textsf{SplitManifest}
-  SplitManifest = SplitVersion 1*256SplitAssetRoot
-      ;~CBOR array[2]: $[2,[r_1,\ldots,r_m]]$, $1 \leq m \leq 256$
-  SplitVersion = %d2
+  SplitManifest = 1*256SplitAssetRoot
+      ;~tagged CBOR array: $[r_1,\ldots,r_m]$, $1 \leq m \leq 256$
   SplitAssetRoot = Bytes32
       ;~raw SHA-256 SMST root digest; roots follow source canonical asset order
 
   SplitMintReasonBytes = Bytes
       ;~CBOR tag 39044 applied to \textsf{SplitMintReason}
-  SplitMintReason = SplitVersion Token 1*256CompactSMSTProof
-      ;~CBOR array[3]: $[2,\mathcal{L}_\mathsf{burn},[\bar C_1,\ldots,\bar C_q]]$
+  SplitMintReason = Token 1*256CompactSMSTProof
+      ;~CBOR array[2]: $[\mathcal{L}_\mathsf{burn},[\bar C_1,\ldots,\bar C_q]]$
       ;~proofs follow output canonical asset order; the token includes the certified burn
 
   CompactSMSTProof = LeafPath 1*256CompactSMSTStep
@@ -226,6 +225,6 @@
       ;~minimal unsigned big-endian sum; zero is the empty byte string
 
   SplitOutputCommitment = Bytes32
-      ;~$d_j=\mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SPLIT\_OUTPUT\_V2},\mathsf{id}_\mathsf{src},\alpha,$
+      ;~$d_j=\mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SPLIT\_OUTPUT},\mathsf{id}_\mathsf{src},\alpha,$
       ;~$\qquad\encpred(\predi'_j),\mathsf{salt}_j,\mathsf{id}_j,\mathsf{ty}_j,\auxd'_j))$
       ;~leaf $(\mathsf{id}_j,d_j,v_j)$ binds the allocation to the exact output mint fields

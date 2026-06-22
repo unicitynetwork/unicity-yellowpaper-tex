@@ -481,7 +481,7 @@ where a missing entry has value zero.  No output may introduce an asset identifi
 
 For output $j$, let $D_{\mathsf{out},j}$ consist of the source token identifier and all output mint fields except the mint reason.  Its commitment
 \[
-d_j = H(\mathsf{SPLIT\_OUTPUT\_V2},D_{\mathsf{out},j})
+d_j = H(\mathsf{SPLIT\_OUTPUT},D_{\mathsf{out},j})
 \]
 binds the allocation to the source token, network, recipient predicate, salt and resulting token identifier, token type, and the complete canonical auxiliary payload.  In particular, a proof prepared for one recipient or token type cannot authorize a mint to another, even though the standard minting key is public.
 
@@ -507,7 +507,7 @@ The split proceeds as follows:
 
 Given a token whose mint reason claims split origin, the verifier must perform all of the following checks.  Failure of any check rejects the token.
 \begin{enumerate}
-	\item Decode the mint reason, manifest, payloads and proofs using deterministic CBOR.  Reject unknown versions or tags, non-canonical integers or byte strings, duplicate or unordered asset identifiers, invalid field counts or types, trailing bytes, arithmetic overflow and any input exceeding the protocol's decoding and verification limits.
+	\item Decode the mint reason, manifest, payloads and proofs using deterministic CBOR.  Reject wrong or unknown tags, non-canonical integers or byte strings, duplicate or unordered asset identifiers, invalid field counts or types, trailing bytes, arithmetic overflow and any input exceeding the protocol's decoding and verification limits.
 	\item Verify the output mint transaction and its Unicity Certificate.  Decode and validate its auxiliary payload according to its token type; the payload must contain a non-empty canonical collection of distinct, positive-valued assets.
 	\item Recursively verify the complete burned source token, including every Unicity Certificate, transaction, nested mint reason, fungible payload and token type specific issuance policy, under the same trust base $\mathcal{T}$, verifier registry and cumulative resource limits used for the output.  Both tokens must have network identifier $\mathcal{T}.\alpha$.
 	\item Require the source token to end in a certified transfer whose auxiliary data is the exact canonical split-manifest encoding $b_\mathcal{M}$ and whose recipient predicate is exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.
