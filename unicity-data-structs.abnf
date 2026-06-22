@@ -188,10 +188,44 @@
 
 ; --- Fungible Token Structures ---
   Asset = AssetId Value  ;~$(\mathsf{aid}, v)$ -- CBOR array[2]
-  AssetId = Bytes  ;~asset type identifier
-  Value = Bytes  ;~non-negative integer (bigint-encoded)
+  AssetCollection = 1*256Asset
+      ;~canonical CBOR array, strictly ordered by raw $\mathsf{aid}$ bytes
+  AssetId = 1*128OCTET  ;~non-empty asset type identifier
+  Value = 1*32OCTET
+      ;~$1 \leq v < 2^{256}$, minimal unsigned big-endian byte string
 
-  SplitReason = Token *SplitReasonProof  ;~CBOR array[2]: [burned source token, [proofs...]]
-  SplitReasonProof = AssetId AggregationPath AssetTreePath  ;~$(\mathsf{aid}, \pi_\mathsf{agg}, \pi_\mathsf{sum})$ -- CBOR array[3]
-  AggregationPath = SparseMerkleTreePath   ;~SMT path to aggregation root $h_\mathsf{agg}$
-  AssetTreePath = SparseMerkleSumTreePath  ;~SMST path proving value allocation
+  ; Split protocol version 2. These productions describe the decoded tagged
+  ; CBOR values. SplitManifestBytes and SplitMintReasonBytes are the complete
+  ; deterministic tagged encodings carried in transaction byte-string fields.
+
+  SplitManifestBytes = Bytes
+      ;~CBOR tag 39046 applied to \textsf{SplitManifest}
+  SplitManifest = SplitVersion 1*256SplitAssetRoot
+      ;~CBOR array[2]: $[2,[r_1,\ldots,r_m]]$, $1 \leq m \leq 256$
+  SplitVersion = %d2
+  SplitAssetRoot = Bytes32
+      ;~raw SHA-256 SMST root digest; roots follow source canonical asset order
+
+  SplitMintReasonBytes = Bytes
+      ;~CBOR tag 39044 applied to \textsf{SplitMintReason}
+  SplitMintReason = SplitVersion Token 1*256CompactSMSTProof
+      ;~CBOR array[3]: $[2,\mathcal{L}_\mathsf{burn},[\bar C_1,\ldots,\bar C_q]]$
+      ;~proofs follow output canonical asset order; the token includes the certified burn
+
+  CompactSMSTProof = LeafPath 1*256CompactSMSTStep
+      ;~CBOR array[2]: $[p_1,[(p_2,s_2,w_2),\ldots,(p_n,s_n,w_n)]]$
+      ;~one to 256 steps, leaf-to-root; the final parent path is $p_n=1$
+  CompactSMSTStep = ParentPath NullableSiblingHash SiblingSum
+      ;~CBOR array[3]: $[p_i,s_i,w_i]$
+  LeafPath = 1*33OCTET
+  ParentPath = 1*33OCTET
+      ;~positive minimal unsigned big-endian SMST path segment
+  NullableSiblingHash = Bytes32 / Null
+      ;~raw SHA-256 digest or CBOR null; null iff sibling sum is zero
+  SiblingSum = *32OCTET
+      ;~minimal unsigned big-endian sum; zero is the empty byte string
+
+  SplitOutputCommitment = Bytes32
+      ;~$d_j=\mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SPLIT\_OUTPUT\_V2},\mathsf{id}_\mathsf{src},\alpha,$
+      ;~$\qquad\encpred(\predi'_j),\mathsf{salt}_j,\mathsf{id}_j,\mathsf{ty}_j,\auxd'_j))$
+      ;~leaf $(\mathsf{id}_j,d_j,v_j)$ binds the allocation to the exact output mint fields
