@@ -294,7 +294,7 @@ All structures below use deterministic CBOR and must be consumed completely. Dec
 
 \subsection{Output Commitment}\label{app:split-output-commitment}
 
-The output commitment binds an allocation leaf to the complete output mint transaction except for its mint reason. Define $\mathsf{SPLIT\_OUTPUT}$ as the ASCII byte string \texttt{UNICITY\_SPLIT\_OUTPUT}. For source identifier $\mathsf{id}_\mathsf{src}$ and output mint data
+The output commitment binds an allocation leaf to the complete output mint transaction except for its mint reason. Split verification additionally requires the output token type to equal the source token type byte-for-byte; including $\mathsf{ty}_j$ in this commitment prevents replay of a prepared proof under any other mint transaction. Define $\mathsf{SPLIT\_OUTPUT}$ as the ASCII byte string \texttt{UNICITY\_SPLIT\_OUTPUT}. For source identifier $\mathsf{id}_\mathsf{src}$ and output mint data
 \[
 D_{\mathsf{mint},j}
 =(\alpha,\predi'_j,\mathsf{salt}_j,\mathsf{ty}_j,
@@ -359,9 +359,9 @@ Each sibling step is a three-element CBOR array:
 2 & byte string & Sibling subtree sum $w_i$, minimally encoded. \\
 \end{longtable}
 
-Zero is encoded by the empty byte string and every positive path segment MUST NOT begin with \texttt{0x00}. Each path segment is positive and at most 33 bytes. A proof contains a leaf and between one and 256 sibling steps; its final parent segment MUST be $p_n=1$, the fixed SMST root label. The pair $(s_i,w_i)$ is canonical: $s_i=\bot$ if and only if $w_i=0$. No root hash, asset identifier, output identifier, leaf data or leaf amount occurs in the encoded proof.
+Zero is encoded by the empty byte string and every positive path segment MUST NOT begin with \texttt{0x00}. Each path segment is positive and at most 33 bytes. A proof contains a leaf and between one and 256 sibling steps; its final parent segment MUST be $p_n=1$, the fixed SMST root label. The decoded path segments are interpreted using the LSB-first SMST path representation and concatenation operation defined in Appendix~\ref{app:smst}; decoders MUST reject zero segments, non-minimal encodings, paths whose reconstructed length exceeds the split key-path length, or any reconstructed path other than the expected key path. The pair $(s_i,w_i)$ is canonical: $s_i=\bot$ if and only if $w_i=0$. No root hash, asset identifier, output identifier, leaf data or leaf amount occurs in the encoded proof.
 
-For a 32-byte key $k$, define $\Call{smst\_key\_path}{k}$ as the positive integer whose minimal big-endian representation is $\mathtt{0x01}\|k$. This sentinel preserves leading zero bits. Path concatenation below is the SMST path operation as specified in Appendix~\ref{app:smst}.
+For a 32-byte key $k$, define $\Call{smst\_key\_path}{k}$ as the positive integer whose minimal big-endian representation is $\mathtt{0x01}\|k$. Under the SMST LSB-first path representation, this is the 256 key bits followed by the root sentinel bit; the sentinel preserves leading zero bits of $k$ and fixes the split key path length to 257 bits.
 
 \subsubsection{Function $\textsc{smst\_verify\_compact}$}\label{sec:smst-verify-compact}
 
@@ -377,7 +377,7 @@ For a 32-byte key $k$, define $\Call{smst\_key\_path}{k}$ as the positive intege
 \textbf{Output}: $(b,v_\mathsf{root}) \in \bool\times\mathbb{N}$, where $b$ is the success flag and $v_\mathsf{root}$ is the reconstructed root sum.
 
 \begin{algorithmic}
-	\Function{smst\_verify\_dcompact}{$k,d,v,\bar C,r$}
+	\Function{smst\_verify\_compact}{$k,d,v,\bar C,r$}
 		\If{$v=0$, $v\geq2^{256}$, $n<2$, $n>257$, $p_n\ne1$, or any field is non-canonical} \State \Return $(\FALSE,0)$ \EndIf
 		\State $h \gets \Call{smst\_leaf\_hash}{p_1,d,v}$
 		\State $v_\mathsf{sum} \gets v$
@@ -430,6 +430,7 @@ The proof array contains no asset identifiers. Its length and positional interpr
 			\State ensure($\mathcal{A}$ is non-empty and canonical)
 			\For{$j\gets1$ to $k$}
 				\State ensure($D_{\mathsf{out},j}.\alpha=\mathcal{T}.\alpha$)
+				\State ensure($D_{\mathsf{out},j}.\mathsf{ty}=D_\mathsf{src}.\mathsf{ty}$)
 				\State $\mathsf{id}_j\gets H(D_{\mathsf{out},j}.\mathsf{salt},D_{\mathsf{out},j}.\alpha)$
 				\State ensure($\mathsf{id}_j$ is distinct among the outputs)
 				\State $\mathcal{A}_j\gets\Call{Assets}{D_{\mathsf{out},j}.\mathsf{ty},D_{\mathsf{out},j}.\auxd'}$
@@ -479,6 +480,7 @@ The following algorithm runs as the token-type-specific mint-reason check after 
 			\State $\langle r_1,\ldots,r_m\rangle\gets\Call{DecodeSplitManifest}{b_\mathcal{M}}$
 			\State ensure($T_\mathsf{burn}.\predi'=\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$)
 			\State $D_\mathsf{src}\gets\mathcal{L}_\mathsf{burn}.T_0.D_\mathsf{mint}$
+			\State ensure($D_{\mathsf{mint},j}.\mathsf{ty}=D_\mathsf{src}.\mathsf{ty}$)
 			\State $\mathcal{A}\gets\Call{Assets}{D_\mathsf{src}.\mathsf{ty},D_\mathsf{src}.\auxd'}$
 			\State ensure($\len{\mathcal{A}}=m$ and $\mathcal{A}$ is canonical)
 			\State $\mathcal{A}_j\gets\Call{Assets}{D_{\mathsf{mint},j}.\mathsf{ty},D_{\mathsf{mint},j}.\auxd'}$

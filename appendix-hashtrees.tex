@@ -252,27 +252,42 @@ Each node in an SMST carries a pair $(h, v)$, where $h \in \hashtype$ is the nod
 \begin{itemize}
 	\item \textbf{Leaf node}: $(h, v)$ where:
 	\begin{itemize}
-		\item $p \in \bitstr$ -- path label from this leaf to its parent
+		\item $p$ -- positive SMST path segment from this leaf to its parent
 		\item $d \in \bytes{\ast}$ -- leaf data
 		\item $v \in \mathbb{N}$ -- leaf value (e.g. asset amount)
-		\item $h = H(p, d, v)$
+		\item $h = \Call{smst\_leaf\_hash}{p,d,v}$
 	\end{itemize}
 	\item \textbf{Branch node}: $(h, v)$ where:
 	\begin{itemize}
-		\item $p \in \bitstr$ -- path label from this node to its parent
+		\item $p$ -- positive SMST path segment from this node to its parent
 		\item $(h_L, v_L)$ -- left child hash and value
 		\item $(h_R, v_R)$ -- right child hash and value
-		\item $h = H(p, h_L, v_L, h_R, v_R)$
+		\item $(h,v) = \Call{smst\_branch\_hash}{p,(h_L,v_L),(h_R,v_R)}$
 		\item $v = v_L + v_R$
 	\end{itemize}
 	\item \textbf{Root node}: Uses the fixed path label $p = 1$ in hash computation:
 	\begin{itemize}
-		\item $h = H(1, h_L, v_L, h_R, v_R)$
-		\item $v = v_L + v_R$
+		\item $(h,v) = \Call{smst\_branch\_hash}{1,(h_L,v_L),(h_R,v_R)}$
 	\end{itemize}
 \end{itemize}
 
 An empty child is represented by $(h, v) = (\bot, 0)$.
+
+\subsubsection{Path Representation}
+SMST paths are non-empty bit strings represented as positive integers.  The bits of such an integer are read from least significant to most significant bit; this is the leaf-to-root order used by inclusion certificates.  The rightmost bit of the conventional binary representation is therefore the first path bit consumed when moving from a child to its parent, and it determines whether the current child is left ($0$) or right ($1$).  The root segment is the one-bit path $1$.
+
+For positive path integers $a$ and $b$, $a\|b$ denotes LSB-first path concatenation:
+\[
+a\|b = a + (b \ll \ell(a)),
+\]
+where $\ell(a)$ is the bit length of $a$.  This appends $b$ on the parent side of $a$.  On the wire and in hash inputs, every path integer is encoded as its minimal unsigned big-endian byte string; zero is not a valid path segment.
+
+For a 32-byte application key $k$, split allocation trees use the canonical SMST key path $\Call{smst\_key\_path}{k}$ whose minimal unsigned big-endian representation is $\mathtt{0x01}\|k$.  Under the LSB-first reading above, this path consists of the 256 bits of $k$ from least significant to most significant, followed by the root sentinel bit $1$.
+
+\subsubsection{Canonical Construction and Hashing}
+An SMST used for token splitting is the canonical path-compressed binary trie over distinct canonical key paths.  Construction MUST reject duplicate key paths and zero-valued leaves.  Unary internal nodes are elided into maximal path segments, and each branch has both left and right child positions, with an absent child represented by $(\bot,0)$.  $\Call{SMSTRoot}{}$ returns the root hash and accumulated root value of this canonical tree, and $\Call{CompactPath}{}$ returns the unique leaf-to-root sequence of path segments and sibling pairs from that tree.
+
+SMST hash inputs are deterministic CBOR tuples with explicit domain separators.  Define $\mathsf{SMST\_LEAF}$ as the ASCII byte string \texttt{UNICITY\_SMST\_LEAF} and $\mathsf{SMST\_BRANCH}$ as the ASCII byte string \texttt{UNICITY\_SMST\_BRANCH}.  Path segments and sums are encoded as minimal unsigned big-endian byte strings, hashes are raw 32-byte strings, and $\bot$ is encoded as CBOR \texttt{null}.
 
 \subsection{Function $\textsc{smst\_leaf\_hash}$}\label{sec:smst-leaf-hash}
 
@@ -280,7 +295,7 @@ Computes the hash of an SMST leaf node.
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $p \in \bitstr$ -- path segment from this leaf to its parent
+	\item $p$ -- positive SMST path segment from this leaf to its parent
 	\item $d \in \hashtype$ -- leaf data
 	\item $v \in \mathbb{N}$ -- leaf value
 \end{enumerate}
@@ -290,7 +305,7 @@ Computes the hash of an SMST leaf node.
 \textbf{Computation}:
 \begin{algorithmic}
 	\Function{smst\_leaf\_hash}{$p, d, v$}
-		\State \Return $H(p, d, v)$
+		\State \Return $\mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SMST\_LEAF},p,d,v))$
 	\EndFunction
 \end{algorithmic}
 
@@ -300,7 +315,7 @@ Computes the hash and accumulated value of an SMST branch node.
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $p \in \bitstr$ -- path segment from this node to its parent
+	\item $p$ -- positive SMST path segment from this node to its parent
 	\item $(h_L, v_L) \in (\hashtype \cup \{\bot\}) \times \mathbb{N}$ -- left child
 	\item $(h_R, v_R) \in (\hashtype \cup \{\bot\}) \times \mathbb{N}$ -- right child
 \end{enumerate}
@@ -310,7 +325,7 @@ Computes the hash and accumulated value of an SMST branch node.
 \textbf{Computation}:
 \begin{algorithmic}
 	\Function{smst\_branch\_hash}{$p, (h_L, v_L), (h_R, v_R)$}
-		\State $h \gets H(p, h_L, v_L, h_R, v_R)$
+		\State $h \gets \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SMST\_BRANCH},p,h_L,v_L,h_R,v_R))$
 		\State $v \gets v_L + v_R$
 		\State \Return $(h, v)$
 	\EndFunction
@@ -334,7 +349,7 @@ Verifies an SMST inclusion certificate by reconstructing the root hash and total
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $k \in \hashtype$ -- key
+	\item $k$ -- expected complete SMST key path
 	\item $v_\mathsf{leaf} \in \mathbb{N}$ -- expected leaf value
 	\item $C^\mathsf{inc} = \langle (p_1, d_1, v_1), \ldots, (p_n, d_n, v_n) \rangle$ -- inclusion certificate
 	\item $h_{\mathsf{root}} \in \hashtype$ -- expected root hash
@@ -348,15 +363,15 @@ Verifies an SMST inclusion certificate by reconstructing the root hash and total
 		\If {$v_1 \neq v_\mathsf{leaf}$}
 			\State \Return \FALSE \Comment{Leaf value mismatch}
 		\EndIf
-		\State $h \gets H(p_1, d_1, v_1)$ \Comment{Hash leaf node}
+		\State $h \gets \Call{smst\_leaf\_hash}{p_1,d_1,v_1}$
 		\State $v_\mathsf{sum} \gets v_1$
 		\State $q \gets p_1$ \Comment{Reconstructed path}
 		\For {$i \gets 2$ to $n$}
 			\State $b \gets$ rightmost bit of $p_{i-1}$
 			\If {$b = 0$}
-				\State $h \gets H(p_i, h, v_\mathsf{sum}, d_i, v_i)$ \Comment{Current is left child}
+				\State $(h,\_) \gets \Call{smst\_branch\_hash}{p_i,(h,v_\mathsf{sum}),(d_i,v_i)}$ \Comment{Current is left child}
 			\Else
-				\State $h \gets H(p_i, d_i, v_i, h, v_\mathsf{sum})$ \Comment{Current is right child}
+				\State $(h,\_) \gets \Call{smst\_branch\_hash}{p_i,(d_i,v_i),(h,v_\mathsf{sum})}$ \Comment{Current is right child}
 			\EndIf
 			\State $v_\mathsf{sum} \gets v_\mathsf{sum} + v_i$
 			\State $q \gets q \| p_i$ \Comment{Extend reconstructed path}

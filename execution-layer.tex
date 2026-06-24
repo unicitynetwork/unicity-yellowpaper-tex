@@ -294,7 +294,7 @@ The \emph{burn predicate} $\predi_\mathsf{burn}(h_\mathsf{reason})$ cannot be un
 	\item \textbf{Definition}: $\predi_\mathsf{burn}(h_\mathsf{reason}; \tau, m, u) = 0$ for all arguments
 \end{itemize}
 
-The burn predicate is used in token splitting (Sec.~\ref{sec:token-splitting}), where the reason hash references the aggregation root of the split proof.
+The burn predicate is used in token splitting (Sec.~\ref{sec:token-splitting}), where the reason hash is $\mathsf{SHA\text{-}256}(b_\mathcal{M})$ for the complete canonical split-manifest encoding $b_\mathcal{M}$.
 
 
 \subsubsection{Timelock Predicate}
@@ -473,7 +473,7 @@ Let $\Call{Assets}{\mathsf{ty},\auxd'}$ denote the token-type-specific, determin
 \[
 \mathcal{A}=\Call{Assets}{\mathsf{ty},\auxd'},
 \]
-the owner prepares $k \geq 1$ output mint transactions on the same network, with canonical asset collections $\mathcal{A}_1,\ldots,\mathcal{A}_k$.  For every source asset identifier $\mathsf{aid}$ the allocations must satisfy
+the owner prepares $k \geq 1$ output mint transactions on the same network and with exactly the same token type $\mathsf{ty}$, with canonical asset collections $\mathcal{A}_1,\ldots,\mathcal{A}_k$.  Splitting is not a token-type conversion mechanism.  For every source asset identifier $\mathsf{aid}$ the allocations must satisfy
 \[
 \sum_{j=1}^{k} v_j(\mathsf{aid}) = v(\mathsf{aid})
 \]
@@ -512,6 +512,7 @@ Given a token whose mint reason claims split origin, the verifier must perform a
 	\item Recursively verify the complete burned source token, including every Unicity Certificate, transaction, nested mint reason, fungible payload and token type specific issuance policy, under the same trust base $\mathcal{T}$, verifier registry and cumulative resource limits used for the output.  Both tokens must have network identifier $\mathcal{T}.\alpha$.
 	\item Require the source token to end in a certified transfer whose auxiliary data is the exact canonical split-manifest encoding $b_\mathcal{M}$ and whose recipient predicate is exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.
 	\item Decode the source fungible payload, place its distinct asset identifiers in canonical order, and require the manifest to contain exactly one root hash for each source asset in that order.
+	\item Require the output token type to be byte-identical to the source token type.  A split proof cannot authorize minting under any other token type, even if that type would decode the same asset identifiers and amounts.
 	\item Recompute $d_j$ from the verified source identifier and the output mint fields other than $\mathsf{reason}$.  The recomputation must cover the exact canonical recipient predicate, network, salt, token identifier, token type and complete auxiliary payload.
 	\item Require the proof count to equal the number of assets in the output payload.  Associate proofs with assets only by their canonical order; reject missing, duplicate or additional proofs.
 	\item For every output asset $(\mathsf{aid}_i,v_j(\mathsf{aid}_i))$, require that $\mathsf{aid}_i$ occurs in the source payload.  Verify its compact SMST proof using key $\mathsf{id}_j$, leaf data $d_j$, leaf value $v_j(\mathsf{aid}_i)$ and expected root $r_i$ selected from the manifest.  Require both inclusion and root-hash equality.

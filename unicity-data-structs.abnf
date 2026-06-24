@@ -213,7 +213,7 @@
 
   CompactSMSTProof = LeafPath 1*256CompactSMSTStep
       ;~CBOR array[2]: $[p_1,[(p_2,s_2,w_2),\ldots,(p_n,s_n,w_n)]]$
-      ;~one to 256 steps, leaf-to-root; the final parent path is $p_n=1$
+      ;~one to 256 steps, leaf-to-root in LSB-first SMST path order; the final parent path is $p_n=1$
   CompactSMSTStep = ParentPath NullableSiblingHash SiblingSum
       ;~CBOR array[3]: $[p_i,s_i,w_i]$
   LeafPath = 1*33OCTET
