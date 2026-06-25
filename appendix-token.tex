@@ -273,25 +273,192 @@ All standard predicates that verify digital signatures ($\predi_\mathsf{sig}$, $
 
 \section{Split Proof Encoding}\label{app:split-proof-encoding}
 
-\subsection{Split Reason}
+This section specifies the split mint reason described in Sec.~\ref{sec:token-splitting}. The split manifest and mint reason are identified by their distinct CBOR semantic tags.
 
-A split reason is encoded as a CBOR array with two elements:
+\subsection{Canonical Assets and Limits}
 
-\begin{longtable}{clp{8cm}}
+The token-type-specific function $\Call{Assets}{\mathsf{ty},\auxd'}$ returns a sequence
+\[
+\langle(\mathsf{aid}_1,v_1),\ldots,(\mathsf{aid}_m,v_m)\rangle
+\]
+strictly ordered by the raw bytes of $\mathsf{aid}_i$ using unsigned lexicographic comparison, with a shorter byte string ordered first when it is a prefix of another. The split protocol requires:
+\begin{itemize}
+	\item $1 \leq m \leq 256$;
+	\item $1 \leq \len{\mathsf{aid}_i} \leq 128$ bytes;
+	\item $1 \leq v_i < 2^{256}$; and
+	\item no repeated asset identifier.
+\end{itemize}
+Amounts and RSMST sums are encoded as minimal unsigned big-endian byte strings of at most 32 bytes. Zero is encoded by the empty byte string where a surrounding structure permits zero; split allocation leaves and sibling sums are strictly positive. An accepted non-empty integer encoding MUST NOT begin with \texttt{0x00}.
+
+All structures below use deterministic CBOR and must be consumed completely. Decoders MUST reject indefinite-length items, non-minimal heads or integers, wrong or unknown tags, wrong field counts or types, trailing bytes, duplicate or unordered assets, invalid lengths, arithmetic overflow, and exhausted cumulative byte, item, nesting, proof-step or embedded-token budgets.
+
+\subsection{Output Commitment}\label{app:split-output-commitment}
+
+The output commitment binds an allocation leaf to the complete output mint transaction except for its mint reason. Split verification additionally requires the output token type to equal the source token type byte-for-byte; including $\mathsf{ty}_j$ in this commitment prevents replay of a prepared proof under any other mint transaction. Define $\mathsf{SPLIT\_OUTPUT}$ as the ASCII byte string \texttt{UNICITY\_SPLIT\_OUTPUT}. For source identifier $\mathsf{id}_\mathsf{src}$ and output mint data
+\[
+D_{\mathsf{mint},j}
+=(\alpha,\predi'_j,\mathsf{salt}_j,\mathsf{ty}_j,
+  \mathsf{reason}_j,\auxd'_j),
+\]
+derive
+\[
+\begin{split}
+\mathsf{id}_j &:= H(\mathsf{salt}_j,\alpha),\\
+d_j &:= \mathsf{SHA\text{-}256}\bigl(\mathsf{CBOR}(
+  \mathsf{SPLIT\_OUTPUT},
+  \mathsf{id}_\mathsf{src},
+  \alpha,
+  \encpred(\predi'_j),
+  \mathsf{salt}_j,
+  \mathsf{id}_j,
+  \mathsf{ty}_j,
+  \auxd'_j
+)\bigr).
+\end{split}
+\]
+Every term is encoded as a CBOR byte string except $\alpha$, which is an unsigned integer. In particular, $\auxd'_j$ is the exact auxiliary-payload byte string stored in the mint transaction, not a decoded or normalized object. The mint reason is deliberately excluded to avoid a circular commitment.
+
+\subsection{Split Manifest}\label{app:split-manifest}
+
+The final transfer of the source token stores a split manifest in its auxiliary-data byte string. The byte string contains CBOR semantic tag \texttt{39046} applied directly to an array of RSMST root hashes:
+
+\[
+\langle r_1,\ldots,r_m\rangle.
+\]
+Each $r_i$ is encoded as a byte string containing the raw 32-byte SHA-256 digest.
+
+The roots are positionally aligned with $\Call{Assets}{\mathsf{ty}_\mathsf{src},\auxd'_\mathsf{src}}$ in canonical asset order. The array length MUST equal the source asset count. Asset identifiers and source amounts are not repeated in the manifest.
+
+The source identifier is omitted. The certified transfer carrying the manifest is already part of the source token, and every allocation leaf is independently bound to that source identifier by $d_j$.
+
+Let $b_\mathcal{M}$ be the complete canonical tagged CBOR encoding of the manifest. The certified burn transfer MUST contain $b_\mathcal{M}$ as its exact auxiliary-data value and MUST have burn reason set to its hash:
+\[
+\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M})).
+\]
+
+\subsection{Split Allocation Inclusion Proof}\label{app:split-allocation-proof}
+
+The RSMST construction and hashing rules are defined in Appendix~\ref{app:rsmst}.  For a split allocation leaf, $k=\mathsf{id}_j$, $d=d_j$, $v=v_j(\mathsf{aid})$, and the expected root hash comes from the manifest.  These values are therefore omitted from the encoded proof and supplied by the verifier.
+
+An encoded split allocation proof is a CBOR array of zero to 256 sibling entries, ordered leaf-to-root.  The empty array is valid only when the allocation tree for that asset contains a single output leaf.
+
+Each sibling entry is a three-element CBOR array:
+
+\begin{longtable}{clp{9cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
-0 & CBOR structure & The burned source token (complete token encoding) \\
-1 & CBOR array & Array of split reason proofs (one per asset type) \\
+0 & unsigned integer & Parent bifurcation depth $\delta_i$, with $0\leq\delta_i\leq255$. \\
+1 & byte string & Sibling subtree hash $s_i$, the raw 32-byte SHA-256 digest. \\
+2 & byte string & Positive sibling subtree sum $w_i$, minimally encoded. \\
 \end{longtable}
 
-\subsection{Split Reason Proof}
+Depths MUST be strictly decreasing in proof order.  Decoders MUST reject non-minimal CBOR integers, depths outside $0,\ldots,255$, repeated or non-decreasing depths, sibling hashes whose length is not 32 bytes, zero sibling sums, overlong or non-minimal sum encodings, or more than 256 sibling entries.  No bitmap, path segment, root hash, asset identifier, output identifier, leaf data or leaf amount occurs in the encoded proof.
 
-A split reason proof is encoded as a CBOR array with three elements:
+\subsubsection{Function $\textsc{rsmst\_verify\_inclusion}$}\label{sec:rsmst-split-verify}
 
-\begin{longtable}{clp{8cm}}
+\textbf{Input}:
+\begin{enumerate}
+	\item $k \in \bytes{32}$ -- expected output token identifier;
+	\item $d \in \bytes{32}$ -- expected output commitment;
+	\item $v \in \mathbb{N}$, $1\leq v<2^{256}$ -- expected output amount;
+	\item $C^\mathsf{inc}=\langle(\delta_1,s_1,w_1),\ldots,(\delta_n,s_n,w_n)\rangle$ -- split allocation proof; and
+	\item $r \in \bytes{32}$ -- expected raw root digest from the manifest.
+\end{enumerate}
+
+\textbf{Output}: $(b,v_\mathsf{root}) \in \bool\times\mathbb{N}$, where $b$ is the success flag and $v_\mathsf{root}$ is the reconstructed root sum.
+
+The verifier uses Appendix~\ref{sec:rsmst-verify-inclusion}.  It MUST reject an overflowing intermediate sum before invoking a big-integer implementation that could silently accept values outside the 256-bit amount domain.
+
+\subsection{Split Mint Reason}\label{app:split-mint-reason}
+
+The mint-reason byte string of a split output contains CBOR semantic tag \texttt{39044} applied to this two-element array:
+
+\begin{longtable}{clp{9cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
-0 & byte string & Asset identifier $\mathsf{aid}$ \\
-1 & CBOR structure & Aggregation tree path (Sparse Merkle Tree path to the aggregation root) \\
-2 & CBOR structure & Asset sum tree path (Sparse Merkle Sum Tree path proving value allocation) \\
+0 & CBOR structure & Complete burned source token $\mathcal{L}_\mathsf{burn}$, including its certified manifest-bearing burn transfer. \\
+1 & CBOR array & Split allocation proofs, one per output asset in canonical output-asset order. \\
 \end{longtable}
+
+The proof array contains no asset identifiers. Its length and positional interpretation are determined exclusively by $\Call{Assets}{\mathsf{ty}_j,\auxd'_j}$.
+
+\subsection{Split Construction Algorithm}\label{app:split-construction}
+
+\begin{algorithm}[!htbp]
+	\caption{Split Construction}\label{alg:split-construction}
+	\begin{algorithmic}[0]
+		\Function{ConstructSplit}{$\mathcal{L},\langle D_{\mathsf{out},1},\ldots,D_{\mathsf{out},k}\rangle,\mathcal{T}$}
+			\State ensure($\Call{VerifyToken}{\mathcal{L},\mathcal{T}}=1$)
+			\State $D_\mathsf{src}\gets\mathcal{L}.T_0.D_\mathsf{mint}$
+			\State $\mathcal{A}\gets\Call{Assets}{D_\mathsf{src}.\mathsf{ty},D_\mathsf{src}.\auxd'}$
+			\State ensure($\mathcal{A}$ is non-empty and canonical)
+			\For{$j\gets1$ to $k$}
+				\State ensure($D_{\mathsf{out},j}.\alpha=\mathcal{T}.\alpha$)
+				\State ensure($D_{\mathsf{out},j}.\mathsf{ty}=D_\mathsf{src}.\mathsf{ty}$)
+				\State $\mathsf{id}_j\gets H(D_{\mathsf{out},j}.\mathsf{salt},D_{\mathsf{out},j}.\alpha)$
+				\State ensure($\mathsf{id}_j$ is distinct among the outputs)
+				\State $\mathcal{A}_j\gets\Call{Assets}{D_{\mathsf{out},j}.\mathsf{ty},D_{\mathsf{out},j}.\auxd'}$
+				\State ensure($\mathcal{A}_j$ is non-empty, canonical, and contains no identifier absent from $\mathcal{A}$)
+				\State $d_j\gets\Call{split\_output\_commitment}{\mathcal{L}.\mathsf{id},D_{\mathsf{out},j}}$
+			\EndFor
+			\ForAll{$(\mathsf{aid}_i,v_i)\in\mathcal{A}$ in canonical order}
+				\State $\mathcal{S}_i\gets$ empty RSMST
+				\For{$j\gets1$ to $k$}
+					\If{$(\mathsf{aid}_i,v_{i,j})\in\mathcal{A}_j$}
+						\State insert $(\mathsf{id}_j,d_j,v_{i,j})$ into $\mathcal{S}_i$
+					\EndIf
+				\EndFor
+				\State $(r_i,v'_i)\gets\Call{RSMSTRoot}{\mathcal{S}_i}$
+				\State ensure($v'_i=v_i$)
+			\EndFor
+			\State $b_\mathcal{M}\gets\Call{EncodeSplitManifest}{\langle r_1,\ldots,r_m\rangle}$
+			\State construct burn transfer with auxiliary data $b_\mathcal{M}$ and recipient $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$
+			\For{$j\gets1$ to $k$}
+				\State $P_j\gets\langle\Call{RSMSTPath}{\mathcal{S}_i,\mathsf{id}_j}\mid(\mathsf{aid}_i,\_)\in\mathcal{A}_j\rangle$
+			\EndFor
+			\State durably persist $b_\mathcal{M}$, the burn transfer, and every $(D_{\mathsf{out},j},P_j)$
+			\State certify the burn and obtain $\mathcal{L}_\mathsf{burn}$
+			\For{$j\gets1$ to $k$}
+				\State $\mathsf{reason}_j\gets\Call{EncodeSplitReason}{\mathcal{L}_\mathsf{burn},P_j}$
+			\EndFor
+			\State \Return the burn transfer and output mint data with reasons $\mathsf{reason}_j$
+		\EndFunction
+	\end{algorithmic}
+\end{algorithm}
+
+The caller MUST persist all output mint fields and proofs before submitting the burn request. Reconstructing the same split after a failure requires byte-identical output fields, manifest and burn transfer.
+
+\subsection{Split Mint-Reason Verification Algorithm}\label{app:split-verification-algorithm}
+
+The following algorithm runs as the token-type-specific mint-reason check after normal verification of the output's certified mint transaction. Recursive calls share the same trust base, verifier registry, issuance policy and cumulative resource budget.
+
+\begin{algorithm}[!htbp]
+	\caption{Split Mint-Reason Verification}\label{alg:split-verify}
+	\begin{algorithmic}[0]
+		\Function{VerifySplitReason}{$D_{\mathsf{mint},j},\mathcal{T},\mathsf{context}$}
+			\State $(\mathcal{L}_\mathsf{burn},P_j)\gets\Call{DecodeSplitReason}{D_{\mathsf{mint},j}.\mathsf{reason}}$
+			\State ensure($\Call{VerifyToken}{\mathcal{L}_\mathsf{burn},\mathcal{T},\mathsf{context}}=1$)
+			\State ensure($\mathcal{L}_\mathsf{burn}.\alpha=D_{\mathsf{mint},j}.\alpha=\mathcal{T}.\alpha$)
+			\State $T_\mathsf{burn}\gets$ final certified transfer of $\mathcal{L}_\mathsf{burn}$
+			\State $b_\mathcal{M}\gets T_\mathsf{burn}.\auxd'$
+			\State $\langle r_1,\ldots,r_m\rangle\gets\Call{DecodeSplitManifest}{b_\mathcal{M}}$
+			\State ensure($T_\mathsf{burn}.\predi'=\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$)
+			\State $D_\mathsf{src}\gets\mathcal{L}_\mathsf{burn}.T_0.D_\mathsf{mint}$
+			\State ensure($D_{\mathsf{mint},j}.\mathsf{ty}=D_\mathsf{src}.\mathsf{ty}$)
+			\State $\mathcal{A}\gets\Call{Assets}{D_\mathsf{src}.\mathsf{ty},D_\mathsf{src}.\auxd'}$
+			\State ensure($\len{\mathcal{A}}=m$ and $\mathcal{A}$ is canonical)
+			\State $\mathcal{A}_j\gets\Call{Assets}{D_{\mathsf{mint},j}.\mathsf{ty},D_{\mathsf{mint},j}.\auxd'}$
+			\State ensure($\mathcal{A}_j$ is non-empty and canonical and $\len{P_j}=\len{\mathcal{A}_j}$)
+			\State $\mathsf{id}_j\gets H(D_{\mathsf{mint},j}.\mathsf{salt},D_{\mathsf{mint},j}.\alpha)$
+			\State $d_j\gets\Call{split\_output\_commitment}{\mathcal{L}_\mathsf{burn}.\mathsf{id},D_{\mathsf{mint},j}}$
+			\For{$\ell\gets1$ to $\len{\mathcal{A}_j}$}
+				\State $(\mathsf{aid},v)\gets\mathcal{A}_j[\ell]$
+				\State $i\gets$ the unique index with $\mathcal{A}[i].\mathsf{aid}=\mathsf{aid}$; ensure it exists
+				\State $(b,v_\mathsf{root})\gets\Call{rsmst\_verify\_inclusion}{\mathsf{id}_j,d_j,v,P_j[\ell],r_i}$
+				\State ensure($b=\TRUE$)
+				\State ensure($v_\mathsf{root}=\mathcal{A}[i].v$)
+			\EndFor
+			\State \Return $1$
+		\EndFunction
+	\end{algorithmic}
+\end{algorithm}

@@ -82,15 +82,16 @@
 
 ; The aggregation layer uses a Radix Sparse Merkle Tree (RSMT, Appendix~\ref{app:rsmt}).
 ; Leaf-anchored: hashes commit to full 256-bit key and bifurcation depth.
-; LSB-first bit addressing.
+; Depth $d$ addresses bit $d \bmod 8$ of byte $\lfloor d/8 \rfloor$.
+; Byte order is preserved; bits are read least-significant first within each byte.
 
   StateIdentifier = Bytes32  ;~$\mathsf{sid} = H(\mathsf{CBOR}(\nu, h_{\mathsf{st}}))$ -- SMT leaf key
   LeafData = TransactionHash    ;~$h_{\mathsf{tx}}$ -- SMT leaf value
   SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, h_{\mathsf{tx}})$
 
   InclusionCertificate = Bitmap *SiblingHash  ;~$C^\mathsf{inc} = (\mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
-      ;~bitmap: 32 bytes (256 bits); bit $d$ set iff sibling needed at depth $d$
-      ;~siblings: $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, leaf-to-root order
+      ;~bitmap: 32 bytes (256 bits); byte $\lfloor d/8 \rfloor$, bit $d \bmod 8$ set iff sibling needed at depth $d$
+      ;~siblings: $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, root-to-leaf order
       ;~Wire: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
 
   NonInclusionCertificate = Key Hash Bitmap *SiblingHash  ;~$C^\mathsf{exc} = (k_\ell, h_\ell, \mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
@@ -161,7 +162,7 @@
 ; --- Fields ---
   Salt = Bytes32  ;~$\mathsf{salt}$ -- 32-byte minter-chosen salt, required to be unique among the minter's choices
   ; used to derive token identifier $\mathsf{id} = H(\mathsf{salt}, \alpha)$
-  TokenType = Bytes32  ;~$\mathsf{ty}$ -- token type classifier (32 bytes)
+  TokenType = Bytes  ;~$\mathsf{ty}$ -- token type classifier (32 bytes generated as a convention, anything supported)
   MintReason = Bytes  ;~$\mathsf{reason}$ -- mint reason (justification)
   SourceStateHash = Hash  ;~$h_\mathsf{st}$ -- current state hash (32 bytes)
   UnlockingArgument = Bytes  ;~$\mathsf{CBOR}(u)$ -- CBOR-encoded unlocking argument (see above)
@@ -188,10 +189,43 @@
 
 ; --- Fungible Token Structures ---
   Asset = AssetId Value  ;~$(\mathsf{aid}, v)$ -- CBOR array[2]
-  AssetId = Bytes  ;~asset type identifier
-  Value = Bytes  ;~non-negative integer (bigint-encoded)
+  AssetCollection = 1*256Asset
+      ;~canonical CBOR array, strictly ordered by raw $\mathsf{aid}$ bytes
+  AssetId = 1*128OCTET  ;~non-empty asset type identifier
+  Value = 1*32OCTET
+      ;~$1 \leq v < 2^{256}$, minimal unsigned big-endian byte string
 
-  SplitReason = Token *SplitReasonProof  ;~CBOR array[2]: [burned source token, [proofs...]]
-  SplitReasonProof = AssetId AggregationPath AssetTreePath  ;~$(\mathsf{aid}, \pi_\mathsf{agg}, \pi_\mathsf{sum})$ -- CBOR array[3]
-  AggregationPath = SparseMerkleTreePath   ;~SMT path to aggregation root $h_\mathsf{agg}$
-  AssetTreePath = SparseMerkleSumTreePath  ;~SMST path proving value allocation
+  ; These productions describe the decoded tagged CBOR values.
+  ; SplitManifestBytes and SplitMintReasonBytes are the complete deterministic
+  ; tagged encodings carried in transaction byte-string fields.
+
+  SplitManifestBytes = Bytes
+      ;~CBOR tag 39046 applied to \textsf{SplitManifest}
+  SplitManifest = 1*256SplitAssetRoot
+      ;~tagged CBOR array: $[r_1,\ldots,r_m]$, $1 \leq m \leq 256$
+  SplitAssetRoot = Bytes32
+      ;~raw SHA-256 RSMST root digest; roots follow source canonical asset order
+
+  SplitMintReasonBytes = Bytes
+      ;~CBOR tag 39044 applied to \textsf{SplitMintReason}
+  SplitMintReason = Token 1*256SplitAllocationProof
+      ;~CBOR array[2]: $[\mathcal{L}_\mathsf{burn},[\bar C_1,\ldots,\bar C_q]]$
+      ;~proofs follow output canonical asset order; the token includes the certified burn
+      ;~split verification additionally requires output token type bytes to equal source token type bytes
+
+  SplitAllocationProof = *256SplitAllocationStep
+      ;~CBOR array: $[(\delta_1,s_1,w_1),\ldots,(\delta_n,s_n,w_n)]$
+      ;~zero to 256 sibling entries, leaf-to-root; depths are strictly decreasing
+  SplitAllocationStep = BranchDepth SiblingHash SiblingSum
+      ;~CBOR array[3]: $[\delta_i,s_i,w_i]$
+  BranchDepth = Depth
+      ;~CBOR unsigned integer in $0,\ldots,255$
+  SiblingHash = Bytes32
+      ;~raw SHA-256 sibling subtree digest
+  SiblingSum = *32OCTET
+      ;~positive minimal unsigned big-endian sum
+
+  SplitOutputCommitment = Bytes32
+      ;~$d_j=\mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SPLIT\_OUTPUT},\mathsf{id}_\mathsf{src},\alpha,$
+      ;~$\qquad\encpred(\predi'_j),\mathsf{salt}_j,\mathsf{id}_j,\mathsf{ty}_j,\auxd'_j))$
+      ;~leaf $(\mathsf{id}_j,d_j,v_j)$ binds the allocation to the exact output mint fields

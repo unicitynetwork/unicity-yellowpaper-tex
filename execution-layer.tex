@@ -294,7 +294,7 @@ The \emph{burn predicate} $\predi_\mathsf{burn}(h_\mathsf{reason})$ cannot be un
 	\item \textbf{Definition}: $\predi_\mathsf{burn}(h_\mathsf{reason}; \tau, m, u) = 0$ for all arguments
 \end{itemize}
 
-The burn predicate is used in token splitting (Sec.~\ref{sec:token-splitting}), where the reason hash references the aggregation root of the split proof.
+The burn predicate is used in token splitting (Sec.~\ref{sec:token-splitting}), where the reason hash is $\mathsf{SHA\text{-}256}(b_\mathcal{M})$ for the complete canonical split-manifest encoding $b_\mathcal{M}$.
 
 
 \subsubsection{Timelock Predicate}
@@ -463,45 +463,70 @@ The token type identifier $\mathsf{ty}$ in the mint transaction classifies the t
 \subsection{Token Splitting}\label{sec:token-splitting}
 
 \index{token!splitting}
-Splitting allows a fungible token to be divided into multiple new tokens while provably preserving total value. The protocol uses \emph{Sparse Merkle Sum Trees}\index{Sparse Merkle Sum Tree} to provide cryptographic value conservation proofs.
+Splitting allows a fungible token to be divided into multiple new tokens while preserving the amount of every enclosed asset independently.  The protocol uses one \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST) per asset identifier.  An RSMST reuses the radix sparse Merkle tree structure with sums committed next to every child hash, so verification of any output proves that its amount is included in a committed allocation whose total equals the source amount.
+
+Each fractional token is self-contained and carries the complete certified burned source token in its mint reason. Implementations may deduplicate identical source-token bytes internally.
 
 \subsubsection{Split Protocol}
 
-Given a token $\mathcal{L}$ bound to network identifier $\alpha$ and carrying asset collection $\mathcal{A}$, the owner splits it into $k$ new tokens on the same network $\alpha$ with respective asset allocations $\mathcal{A}_1, \ldots, \mathcal{A}_k$ such that for every asset identifier $\mathsf{aid}$:
+Let $\Call{Assets}{\mathsf{ty},\auxd'}$ denote the token-type-specific, deterministic decoding and validation of a fungible payload.  Asset identifiers in the resulting collection are non-empty, distinct and placed in canonical bytewise order, and every amount is positive.  A payload containing a zero-valued entry is rejected rather than normalized.  Given a valid token $\mathcal{L}$ on network $\alpha$ carrying
+\[
+\mathcal{A}=\Call{Assets}{\mathsf{ty},\auxd'},
+\]
+the owner prepares $k \geq 1$ output mint transactions on the same network and with exactly the same token type $\mathsf{ty}$, with canonical asset collections $\mathcal{A}_1,\ldots,\mathcal{A}_k$.  Splitting is not a token-type conversion mechanism.  For every source asset identifier $\mathsf{aid}$ the allocations must satisfy
 \[
 \sum_{j=1}^{k} v_j(\mathsf{aid}) = v(\mathsf{aid})
 \]
-where $v(\mathsf{aid})$ is the original value and $v_j(\mathsf{aid})$ is the value allocated to token $j$.
+where a missing entry has value zero.  No output may introduce an asset identifier absent from $\mathcal{A}$.  Amounts of different asset identifiers are never added to or substituted for one another.
+
+For output $j$, let $D_{\mathsf{out},j}$ consist of the source token identifier and all output mint fields except the mint reason.  Its commitment
+\[
+d_j = H(\mathsf{SPLIT\_OUTPUT},D_{\mathsf{out},j})
+\]
+binds the allocation to the source token, network, recipient predicate, salt and resulting token identifier, token type, and the complete canonical auxiliary payload.  In particular, a proof prepared for one recipient or token type cannot authorize a mint to another, even though the standard minting key is public.
 
 The split proceeds as follows:
 \begin{enumerate}
-	\item For each asset identifier $\mathsf{aid} \in \mathcal{A}$, construct a \emph{Sparse Merkle Sum Tree} $\mathcal{S}_\mathsf{aid}$ with leaves keyed by new token identifiers $\mathsf{id}_j = H(\mathsf{salt}_j, \alpha)$ derived from distinct minter-chosen salts $\mathsf{salt}_j \in \{0,1\}^{256}$ (uniqueness among the minter's choices required; no masking role, no min-entropy requirement), and valued by the respective asset amounts $v_j(\mathsf{aid})$.
-	\item Construct an \emph{aggregation tree} $\mathcal{G}$ combining the root hashes of all per-asset sum trees.
-	\item \textbf{Burn the original token}: create a transfer transaction from $\mathcal{L}$ to the burn predicate $\predi_\mathsf{burn}(h_\mathsf{agg})$, where $h_\mathsf{agg}$ is the root hash of the aggregation tree $\mathcal{G}$. Certify this burn transaction via the Unicity Service.
-	\item \textbf{Mint each new token} $j \in \{1, \ldots, k\}$: create a mint transaction for token $\mathsf{id}_j$ on network $\alpha$ with $\mathsf{reason}$ set to a \emph{split reason proof} containing:
-	\begin{itemize}
-		\item The burned token $\mathcal{L}$ (complete history including the burn transaction)
-		\item An aggregation tree path proving that $\mathsf{aid}$ is part of the split
-		\item A sum tree path proving the value allocation $v_j(\mathsf{aid})$ and that the total value is conserved
-	\end{itemize}
+	\item Verify $\mathcal{L}$ completely, including its fungible payload, mint reason and issuer policy, before submitting any irreversible burn request.  Derive pairwise distinct output token identifiers $\mathsf{id}_j=H(\mathsf{salt}_j,\alpha)$ and the corresponding commitments $d_j$.
+	\item For every source asset $\mathsf{aid}_i$ in canonical order, construct an RSMST $\mathcal{S}_i$.  For each output carrying that asset, insert the leaf
+	\[
+	(\mathsf{id}_j,d_j,v_j(\mathsf{aid}_i)).
+	\]
+	Require the RSMST root sum to equal $v(\mathsf{aid}_i)$.  Let $r_i$ be its root hash.
+	\item Construct the \emph{split manifest}
+	\[
+	\mathcal{M}=\langle r_1,\ldots,r_m\rangle,
+	\]
+	where the roots are positionally aligned with the canonical source asset collection.  The manifest contains no repeated source identifier, asset identifiers or amounts: all are already authenticated by the burned token.  Its precise encoding $b_\mathcal{M}$ is defined in Appendix~\ref{app:split-proof-encoding}.  Extract and durably store every output's RSMST proofs and mint fields, together with the manifest and complete burn-transfer fields, before proceeding.
+	\item Burn the source by creating and certifying a transfer whose auxiliary data is exactly $b_\mathcal{M}$ and whose recipient is $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.  The resulting certified burned token is denoted $\mathcal{L}_\mathsf{burn}$.
+	\item Mint each output token $j$ with the exact fields committed by $d_j$.  Its mint reason contains $\mathcal{L}_\mathsf{burn}$ and, in canonical output-asset order, one RSMST inclusion proof for every asset it carries.  The proof contains only leaf-to-root sibling entries $(\delta,s,w)$ with explicit bifurcation depth, sibling hash and sibling sum; it omits the asset identifier, output identifier, output commitment, leaf amount and root hash because the verifier derives them respectively from the output payload, mint transaction, and split manifest.
 \end{enumerate}
+
 
 \subsubsection{Split Verification}\label{sec:split-verification}
 
-Given a new token claiming to originate from a split, the verifier checks:
+Given a token whose mint reason claims split origin, the verifier must perform all of the following checks.  Failure of any check rejects the token.
 \begin{enumerate}
-	\item The burned source token is valid and its last recipient is $\predi_\mathsf{burn}(h_\mathsf{agg})$
-	\item The new token and the burned source token verify under the same trust base $\mathcal{T}$; equivalently, both mint transaction network identifiers equal $\mathcal{T}.\alpha$
-	\item The aggregation tree path correctly leads to $h_\mathsf{agg}$
-	\item The sum tree path is valid: the leaf value matches the claimed asset amount, and the root sum equals the original token's value for this asset (value conservation)
+	\item Decode the mint reason, manifest, payloads and proofs using deterministic CBOR.  Reject wrong or unknown tags, non-canonical integers or byte strings, duplicate or unordered asset identifiers, invalid field counts or types, trailing bytes, arithmetic overflow and any input exceeding the protocol's decoding and verification limits.
+	\item Verify the output mint transaction and its Unicity Certificate.  Decode and validate its auxiliary payload according to its token type; the payload must contain a non-empty canonical collection of distinct, positive-valued assets.
+	\item Recursively verify the complete burned source token, including every Unicity Certificate, transaction, nested mint reason, fungible payload and token type specific issuance policy, under the same trust base $\mathcal{T}$, verifier registry and cumulative resource limits used for the output.  Both tokens must have network identifier $\mathcal{T}.\alpha$.
+	\item Require the source token to end in a certified transfer whose auxiliary data is the exact canonical split-manifest encoding $b_\mathcal{M}$ and whose recipient predicate is exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.
+	\item Decode the source fungible payload, place its distinct asset identifiers in canonical order, and require the manifest to contain exactly one root hash for each source asset in that order.
+	\item Require the output token type to be byte-identical to the source token type.  A split proof cannot authorize minting under any other token type, even if that type would decode the same asset identifiers and amounts.
+	\item Recompute $d_j$ from the verified source identifier and the output mint fields other than $\mathsf{reason}$.  The recomputation must cover the exact canonical recipient predicate, network, salt, token identifier, token type and complete auxiliary payload.
+	\item Require the proof count to equal the number of assets in the output payload.  Associate proofs with assets only by their canonical order; reject missing, duplicate or additional proofs.
+	\item For every output asset $(\mathsf{aid}_i,v_j(\mathsf{aid}_i))$, require that $\mathsf{aid}_i$ occurs in the source payload.  Verify its RSMST proof using key $\mathsf{id}_j$, leaf data $d_j$, leaf value $v_j(\mathsf{aid}_i)$ and expected root $r_i$ selected from the manifest.  Require both inclusion and root-hash equality.
+	\item Require the root sum reconstructed by that proof to equal the source amount $v(\mathsf{aid}_i)$.  This equality is checked independently for every asset identifier and is the verifier-side value-conservation rule; successful construction by a wallet is not evidence of conservation.
 \end{enumerate}
+
+These checks establish that the source was authentic and irreversibly spent, the burn committed to the exact set of per-asset allocation roots, every accepted output and its ownership were fixed before the burn, and no accepted output can create value.  The protocol does not guarantee that every prepared output will subsequently be minted or delivered: failure to mint an output can destroy value but cannot transfer or inflate it.  The party performing the irreversible burn is responsible for durably retaining the manifest, output salts and proofs required to resume minting.
 
 \subsection{Burn Transaction}\label{sec:burn-transaction}
 
 \index{burn transaction}
 A \emph{burn transaction} is a transfer transaction where the recipient predicate is $\predi_\mathsf{burn}(h_\mathsf{reason})$ (Sec.~\ref{sec:burn-predicate}). Since the burn predicate cannot be unlocked, the token is permanently spent and cannot be transferred further.
 
-The reason hash $h_\mathsf{reason}$ links the burn to its purpose. In a split operation, it is the aggregation tree root hash, enabling verifiers of the resulting tokens to trace back to the burned source.
+The reason hash $h_\mathsf{reason}$ links the burn to its purpose. In a split operation, it is the hash of the complete canonical split-manifest encoding $b_\mathcal{M}$, enabling verifiers of the resulting tokens to bind the source burn to the exact ordered vector of per-asset allocation roots.
 
 
 \section{Private Transactions}\label{sec:private-transactions}
