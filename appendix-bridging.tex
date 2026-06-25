@@ -1,0 +1,342 @@
+\chapter{Asset Bridging}\label{app:bridging}
+
+This appendix specifies the concrete data structures and abstract algorithms of external asset bridging introduced in Sec.~\ref{sec:bridged-assets}. The presentation is chain-independent: the external settlement chain is abstracted as a contract with persistent storage and a succinct-proof verifier (an account-based EVM chain is the motivating instance). Cryptographic primitives are treated as black boxes: the hash $H$ is $\mathsf{SHA\text{-}256}$ over deterministic CBOR (Appendix~\ref{app:encodings}), the authenticated set reuses the sparse Merkle tree of Appendix~\ref{app:rsmt}, and the proof system is specified by its interface only (Sec.~\ref{app:bridging-primitives}).
+
+All multi-field hash inputs are CBOR arrays in the stated field order; all structures use deterministic CBOR and MUST be consumed completely, rejecting non-canonical encodings, wrong tags, wrong field counts or types, and trailing bytes, as elsewhere in this specification.
+
+\section{Cryptographic Primitives}\label{app:bridging-primitives}
+
+\paragraph{Succinct proof system.}
+A proof system for an NP relation $\mathfrak{R}$ is a pair of algorithms over a public statement $\mathsf{x}$ and a private witness $\mathsf{w}$:
+\[
+\Pi \gets \mathsf{Prove}(\mathsf{x},\mathsf{w}), \qquad
+\mathsf{Verify}(\mathsf{vk},\mathsf{x},\Pi) \in \bool,
+\]
+with a verification key $\mathsf{vk}$ that pins the relation. It MUST satisfy:
+\begin{itemize}
+  \item \textbf{Completeness}: if $(\mathsf{x},\mathsf{w}) \in \mathfrak{R}$ then $\mathsf{Verify}(\mathsf{vk},\mathsf{x},\mathsf{Prove}(\mathsf{x},\mathsf{w}))=1$.
+  \item \textbf{Knowledge soundness}: a prover that makes $\mathsf{Verify}$ accept knows a witness $\mathsf{w}$ with $(\mathsf{x},\mathsf{w}) \in \mathfrak{R}$, except with negligible probability.
+  \item \textbf{Succinctness}: the cost of $\mathsf{Verify}$ is constant in $|\mathsf{w}|$ (in particular independent of token-history length and batch size).
+\end{itemize}
+The external vault hard-codes $\mathsf{vk}$; $\mathsf{x}$ is supplied on-chain and $\mathsf{w}$ never leaves the prover.
+
+\paragraph{Nullifier accumulator.}
+An authenticated set $\mathcal{D}$ over $\bytes{32}$ is summarized by a root $A = \mathsf{Root}(\mathcal{D}) \in \bytes{32}$, with empty-set root $A_\emptyset$, and operations
+\[
+\begin{aligned}
+&\mathsf{NonMember}(A,\eta) \to w, &&\mathsf{VerifyNonMember}(A,\eta,w) \in \bool,\\
+&\mathsf{Insert}(A,\eta,w) \to A',
+\end{aligned}
+\]
+where $w$ is a membership-state witness. Required properties: $\mathsf{VerifyNonMember}(A,\eta,w)=1$ certifies $\eta \notin \mathcal{D}$ under root $A$; $\mathsf{Insert}$ returns the root of $\mathcal{D}\cup\{\eta\}$; and it is infeasible to produce a valid non-membership witness for an element already inserted. The set is realizable by the sparse Merkle tree of Appendix~\ref{app:rsmt} keyed by $\eta$ (its inclusion and non-inclusion certificates implement $\mathsf{VerifyMember}$/$\mathsf{VerifyNonMember}$).
+
+\paragraph{Batch insertion is ordered.}
+Inserting a sequence $\langle\eta_1,\ldots,\eta_B\rangle$ applies $\mathsf{Insert}$ one element at a time, threading the root. The witness $w_k$ for $\eta_k$ MUST be valid against the intermediate root \emph{after} $\eta_1,\ldots,\eta_{k-1}$ have been inserted, not against the starting root. A witness builder therefore simulates the batch insertions in order; a witness computed against $A_\mathsf{old}$ is valid only for $\eta_1$.
+
+\section{Configuration and Domain Separators}\label{app:bridging-config}
+
+A bridge deployment fixes a configuration
+\[
+\mathcal{C} = (\chi,\; a_\mathsf{V},\; a_\mathsf{A},\; \mathsf{ty},\; \mathsf{aid}),
+\]
+where $\chi$ is the external chain identifier, $a_\mathsf{V}$ the vault address, $a_\mathsf{A}$ the external asset (token contract) address, $\mathsf{ty}$ the bridged token type, and $\mathsf{aid}$ the asset identifier read by $\Call{Assets}{}$ (Sec.~\ref{sec:asset-structure}). The \emph{configuration hash} is
+\[
+h_\mathsf{cfg} = H(\mathsf{CFG\_DOMAIN},\; \chi,\; a_\mathsf{V},\; a_\mathsf{A},\; \mathsf{ty},\; \mathsf{aid},\; \mathsf{LOCK\_DOMAIN},\; \mathsf{NUL\_DOMAIN},\; \mathsf{REASON\_TAG}).
+\]
+The vault MUST derive $h_\mathsf{cfg}$ and its custody asset $a_\mathsf{A}$ from the \emph{same} configuration value at deployment, so that the asset the proof validates against and the asset the vault pays out cannot diverge. $\mathsf{CFG\_DOMAIN}$, $\mathsf{LOCK\_DOMAIN}$, $\mathsf{NUL\_DOMAIN}$ are distinct fixed byte strings and $\mathsf{REASON\_TAG}$ is the CBOR semantic tag of the return reason.
+
+\section{Bridge-In: Lock, Record, and Backing Proof}\label{app:bridging-lock}
+
+Bridge-in escrows the external asset and mints a Unicity token whose genesis backing reason ties it to that escrow. This section gives the lock event, the digest the vault retains for return-time backing, the backing-reason structure, the external-finality black box, and the verification algorithm a recipient runs.
+
+\subsection{Lock Operation, Event, and Record}\label{app:bridging-lock-op}
+
+The vault's lock operation escrows the deposited asset into pooled custody, assigns a monotone \emph{lock nonce} $n$, and emits a \emph{lock event}
+\[
+L_\mathsf{lock} = (n,\; a_\mathsf{src},\; v,\; \mathsf{id},\; h_\mathsf{rcpt}),
+\]
+where $a_\mathsf{src}$ is the depositor, $v$ the locked amount, $\mathsf{id}$ the identifier of the token to be funded, and $h_\mathsf{rcpt} = H(\mathsf{CBOR}(\predi'_0))$ the commitment to that token's first-owner predicate. Simultaneously the vault records a commitment for return-time use. Define the \emph{lock record}
+\[
+\mathcal{K} = (a_\mathsf{A},\; \mathsf{ty},\; \mathsf{aid},\; v,\; \mathsf{id},\; h_\mathsf{rcpt})
+\]
+and store only its \emph{lock digest}
+\[
+d \;=\; H(\mathsf{LOCK\_DOMAIN},\; \chi,\; a_\mathsf{V},\; n,\; \mathcal{K}),
+\qquad \mathsf{lockDigest}[n] \gets d .
+\]
+The fields $a_\mathsf{A},\mathsf{ty},\mathsf{aid}$ are deployment constants from $\mathcal{C}$; $v,\mathsf{id},h_\mathsf{rcpt}$ come from the lock. Binding $\mathsf{id}$ into both the lock and the genesis ties one lock to exactly one token (token-identifier uniqueness, Sec.~\ref{sec:mint-tx}), and binding $h_\mathsf{rcpt}$ ensures only the designated recipient owns the minted token. The digest is the only return-relevant state the vault retains; it lets the return relation (Sec.~\ref{app:bridging-relation}) re-establish backing without any external query.
+
+\subsection{Backing Reason}\label{app:bridging-backing-reason}
+
+The genesis mint reason (Sec.~\ref{sec:mint-justification}) of a bridged token is a CBOR array under tag $\mathsf{BACKING\_TAG}$ that locates the lock and pins the trust anchors:
+
+\begin{longtable}{clp{8.4cm}}
+\textbf{Index} & \textbf{Field} & \textbf{Description} \\
+\hline
+\endhead
+0 & $\mathsf{ver}$ & version, $=1$ \\
+1 & $\chi$ & external chain identifier \\
+2 & $a_\mathsf{V}$ & vault address \\
+3 & $a_\mathsf{A}$ & asset address \\
+4 & $n$ & lock nonce (locator of the lock event) \\
+\end{longtable}
+
+The reason body carries only a reference to the lock and the trust anchors; the security-relevant values --- token identifier, recipient, and amount --- are read from the certified genesis and the lock event and checked against each other, never trusted from the reason body. A deployment MAY additionally carry an external-chain inclusion proof of the lock in the reason (Sec.~\ref{app:bridging-finality}). The structure of the backing reason and its verifier are part of the token type $\mathsf{ty}$'s definition.
+
+\subsection{External Finality}\label{app:bridging-finality}
+
+Confirming the lock is the one step Unicity cannot internalize, since it concerns another chain's state. It is abstracted as a black-box oracle
+\[
+\Call{LockFinal}{\chi, a_\mathsf{V}, n} \;\to\; (\mathsf{ok},\; a_\mathsf{A},\; v,\; \mathsf{id},\; h_\mathsf{rcpt}),
+\]
+returning $\mathsf{ok}=1$ together with the committed fields of $L_\mathsf{lock}$ iff a lock with nonce $n$ was emitted by vault $a_\mathsf{V}$ on chain $\chi$ and is final there. Two realizations satisfy the contract:
+\begin{enumerate}
+  \item \textbf{Live query}: the verifier queries a $\chi$ node and requires at least $K$ confirmations, with $K$ chosen for $\chi$'s reorg resistance.
+  \item \textbf{Carried inclusion proof}: the reason carries a $\chi$ block header and a log/receipt inclusion proof, verified against a pinned $\chi$ trust anchor; finality follows from the header depth or the anchor's finalization rule.
+\end{enumerate}
+Both lie outside Unicity's trust base $\mathcal{T}$ and are the bridge's only external-chain assumption. The choice trades liveness and connectivity (live query) against self-containment (carried proof) and is a per-deployment parameter.
+
+\subsection{Backing Verification Algorithm}\label{app:bridging-backing}
+
+Algorithm~\ref{alg:bridge-backing} is the token-type mint-reason check (Sec.~\ref{sec:mint-tx}, step~5) for a bridged genesis; it runs after the generic mint-transaction verification, against the pinned configuration $\mathcal{C}$ (Sec.~\ref{app:bridging-config}).
+
+\begin{algorithm}[!htbp]
+\caption{Backing Mint-Reason Verification}\label{alg:bridge-backing}
+\begin{algorithmic}[0]
+\Function{VerifyBackingReason}{$D_\mathsf{mint},\mathcal{T},\mathcal{C}$}
+  \State $(\mathsf{ver},\chi',a'_\mathsf{V},a'_\mathsf{A},n) \gets \Call{DecodeBackingReason}{D_\mathsf{mint}.\mathsf{reason}}$
+  \State ensure($\mathsf{ver} = 1$)
+  \State ensure($(\chi',a'_\mathsf{V},a'_\mathsf{A}) = (\mathcal{C}.\chi,\mathcal{C}.a_\mathsf{V},\mathcal{C}.a_\mathsf{A})$) \Comment{trust anchors}
+  \State ensure($D_\mathsf{mint}.\mathsf{ty} = \mathcal{C}.\mathsf{ty}$ \textbf{and} $D_\mathsf{mint}.\alpha = \mathcal{T}.\alpha$)
+  \State $(\mathsf{ok},a''_\mathsf{A},v,\mathsf{id}_L,h_\mathsf{rcpt}) \gets \Call{LockFinal}{\chi',a'_\mathsf{V},n}$ \Comment{external finality oracle}
+  \State ensure($\mathsf{ok} = 1$ \textbf{and} $a''_\mathsf{A} = a'_\mathsf{A}$)
+  \State $\mathsf{id} \gets H(D_\mathsf{mint}.\mathsf{salt},D_\mathsf{mint}.\alpha)$
+  \State ensure($\mathsf{id}_L = \mathsf{id}$) \Comment{lock funds this exact token}
+  \State ensure($h_\mathsf{rcpt} = H(\mathsf{CBOR}(D_\mathsf{mint}.\predi'))$) \Comment{lock binds this recipient}
+  \State $v_g \gets$ value of $D_\mathsf{mint}.\auxd'$ for $\mathcal{C}.\mathsf{aid}$ via $\Call{Assets}{}$
+  \State ensure($v = v_g$) \Comment{minted value equals locked amount}
+  \State \Return $1$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Bridge-In Security}\label{app:bridging-in-security}
+
+\begin{description}
+\item[Backing at mint time.] An accepted bridged genesis implies a final lock on $\chi$ committing to the same identifier, recipient, and amount (Alg.~\ref{alg:bridge-backing}); every bridged token therefore first circulates fully backed.
+\item[Uniqueness.] Exactly one genesis exists per $\mathsf{id}$ (Sec.~\ref{sec:request-validation}), and the lock fixes $\mathsf{id}$; hence each lock funds one token, and no second genesis can claim the same lock.
+\item[Backing at return time.] The return relation does not re-invoke $\Call{LockFinal}{}$. It reconstructs $\mathcal{K}$ from the certified genesis and $\mathcal{C}$, recomputes $d$, and the vault confirms $d = \mathsf{lockDigest}[n]$ (Sec.~\ref{app:bridging-settlement}). By collision resistance this matches only the lock the vault actually recorded, so custody is released solely against a genuine deposit, with no external query at return time.
+\end{description}
+
+\section{Return Reason}\label{app:bridging-reason}
+
+The return reason is a CBOR array under tag $\mathsf{REASON\_TAG}$:
+
+\begin{longtable}{clp{8.4cm}}
+\textbf{Index} & \textbf{Field} & \textbf{Description} \\
+\hline
+\endhead
+0  & $\mathsf{ver}$        & version, $=1$ \\
+1  & $\chi$                & external chain identifier \\
+2  & $a_\mathsf{V}$        & vault address \\
+3  & $a_\mathsf{A}$        & asset address \\
+4  & $\mathsf{ty}$         & bridged token type \\
+5  & $\mathsf{aid}$        & asset identifier \\
+6  & $a_\mathsf{r}$        & external recipient of the release \\
+7  & $v$                   & gross amount; equals the burned token's value for $\mathsf{aid}$ \\
+8  & $a_\mathsf{f}$        & fee recipient ($\bot$ if no fee) \\
+9  & $v_\mathsf{f}$        & fee amount, $v_\mathsf{f} \le v$ \\
+10 & $t_d$                 & deadline; gates the fee only (Sec.~\ref{app:bridging-settlement}) \\
+\end{longtable}
+
+The holder burns the source token (Sec.~\ref{sec:burn-transaction}) to recipient predicate $\predi_\mathsf{burn}(H(\mathsf{REASON\_TAG},\mathcal{R}))$. Fields $0$--$5$ pin the deployment and MUST equal $\mathcal{C}$; fields $6$--$10$ are the per-return release parameters. Every field is public by nature, since the external release is a public event; the private part of a return is the token's transfer history, which never leaves the witness.
+
+\section{Nullifier}\label{app:bridging-nullifier}
+
+Let the burn be the final certified transfer of the source token, spending the state $(\predi_{n-1},\sthash_{n-1})$ and recorded under the SMT leaf $(\mathsf{sid}_\mathsf{b},\txhash_\mathsf{b})$ with
+\[
+\mathsf{sid}_\mathsf{b} = H(\predi_{n-1},\sthash_{n-1}).
+\]
+The \emph{nullifier} is
+\[
+\eta \;=\; H(\mathsf{NUL\_DOMAIN},\; h_\mathsf{cfg},\; \mathsf{sid}_\mathsf{b},\; \txhash_\mathsf{b}).
+\]
+$\mathsf{sid}_\mathsf{b}$ is recorded at most once by the Unicity Service (Sec.~\ref{sec:request-validation}), so $\eta$ is globally unique; the certified $\txhash_\mathsf{b}$ binds it to the exact return reason, and $h_\mathsf{cfg}$ separates deployments so the same burn never collides across independent bridges.
+
+\section{Shared Anchor for Inclusion Checking}\label{app:bridging-anchor}
+
+Because the SMT is add-only, a single recent certificate suffices for proof validation. Fix an \emph{anchor certificate} $UC^*$ and its root $h^* = UC^*.IR.h$. For each certified transaction needed from a token, with leaf $L = (\mathsf{sid},\txhash)$, an \emph{anchored inclusion proof} is an SMT inclusion certificate $C^\mathsf{inc}$ of $L$ against $h^*$. The relation verifies $UC^*$ once via $\mathsf{VerifyUnicityCert}$ (Sec.~\ref{VerifyUnicityCert}) and each $L$ by $\mathsf{VerifyMember}(h^*, L, C^\mathsf{inc})$ --- the inclusion check of Sec.~\ref{VerifyInclusionProof} with the shared root $h^*$ substituted for the per-proof one. This replaces $m$ Unicity Certificate verifications by one certificate plus $m$ hash-path checks.
+
+\section{Public Statement and Public Calldata}\label{app:bridging-public}
+
+The public statement committed by the proof and checked by the vault is
+\[
+\mathsf{x} = (h_\mathsf{cfg},\; h_\mathcal{T},\; A_\mathsf{old},\; A_\mathsf{new},\; \mathsf{rr},\; \mathsf{lr},\; B,\; V),
+\]
+with $h_\mathcal{T} = H(\mathcal{T})$, $A_\mathsf{old}/A_\mathsf{new}$ the accumulator root transition, $B$ the batch size, $V$ the total gross amount, and $\mathsf{rr}, \mathsf{lr}$ commitments (Sec.~\ref{app:bridging-anchor} hash, or any binding vector commitment) to the calldata below.
+
+A \emph{release leaf} carries everything the vault must execute and emit:
+\[
+\ell = (\eta,\; a_\mathsf{r},\; v,\; a_\mathsf{f},\; v_\mathsf{f},\; t_d),
+\qquad \mathsf{rr} = \Call{Commit}{\langle \ell_1,\ldots,\ell_B \rangle}.
+\]
+The nullifier $\eta$ is included in the leaf, and emitted on settlement, so any party can reconstruct the off-chain accumulator and replace a stalled prover. A \emph{lock reference} is $(n,d)$, and $\mathsf{lr} = \Call{Commit}{\cdot}$ over the distinct lock references sorted by $n$.
+
+\section{Batch Proving Relation}\label{app:bridging-relation}
+
+Algorithm~\ref{alg:bridge-relation} defines $\mathfrak{R}$: the relation holds iff every check passes. The witness $\mathsf{w}$ comprises the trust base $\mathcal{T}$, the anchor certificate $UC^*$, and for each burn $i$: the source token $\mathcal{L}_i$, its anchored inclusion proofs, the lock record(s) backing its genesis, and the accumulator non-membership witness $w_i$. $\Call{VerifyToken}{}$ (Sec.~\ref{sec:token-verification}) is invoked in \emph{anchored} mode: wherever it would verify a certified transaction's own Unicity Certificate, it instead verifies an anchored inclusion proof against $h^*$ (Sec.~\ref{app:bridging-anchor}); its recursive split-reason checks (Sec.~\ref{sec:split-verification}) are unchanged and supply value conservation. The genesis backing verifier is \emph{structural}: it checks the binding to the lock record and exports the lock reference as a public obligation, leaving the existence of the lock to the vault's recorded digest (Sec.~\ref{app:bridging-in-security}). The external finality of the lock was already established at mint time by the bridge-in verifier (Sec.~\ref{app:bridging-backing}), so it need not be re-checked inside the proof.
+
+\begin{algorithm}[!htbp]
+\caption{Batch Return Relation $\mathfrak{R}(\mathsf{x},\mathsf{w})$}\label{alg:bridge-relation}
+\begin{algorithmic}[0]
+\Function{BridgeReturnRelation}{$\mathsf{x},\mathsf{w}$}
+  \State ensure($H(\mathcal{T}) = \mathsf{x}.h_\mathcal{T}$)
+  \State ensure($\mathsf{VerifyUnicityCert}(UC^*,\mathcal{T}) = 1$);\quad $h^* \gets UC^*.IR.h$
+  \State $A \gets \mathsf{x}.A_\mathsf{old}$;\quad $V \gets 0$;\quad $\mathsf{leaves} \gets \langle\rangle$;\quad $\mathsf{lref} \gets \langle\rangle$
+  \For{$i \gets 1 \ldots \mathsf{x}.B$}
+    \State \textbf{Finality:} ensure($\Call{VerifyToken}{\mathcal{L}_i,\mathcal{T}} = 1$ in anchored mode against $h^*$)
+    \State ensure(token type of $\mathcal{L}_i$ equals $\mathcal{C}.\mathsf{ty}$)
+    \State $T_\mathsf{b} \gets$ final certified transfer of $\mathcal{L}_i$
+    \State $\mathcal{R}_i \gets \Call{DecodeReason}{}$ such that $T_\mathsf{b}.\predi' = \predi_\mathsf{burn}(H(\mathsf{REASON\_TAG},\mathcal{R}_i))$
+    \State \textbf{Destination:} ensure($\mathcal{R}_i.(\chi,a_\mathsf{V},a_\mathsf{A},\mathsf{ty},\mathsf{aid}) = \mathcal{C}$)
+    \State \textbf{Value:} $v_i \gets$ value of $\mathcal{L}_i$ for $\mathsf{aid}$ via $\Call{Assets}{}$
+    \State ensure($\mathcal{R}_i.v = v_i$) \textbf{and} ensure($\mathcal{R}_i.v_\mathsf{f} \le v_i$)
+    \State \textbf{Backing:} $(\,n_i,\mathcal{K}_i) \gets$ lock referenced by the genesis mint reason of $\mathcal{L}_i$
+    \State $d_i \gets H(\mathsf{LOCK\_DOMAIN},\chi,a_\mathsf{V},n_i,\mathcal{K}_i)$
+    \State ensure($\mathcal{K}_i.\mathsf{id} = \mathsf{id}(\mathcal{L}_i)$ \textbf{and} $\mathcal{K}_i.h_\mathsf{rcpt} = H(\mathsf{CBOR}(\text{genesis recipient}))$)
+    \State ensure($\mathcal{K}_i.\mathsf{aid} = \mathsf{aid}$ \textbf{and} $\mathcal{K}_i.v = $ genesis value for $\mathsf{aid}$)
+    \State \textbf{Replay:} $\eta_i \gets H(\mathsf{NUL\_DOMAIN},\mathsf{x}.h_\mathsf{cfg},\mathsf{sid}_{\mathsf{b},i},\txhash_{\mathsf{b},i})$
+    \State ensure($\mathsf{VerifyNonMember}(A,\eta_i,w_i) = 1$);\quad $A \gets \mathsf{Insert}(A,\eta_i,w_i)$
+    \State append $(\eta_i, \mathcal{R}_i.a_\mathsf{r}, v_i, \mathcal{R}_i.a_\mathsf{f}, \mathcal{R}_i.v_\mathsf{f}, \mathcal{R}_i.t_d)$ to $\mathsf{leaves}$
+    \State append $(n_i,d_i)$ to $\mathsf{lref}$;\quad $V \gets V + v_i$
+  \EndFor
+  \State ensure($A = \mathsf{x}.A_\mathsf{new}$ \textbf{and} $V = \mathsf{x}.V$)
+  \State ensure($\Call{Commit}{\mathsf{leaves}} = \mathsf{x}.\mathsf{rr}$)
+  \State ensure($\Call{Commit}{\Call{DedupSort}{\mathsf{lref}}} = \mathsf{x}.\mathsf{lr}$)
+  \State \Return $1$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+The single source lock per burn shown above is the supported case. A vector of source locks per burn is reserved for a future merge/combine primitive; until its verifier is defined, a relation MUST reject any burn that references more than one lock.
+
+\section{Settlement}\label{app:bridging-settlement}
+
+The vault keeps: the verification key $\mathsf{vk}$, the configuration hash $h_\mathsf{cfg}$, the custody asset $a_\mathsf{A}$, an allow-list of trust-base hashes (rotatable under timelock for validator-set epochs), the bridge-in map $\mathsf{lockDigest}[\cdot]$, and the accumulator root $A$ (initialized to $A_\emptyset$). Algorithm~\ref{alg:bridge-settle} settles a batch.
+
+\begin{algorithm}[!htbp]
+\caption{Settlement $\textsc{FulfilBatch}$}\label{alg:bridge-settle}
+\begin{algorithmic}[0]
+\Function{FulfilBatch}{$\mathsf{x},\Pi,\langle\ell_i\rangle,\langle(n_j,d_j)\rangle$}
+  \State ensure($\mathsf{Verify}(\mathsf{vk},\mathsf{x},\Pi) = 1$)
+  \State ensure($\mathsf{x}.h_\mathsf{cfg} = h_\mathsf{cfg}$ \textbf{and} $\mathsf{x}.h_\mathcal{T} \in \mathsf{trustBaseAllowed}$)
+  \State ensure($\mathsf{x}.A_\mathsf{old} = A$) \Comment{the entire replay guard}
+  \State ensure($\len{\langle\ell_i\rangle} = \mathsf{x}.B$ \textbf{and} $\Call{Commit}{\langle\ell_i\rangle} = \mathsf{x}.\mathsf{rr}$)
+  \State ensure($\langle(n_j,d_j)\rangle$ sorted-unique by $n_j$ \textbf{and} $\Call{Commit}{\langle(n_j,d_j)\rangle} = \mathsf{x}.\mathsf{lr}$)
+  \ForAll{$(n_j,d_j)$}
+    \State ensure($\mathsf{lockDigest}[n_j] = d_j$)
+  \EndFor
+  \State ensure($\sum_i \ell_i.v = \mathsf{x}.V$ \textbf{and} $\forall i:\ \ell_i.v_\mathsf{f} \le \ell_i.v$)
+  \State $A \gets \mathsf{x}.A_\mathsf{new}$ \Comment{one root update for the whole batch}
+  \For{$i \gets 1 \ldots \mathsf{x}.B$}
+    \State $f \gets (\mathsf{now} \le \ell_i.t_d)\ ?\ \ell_i.v_\mathsf{f}\ :\ 0$ \Comment{deadline gates the fee only}
+    \State transfer $\ell_i.v - f$ of $a_\mathsf{A}$ to $\ell_i.a_\mathsf{r}$;\quad \textbf{if} $f \ne 0$ transfer $f$ to $\ell_i.a_\mathsf{f}$
+    \State emit $\mathsf{Released}(\ell_i.\eta, \ell_i.a_\mathsf{r}, \ell_i.v, f)$
+  \EndFor
+  \State emit $\mathsf{BatchFulfilled}(\mathsf{x}.A_\mathsf{old}, \mathsf{x}.A_\mathsf{new}, \mathsf{x}.\mathsf{rr}, \mathsf{x}.B)$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+Properties:
+\begin{itemize}
+  \item \textbf{No external query, no light client.} The proof self-certifies its anchor under the allow-listed $\mathcal{T}$, and backing is confirmed against locally recorded digests; the vault tracks no Unicity roots.
+  \item \textbf{Deadline never strands funds.} $t_d$ gates only the fee. After it, the recipient receives the full amount; anyone (including the recipient) can submit the proof, so a slow or absent relayer costs only the fee.
+  \item \textbf{Batch atomicity.} All $B$ transfers settle together; a single recipient that rejects receipt reverts the batch. This is a liveness concern, not a safety one: on revert $A$ is unchanged and no nullifier is consumed, so the offending leaf is dropped and the batch rebuilt. A deployment expecting blockable recipients\footnote{e.g., compliance reasons} may settle by crediting a withdrawable balance instead of directly transferring.
+  \item \textbf{Reconstructability.} $\mathsf{Released}$ emits each nullifier and $\mathsf{BatchFulfilled}$ each root transition, so the off-chain accumulator is rebuildable from public data alone and verified against the on-chain $A$ before use.
+\end{itemize}
+
+\section{Security Properties}\label{app:bridging-security}
+
+\begin{description}
+\item[Solvency.] By bridge-in (Sec.~\ref{app:bridging-backing}), every bridged token is backed by an equal lock; by split verification (Sec.~\ref{sec:split-verification}), the value of any split descendant is at most the parent's. The backing check ties each burn to a recorded lock digest, and value conservation ties the burned amount to that lock's amount, so $\sum(\text{released}) \le \sum(\text{locked})$ and custody cannot be over-drawn.
+\item[Replay-freeness.] Nullifiers are globally unique (Sec.~\ref{app:bridging-nullifier}). Each release proves non-membership and inserts, and the vault requires $\mathsf{x}.A_\mathsf{old} = A$. A resubmitted proof fails (the stored root advanced); a fresh proof cannot show non-membership of an inserted nullifier; duplicate nullifiers within a batch fail the second non-membership check.
+\item[Authenticity and finality.] $\mathfrak{R}$ embeds $\Call{VerifyToken}{}$ against the pinned $\mathcal{T}$; by knowledge soundness, an accepting proof implies a genuine, BFT-final burn whose reason is exactly $\mathcal{R}$. The recipient and amount cannot be altered, as they are committed inside the certified burn.
+\item[Liveness.] The prover holds no authority and is replaceable: from the on-chain root and the public $\mathsf{Released}$ stream, any party rebuilds the accumulator, refetches anchored inclusion proofs from the Unicity Service, and reproduces a proof. The residual requirement is availability of the burned-token data, which the holder must retain until settlement.
+\end{description}
+
+\section{Batched Proving}\label{app:bridging-batching}
+
+The public statement and the settlement procedure are identical for every value of $B$, so the vault and the wallet are stable across the following stages; only the prover changes.
+
+\begin{description}
+  \item[Single ($B=1$).] One token, one nullifier insertion, one root transition. Establishes the interface.
+  \item[In-circuit batch ($B>1$).] One proof for $B$ burns sharing one anchor certificate $UC^*$ and one accumulator transition. This amortizes, over the whole batch, the single on-chain $\mathsf{Verify}$, the single BFT-certificate verification of $UC^*$, and the single root update. The only cost linear in $B$ on-chain is the $B$ asset transfers.
+  \item[Recursion.] Prove each token's lineage independently (parallel across machines), each emitting its nullifier and validated facts; an aggregation relation verifies the child proofs, performs the batch accumulator insertion, binds all returns to one $h_\mathsf{cfg}$ and trust-base policy, and emits the same statement $\mathsf{x}$. This decouples per-token proving latency from batch size.
+\end{description}
+
+\section{Shared Parameters}\label{app:bridging-params}
+
+The table below fixes the bridge's free parameters with initial defaults. The \textbf{Status} of each entry reads: \emph{Fixed} --- determined by this specification; \emph{Default} --- a RECOMMENDED value a deployment SHOULD adopt unless it has a specific reason otherwise; \emph{Rule} --- a mandatory derivation constraint; \emph{Chain} / \emph{Policy} --- deployment- or chain-specific, to be chosen and published before deployment of the source chain contracts. Every value, once chosen, MUST be frozen and published so that wallets, provers, and the vault agree.
+
+\begin{longtable}{p{3.0cm}p{4.2cm}p{2.0cm}p{3.4cm}}
+\textbf{Parameter} & \textbf{Default / value} & \textbf{Status} & \textbf{Notes} \\
+\hline
+\endhead
+\multicolumn{4}{l}{\textit{Hashing and identifiers}}\\
+\hline
+$H$ & $\mathsf{SHA\text{-}256}$ over deterministic CBOR & Fixed & all bridge hashes and digests \\
+$\mathsf{ver}$ & $1$ & Fixed & version of backing and return reasons \\
+\hline
+\multicolumn{4}{l}{\textit{Domain separators and CBOR tags}}\\
+\hline
+$\mathsf{CFG\_DOMAIN}$    & \texttt{"UNICITY\_BR\_CFG"}  & Default & separator in $h_\mathsf{cfg}$ \\
+$\mathsf{LOCK\_DOMAIN}$   & \texttt{"UNICITY\_BR\_LOCK"} & Default & separator in lock digest $d$ \\
+$\mathsf{NUL\_DOMAIN}$    & \texttt{"UNICITY\_BR\_NUL"}  & Default & separator in nullifier $\eta$ \\
+$\mathsf{BACKING\_TAG}$   & CBOR tag \texttt{39048}        & Default & genesis backing reason \\
+$\mathsf{REASON\_TAG}$    & CBOR tag \texttt{39050}        & Default & return reason $\mathcal{R}$ \\
+\hline
+\multicolumn{4}{l}{\textit{Encodings}}\\
+\hline
+Amounts $v,v_\mathsf{f}$ & unsigned, $<2^{256}$, minimal big-endian, $\le 32$ bytes & Fixed & as split amounts (Sec.~\ref{app:rsmst}) \\
+Addresses $a_\mathsf{V},a_\mathsf{A},a_\mathsf{r},a_\mathsf{f}$ & $20$ bytes & Chain & EVM-class default; set by $\chi$ \\
+$\mathcal{C},\mathcal{K},\mathcal{R}$, backing reason, lock event, release leaf, lock ref & fixed-width CBOR arrays, stated field order & Fixed & deterministic CBOR, consumed completely \\
+\hline
+\multicolumn{4}{l}{\textit{Derivations (mandatory)}}\\
+\hline
+$h_\mathsf{cfg}$ and $a_\mathsf{A}$ & jointly from one config & Rule & Sec.~\ref{app:bridging-config} \\
+Nullifier $\eta$ & per Sec.~\ref{app:bridging-nullifier} & Rule & binds $h_\mathsf{cfg}$ and the certified burn leaf \\
+Lock digest $d$ & per Sec.~\ref{app:bridging-lock-op} & Rule & vault-stored at bridge-in \\
+Batch witness order & per Sec.~\ref{app:bridging-primitives} & Rule & witness $k$ vs.\ root after inserts $0..k{-}1$ \\
+\hline
+\multicolumn{4}{l}{\textit{Nullifier accumulator}}\\
+\hline
+Tree type & radix sparse Merkle tree (Sec.~\ref{app:rsmt}) & Default & native non-inclusion; key $=\eta$ \\
+Key space & $256$-bit, sparse & Fixed & $\eta \in \bytes{32}$ \\
+Leaf value & fixed presence constant \texttt{0x01} & Default & only membership is needed \\
+Accumulator hash & $\mathsf{SHA\text{-}256}$ & Default & matches the Service SMT \\
+Empty root $A_\emptyset$ & empty-RSMT root ($\zerohash$) & Fixed & vault initialization \\
+\hline
+\multicolumn{4}{l}{\textit{Calldata commitment}}\\
+\hline
+$\Call{Commit}{}$ & $H$ over concatenated fixed-width leaf encodings & Default & flat binding commitment; EVM deployments MAY use keccak-256 for cheaper on-chain recomputation \\
+\hline
+\multicolumn{4}{l}{\textit{External finality}}\\
+\hline
+$\Call{LockFinal}{}$ realization & live query with $K$ confirmations & Chain & or carried inclusion proof vs.\ pinned $\chi$ anchor (Sec.~\ref{app:bridging-finality}) \\
+$K$ (confirmation depth) & $20$ (Tron-class); ``finalized'' (Ethereum L1) & Chain & set for $\chi$'s reorg resistance \\
+\hline
+\multicolumn{4}{l}{\textit{Batching and settlement}}\\
+\hline
+$B_{\max}$ (max batch size) & $64$ & Tunable & bounded by external block gas/energy \\
+Deadline $t_d$ & gates the fee only; principal always released & Fixed & Sec.~\ref{app:bridging-settlement} \\
+Fee constraint & $v_\mathsf{f} \le v$ & Fixed & enforced in circuit and vault \\
+\hline
+\multicolumn{4}{l}{\textit{Governance and proof system}}\\
+\hline
+Trust-base allow-list & timelocked add/rotate & Policy & for validator-set epochs \\
+Governance timelock $\Delta_\mathsf{gov}$ & $\ge 7$ days (suggested) & Policy & deployment-set \\
+Proof system & Groth16-wrapped STARK & Default & $\mathsf{vk}$ pinned per circuit version (Sec.~\ref{app:bridging-primitives}) \\
+\end{longtable}
+
+A deployment must select the chain-specific entries ($\chi$, the address width, $K$ or the external anchor), pinned $\mathsf{vk}$ for the chosen proof system, and publish the resulting $h_\mathsf{cfg}$ and the allowed trust-base hashes.

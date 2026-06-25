@@ -529,6 +529,71 @@ A \emph{burn transaction} is a transfer transaction where the recipient predicat
 The reason hash $h_\mathsf{reason}$ links the burn to its purpose. In a split operation, it is the hash of the complete canonical split-manifest encoding $b_\mathcal{M}$, enabling verifiers of the resulting tokens to bind the source burn to the exact ordered vector of per-asset allocation roots.
 
 
+\section{Bridged Assets}\label{sec:bridged-assets}
+
+\index{bridge}\index{bridged asset}
+A fungible token may represent an asset held in custody on an \emph{external chain} (e.g.\ an account-based EVM chain). Bridging is bi-directional. \emph{Bridge-in} locks the external asset in a settlement contract (the \emph{vault}) and mints a Unicity token whose mint reason (Sec.~\ref{sec:mint-justification}) is a \emph{backing proof} binding the token to that lock. \emph{Bridge-out}, or \emph{return}, burns the Unicity token and releases the matching external asset. Both directions are realized without a trusted bridge operator or committee: bridge-in as a token-type specific mint-reason verifier that every recipient re-runs, and bridge-out as a succinct validity proof the vault verifies. This section specifies both; concrete data structures and algorithms are in Appendix~\ref{app:bridging}.
+
+\subsection{Bridge-In: Lock and Mint}\label{sec:bridge-in}
+
+To bring an asset in, the locker fixes the recipient's first-owner predicate $\predi'_0$ and a token salt, determining the token identifier $\mathsf{id} = H(\mathsf{salt},\alpha)$ (Sec.~\ref{sec:mint-tx}) and the recipient commitment $h_\mathsf{rcpt} = H(\mathsf{CBOR}(\predi'_0))$. The locker calls the vault on the external chain, which escrows the asset into pooled custody, assigns a monotone lock nonce $n$, and emits a \emph{lock event} committing to $\mathsf{id}$, $h_\mathsf{rcpt}$, and the locked amount. The locker then mints a Unicity token of type $\mathsf{ty}$ to $\predi'_0$ whose genesis carries a \emph{backing reason} that references the lock by $(\chi, a_\mathsf{V}, a_\mathsf{A}, n)$ (Appendix~\ref{app:bridging-lock}).
+
+Minting is permissionless: the minter key is a public constant derived from $\mathsf{id}$ (Appendix~\ref{app:el-constants}), so a valid genesis signature conveys no authority by itself. Authority comes entirely from the backing reason, verified by every recipient as the token-type specific mint-reason check (Sec.~\ref{sec:mint-tx}, step~5). The verifier (Appendix~\ref{app:bridging-backing}) confirms that a \emph{final} lock with nonce $n$ exists at the configured vault and asset on the configured chain, and binds it to the genesis: the lock's committed identifier equals $\mathsf{id}$, its recipient commitment equals $h_\mathsf{rcpt}$, and its amount equals the genesis's declared value for $\mathsf{aid}$. The reason body carries only the lock locator and the trust anchors; every security-relevant value is read from the certified genesis and the lock event and validated cryptographically.
+
+Bridge-in cannot be instantaneous. A reorganization of the external chain could undo the lock after the token is minted and in circulation, so a recipient must wait for the lock to be final on the external chain before treating the token as good. This finality wait is intrinsic to accepting a deposit from a chain with probabilistic finality. Confirming the lock requires reading external-chain state: the recipient does so either by querying an external-chain node, or by verifying an external-chain inclusion proof carried in the backing reason against a pinned external-chain anchor (Appendix~\ref{app:bridging-finality}). Either way each recipient is its own verifier, so bridge-in introduces no trusted bridge party; its only assumption is the external chain's own consensus.
+
+\paragraph{Security.}
+\begin{description}
+\item[No mint without a lock] The backing verifier accepts the genesis only if a matching final lock exists on the configured chain and asset; a token minted without a lock fails verification and is never accepted.
+\item[No double mint] The genesis of a token with identifier $\mathsf{id}$ is recorded at a single state determined by $\mathsf{id}$ (Sec.~\ref{sec:mint-tx},~\ref{sec:request-validation}); since the lock commits to $\mathsf{id}$, one lock funds exactly one token and cannot be replayed for a second mint.
+\item[No theft] Although anyone may construct the genesis, $h_\mathsf{rcpt}$ binds ownership to the predicate the locker named on the external chain, so only the intended recipient can spend the minted token.
+\item[No value inflation] The declared genesis value for $\mathsf{aid}$ must equal the locked amount, so minted value never exceeds custody.
+\item[No rogue contract] The chain, vault, and asset in the reason must equal the pinned configuration, so a genesis pointing at an unauthorized contract is rejected.
+\item[No reorged lock] The lock must be final on the external chain, so a deposit that could still be reversed is not accepted.
+\end{description}
+
+\subsection{Bridge-Out: Setting}\label{sec:bridge-setting}
+
+A Unicity burn is final the instant it is certified by the BFT Consensus layer and is verifiable offline by $\Call{VerifyToken}{}$ (Sec.~\ref{sec:token-verification}) against the trust base $\mathcal{T}$ alone: there is no source-finality wait, no validator node, and no external RPC query. The limitation is that the external vault is computationally weak --- re-running $\Call{VerifyToken}{}$ on-chain incurs cost which grows with token history. A \emph{succinct validity proof} (a SNARK, see Appendix~\ref{app:bridging-primitives}) compresses that token history-dependent check into a single verification of constant cost.
+
+The vault holds pooled custody of one asset, has persistent storage, can verify a succinct proof for constant cost, and pins (i)~an allow-listed trust-base hash $h_\mathcal{T} = H(\mathcal{T})$, selecting \emph{which} Unicity Service instance is authoritative, and (ii)~an immutable configuration hash $h_\mathsf{cfg}$ committing the external chain identifier, the vault and asset addresses, the bridged token type $\mathsf{ty}$, the asset identifier $\mathsf{aid}$, and the protocol's domain separators (Appendix~\ref{app:bridging-config}). There is no trusted operator, committee, or challenge window: the vault releases funds only against a valid proof.
+
+\subsection{Return Authorization}\label{sec:bridge-return-reason}
+
+To return value, the holder burns the token (Sec.~\ref{sec:burn-transaction}) to $\predi_\mathsf{burn}(H(\mathcal{R}))$, where the \emph{return reason} $\mathcal{R}$ commits to the external release: the recipient, a gross amount $v$ equal to the burned token's certified value for $\mathsf{aid}$, an optional relayer fee, a deadline, and the pinned configuration fields (Appendix~\ref{app:bridging-reason}). A fungible token might have been split (Sec.~\ref{sec:token-splitting}), causing fractional returns.
+
+\subsection{Replay Prevention}\label{sec:bridge-replay}
+
+Replay prevention is implemented via a \emph{nullifier accumulator}, whose root $A$ is stored on-chain by the vault: an authenticated set (implemented by the sparse Merkle tree of Sec.~\ref{sec:smt}, which already provides inclusion and non-inclusion certificates) of the burns already released. The \emph{nullifier} of a burn is derived from its certified leaf, whose state identifier the Unicity Service records at most once (Sec.~\ref{sec:request-validation}); it is therefore globally unique by the same mechanism that prevents double-spending. A release proves the nullifier is \emph{absent} from $A$ and inserts it, and the vault advances $A$. Consequently, the on-chain state necessary for replay prevention is \emph{constant} --- one root.
+
+The nullifier accumulator can be deterministically rebuilt by anybody based on transaction history of the source blockchain.
+
+\subsection{Validity Statement}\label{sec:bridge-statement}
+
+For a batch of $B$ burns, the proof attests the conjunction of the following claims:
+
+\begin{description}
+\item[Anchor.] A single recent Unicity Certificate $UC^*$ certifies an SMT root $h^* = UC^*.IR.h$ under $\mathcal{T}$, and $H(\mathcal{T}) = h_\mathcal{T}$. Because the SMT is add-only (Sec.~\ref{sec:smt}), every state a token ever occupied remains provable under any later root, so one $UC^*$ anchors entire token histories. The proof verifies this BFT certificate \emph{once} per batch, instead of one certificate per transition.
+\item[Finality.] Each burned token verifies by $\Call{VerifyToken}{}$, with every certified transaction's leaf shown included under the shared root $h^*$; in particular the final state is a burn to $\predi_\mathsf{burn}(H(\mathcal{R}))$.
+\item[Value and backing.] Each burned amount equals the token's certified value for $\mathsf{aid}$, which traces --- through split value-conservation (Sec.~\ref{sec:split-verification}) --- to a genesis whose backing proof references a lock the vault recorded at bridge-in.
+\item[Destination.] Each $\mathcal{R}$ matches the pinned configuration and yields a public \emph{release leaf} (recipient, amount, fee).
+\item[Replay.] Each nullifier is absent from the input accumulator root $A_\mathsf{old}$; inserting them yields $A_\mathsf{new}$.
+\end{description}
+
+The vault verifies the proof, checks $h_\mathsf{cfg}$ and that $h_\mathcal{T}$ is allow-listed, requires $A_\mathsf{old}$ to equal its stored root, confirms each referenced lock digest against its own bridge-in records, advances the root to $A_\mathsf{new}$, and pays each release leaf. No external query is made at return time: backing was committed locally when the asset was locked.
+
+\subsection{Security}\label{sec:bridge-security}
+
+\begin{description}
+\item[Solvency.] Every bridged token in circulation is backed by an equal external lock (bridge-in), and split verification guarantees children never exceed their parent (Sec.~\ref{sec:split-verification}). Hence $\sum(\text{valid burns}) \le \sum(\text{locks})$, and valid releases can never drain custody below zero. Over-release would require a burn of an unbacked token, which the backing claim and the vault's lock-digest check exclude.
+\item[No double release.] The nullifier is unique (single-spend, Sec.~\ref{sec:request-validation}); a release both proves its non-membership and inserts it, and the vault gates on $A_\mathsf{old}$ equal to its current root. A replayed proof is rejected because the root has advanced, and a freshly built one cannot prove non-membership of an inserted nullifier.
+\item[Authenticity.] The proof embeds $\Call{VerifyToken}{}$ against the pinned $\mathcal{T}$, so a forged, malformed, or non-final burn is unrepresentable under proof-system soundness.
+\item[No trusted parties.] The prover cannot alter the recipient or amount (fixed in the certified $\mathcal{R}$) nor fabricate a release; it can only stall, and any party holding the burned token can reproduce the proof.
+\end{description}
+
+The full data structures, the proving relation, the settlement procedure, and the batched proving mechanism are in Appendix~\ref{app:bridging}.
+
+
 \section{Private Transactions}\label{sec:private-transactions}
 
 In the transaction flow described above, Sec.~\ref{sec:transaction-flow}, the Unicity Service learns only the public key and signature (predicate and unlock data in general) of the token spending party; but it is not possible to associate transactions with tokens. Looking at a token it is possible to associate transactions if made by the same party using the same key. In order to achieve perfect privacy it is necessary to generate a fresh predicate $\predi'$ for every transaction. This requires generating and storing a fresh keypair per transaction, which may be impractical when the recipient's secure storage is limited, and forces the transaction sender to obtain recipient's key for every transaction, making the transacting protocol interactive.
