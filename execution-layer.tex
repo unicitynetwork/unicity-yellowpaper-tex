@@ -463,7 +463,7 @@ The token type identifier $\mathsf{ty}$ in the mint transaction classifies the t
 \subsection{Token Splitting}\label{sec:token-splitting}
 
 \index{token!splitting}
-Splitting allows a fungible token to be divided into multiple new tokens while preserving the amount of every enclosed asset independently.  The protocol uses one \emph{Sparse Merkle Sum Tree}\index{Sparse Merkle Sum Tree} (SMST) per asset identifier.  An SMST commits both to every output allocation and to their sum, so verification of any output proves that its amount is included in a committed allocation whose total equals the source amount.
+Splitting allows a fungible token to be divided into multiple new tokens while preserving the amount of every enclosed asset independently.  The protocol uses one \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST) per asset identifier.  An RSMST reuses the radix sparse Merkle tree structure with sums committed next to every child hash, so verification of any output proves that its amount is included in a committed allocation whose total equals the source amount.
 
 Each fractional token is self-contained and carries the complete certified burned source token in its mint reason. Implementations may deduplicate identical source-token bytes internally.
 
@@ -488,18 +488,18 @@ binds the allocation to the source token, network, recipient predicate, salt and
 The split proceeds as follows:
 \begin{enumerate}
 	\item Verify $\mathcal{L}$ completely, including its fungible payload, mint reason and issuer policy, before submitting any irreversible burn request.  Derive pairwise distinct output token identifiers $\mathsf{id}_j=H(\mathsf{salt}_j,\alpha)$ and the corresponding commitments $d_j$.
-	\item For every source asset $\mathsf{aid}_i$ in canonical order, construct an SMST $\mathcal{S}_i$.  For each output carrying that asset, insert the leaf
+	\item For every source asset $\mathsf{aid}_i$ in canonical order, construct an RSMST $\mathcal{S}_i$.  For each output carrying that asset, insert the leaf
 	\[
 	(\mathsf{id}_j,d_j,v_j(\mathsf{aid}_i)).
 	\]
-	Require the SMST root sum to equal $v(\mathsf{aid}_i)$.  Let $r_i$ be its root hash.
+	Require the RSMST root sum to equal $v(\mathsf{aid}_i)$.  Let $r_i$ be its root hash.
 	\item Construct the \emph{split manifest}
 	\[
 	\mathcal{M}=\langle r_1,\ldots,r_m\rangle,
 	\]
-	where the roots are positionally aligned with the canonical source asset collection.  The manifest contains no repeated source identifier, asset identifiers or amounts: all are already authenticated by the burned token.  Its precise encoding $b_\mathcal{M}$ is defined in Appendix~\ref{app:split-proof-encoding}.  Extract and durably store every output's compact paths and mint fields, together with the manifest and complete burn-transfer fields, before proceeding.
+	where the roots are positionally aligned with the canonical source asset collection.  The manifest contains no repeated source identifier, asset identifiers or amounts: all are already authenticated by the burned token.  Its precise encoding $b_\mathcal{M}$ is defined in Appendix~\ref{app:split-proof-encoding}.  Extract and durably store every output's RSMST proofs and mint fields, together with the manifest and complete burn-transfer fields, before proceeding.
 	\item Burn the source by creating and certifying a transfer whose auxiliary data is exactly $b_\mathcal{M}$ and whose recipient is $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.  The resulting certified burned token is denoted $\mathcal{L}_\mathsf{burn}$.
-	\item Mint each output token $j$ with the exact fields committed by $d_j$.  Its mint reason contains $\mathcal{L}_\mathsf{burn}$ and, in canonical output-asset order, one compact SMST inclusion proof for every asset it carries.  The proof omits the asset identifier, output commitment, leaf amount and root hash because the verifier derives them respectively from the output payload, output mint transaction and split manifest.
+	\item Mint each output token $j$ with the exact fields committed by $d_j$.  Its mint reason contains $\mathcal{L}_\mathsf{burn}$ and, in canonical output-asset order, one RSMST inclusion proof for every asset it carries.  The proof contains only leaf-to-root sibling entries $(\delta,s,w)$ with explicit bifurcation depth, sibling hash and sibling sum; it omits the asset identifier, output identifier, output commitment, leaf amount and root hash because the verifier derives them respectively from the output payload, mint transaction, and split manifest.
 \end{enumerate}
 
 
@@ -515,7 +515,7 @@ Given a token whose mint reason claims split origin, the verifier must perform a
 	\item Require the output token type to be byte-identical to the source token type.  A split proof cannot authorize minting under any other token type, even if that type would decode the same asset identifiers and amounts.
 	\item Recompute $d_j$ from the verified source identifier and the output mint fields other than $\mathsf{reason}$.  The recomputation must cover the exact canonical recipient predicate, network, salt, token identifier, token type and complete auxiliary payload.
 	\item Require the proof count to equal the number of assets in the output payload.  Associate proofs with assets only by their canonical order; reject missing, duplicate or additional proofs.
-	\item For every output asset $(\mathsf{aid}_i,v_j(\mathsf{aid}_i))$, require that $\mathsf{aid}_i$ occurs in the source payload.  Verify its compact SMST proof using key $\mathsf{id}_j$, leaf data $d_j$, leaf value $v_j(\mathsf{aid}_i)$ and expected root $r_i$ selected from the manifest.  Require both inclusion and root-hash equality.
+	\item For every output asset $(\mathsf{aid}_i,v_j(\mathsf{aid}_i))$, require that $\mathsf{aid}_i$ occurs in the source payload.  Verify its RSMST proof using key $\mathsf{id}_j$, leaf data $d_j$, leaf value $v_j(\mathsf{aid}_i)$ and expected root $r_i$ selected from the manifest.  Require both inclusion and root-hash equality.
 	\item Require the root sum reconstructed by that proof to equal the source amount $v(\mathsf{aid}_i)$.  This equality is checked independently for every asset identifier and is the verifier-side value-conservation rule; successful construction by a wallet is not evidence of conservation.
 \end{enumerate}
 

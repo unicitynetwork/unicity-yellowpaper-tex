@@ -288,7 +288,7 @@ strictly ordered by the raw bytes of $\mathsf{aid}_i$ using unsigned lexicograph
 	\item $1 \leq v_i < 2^{256}$; and
 	\item no repeated asset identifier.
 \end{itemize}
-Amounts and SMST sums are encoded as minimal unsigned big-endian byte strings of at most 32 bytes. Zero is encoded by the empty byte string. An accepted non-empty integer encoding MUST NOT begin with \texttt{0x00}.
+Amounts and RSMST sums are encoded as minimal unsigned big-endian byte strings of at most 32 bytes. Zero is encoded by the empty byte string where a surrounding structure permits zero; split allocation leaves and sibling sums are strictly positive. An accepted non-empty integer encoding MUST NOT begin with \texttt{0x00}.
 
 All structures below use deterministic CBOR and must be consumed completely. Decoders MUST reject indefinite-length items, non-minimal heads or integers, wrong or unknown tags, wrong field counts or types, trailing bytes, duplicate or unordered assets, invalid lengths, arithmetic overflow, and exhausted cumulative byte, item, nesting, proof-step or embedded-token budgets.
 
@@ -320,7 +320,7 @@ Every term is encoded as a CBOR byte string except $\alpha$, which is an unsigne
 
 \subsection{Split Manifest}\label{app:split-manifest}
 
-The final transfer of the source token stores a split manifest in its auxiliary-data byte string. The byte string contains CBOR semantic tag \texttt{39046} applied directly to an array of SMST root hashes:
+The final transfer of the source token stores a split manifest in its auxiliary-data byte string. The byte string contains CBOR semantic tag \texttt{39046} applied directly to an array of RSMST root hashes:
 
 \[
 \langle r_1,\ldots,r_m\rangle.
@@ -336,74 +336,38 @@ Let $b_\mathcal{M}$ be the complete canonical tagged CBOR encoding of the manife
 \predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M})).
 \]
 
-\subsection{Compact SMST Inclusion Proof}\label{app:compact-smst-proof}
+\subsection{Split Allocation Inclusion Proof}\label{app:split-allocation-proof}
 
-The SMST construction and hashing rules are defined in Appendix~\ref{app:smst}. For a leaf $(k,d,v)$, the ordinary certificate begins with $(p_1,d,v)$ and includes an expected root. In a split mint reason, $k=\mathsf{id}_j$, $d=d_j$, $v=v_j(\mathsf{aid})$, and the expected root comes from the manifest. These values are therefore omitted.
+The RSMST construction and hashing rules are defined in Appendix~\ref{app:rsmst}.  For a split allocation leaf, $k=\mathsf{id}_j$, $d=d_j$, $v=v_j(\mathsf{aid})$, and the expected root hash comes from the manifest.  These values are therefore omitted from the encoded proof and supplied by the verifier.
 
-A compact SMST inclusion proof is a two-element CBOR array:
+An encoded split allocation proof is a CBOR array of zero to 256 sibling entries, ordered leaf-to-root.  The empty array is valid only when the allocation tree for that asset contains a single output leaf.
 
-\begin{longtable}{clp{9cm}}
-\textbf{Index} & \textbf{Type} & \textbf{Description} \\
-\hline
-0 & byte string & Leaf path segment $p_1$, encoded as a minimal unsigned big-endian integer. \\
-1 & CBOR array & One or more sibling steps, ordered leaf-to-root. \\
-\end{longtable}
-
-Each sibling step is a three-element CBOR array:
+Each sibling entry is a three-element CBOR array:
 
 \begin{longtable}{clp{9cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
-0 & byte string & Path segment $p_i$ for this parent, encoded as a minimal unsigned big-endian integer. \\
-1 & byte string or \texttt{null} & Sibling subtree hash $s_i$; a hash is the raw 32-byte SHA-256 digest. \\
-2 & byte string & Sibling subtree sum $w_i$, minimally encoded. \\
+0 & unsigned integer & Parent bifurcation depth $\delta_i$, with $0\leq\delta_i\leq255$. \\
+1 & byte string & Sibling subtree hash $s_i$, the raw 32-byte SHA-256 digest. \\
+2 & byte string & Positive sibling subtree sum $w_i$, minimally encoded. \\
 \end{longtable}
 
-Zero is encoded by the empty byte string and every positive path segment MUST NOT begin with \texttt{0x00}. Each path segment is positive and at most 33 bytes. A proof contains a leaf and between one and 256 sibling steps; its final parent segment MUST be $p_n=1$, the fixed SMST root label. The decoded path segments are interpreted using the LSB-first SMST path representation and concatenation operation defined in Appendix~\ref{app:smst}; decoders MUST reject zero segments, non-minimal encodings, paths whose reconstructed length exceeds the split key-path length, or any reconstructed path other than the expected key path. The pair $(s_i,w_i)$ is canonical: $s_i=\bot$ if and only if $w_i=0$. No root hash, asset identifier, output identifier, leaf data or leaf amount occurs in the encoded proof.
+Depths MUST be strictly decreasing in proof order.  Decoders MUST reject non-minimal CBOR integers, depths outside $0,\ldots,255$, repeated or non-decreasing depths, sibling hashes whose length is not 32 bytes, zero sibling sums, overlong or non-minimal sum encodings, or more than 256 sibling entries.  No bitmap, path segment, root hash, asset identifier, output identifier, leaf data or leaf amount occurs in the encoded proof.
 
-For a 32-byte key $k$, define $\Call{smst\_key\_path}{k}$ as the positive integer whose minimal big-endian representation is $\mathtt{0x01}\|k$. Under the SMST LSB-first path representation, this is the 256 key bits followed by the root sentinel bit; the sentinel preserves leading zero bits of $k$ and fixes the split key path length to 257 bits.
-
-\subsubsection{Function $\textsc{smst\_verify\_compact}$}\label{sec:smst-verify-compact}
+\subsubsection{Function $\textsc{rsmst\_verify\_inclusion}$}\label{sec:rsmst-split-verify}
 
 \textbf{Input}:
 \begin{enumerate}
 	\item $k \in \bytes{32}$ -- expected output token identifier;
 	\item $d \in \bytes{32}$ -- expected output commitment;
 	\item $v \in \mathbb{N}$, $1\leq v<2^{256}$ -- expected output amount;
-	\item $\bar C=(p_1,\langle(p_2,s_2,w_2),\ldots,(p_n,s_n,w_n)\rangle)$ -- compact proof; and
+	\item $C^\mathsf{inc}=\langle(\delta_1,s_1,w_1),\ldots,(\delta_n,s_n,w_n)\rangle$ -- split allocation proof; and
 	\item $r \in \bytes{32}$ -- expected raw root digest from the manifest.
 \end{enumerate}
 
 \textbf{Output}: $(b,v_\mathsf{root}) \in \bool\times\mathbb{N}$, where $b$ is the success flag and $v_\mathsf{root}$ is the reconstructed root sum.
 
-\begin{algorithmic}
-	\Function{smst\_verify\_compact}{$k,d,v,\bar C,r$}
-		\If{$v=0$, $v\geq2^{256}$, $n<2$, $n>257$, $p_n\ne1$, or any field is non-canonical} \State \Return $(\FALSE,0)$ \EndIf
-		\State $h \gets \Call{smst\_leaf\_hash}{p_1,d,v}$
-		\State $v_\mathsf{sum} \gets v$
-		\State $q \gets p_1$
-		\State $p \gets p_1$
-		\For{$i \gets 2$ to $n$}
-			\If{$s_i=\bot$ and $w_i\ne0$, or $s_i\ne\bot$ and $w_i=0$}
-				\State \Return $(\FALSE,0)$
-			\EndIf
-			\State $v' \gets v_\mathsf{sum}+w_i$ using checked 256-bit addition; on overflow return $(\FALSE,0)$
-			\If{the rightmost bit of $p$ is $0$}
-				\State $(h',v'') \gets \Call{smst\_branch\_hash}{p_i,(h,v_\mathsf{sum}),(s_i,w_i)}$
-			\Else
-				\State $(h',v'') \gets \Call{smst\_branch\_hash}{p_i,(s_i,w_i),(h,v_\mathsf{sum})}$
-			\EndIf
-			\If{$v''\ne v'$} \State \Return $(\FALSE,0)$ \EndIf
-			\State $h \gets h'$
-			\State $v_\mathsf{sum} \gets v'$
-			\State $q \gets q\|p_i$
-			\State $p \gets p_i$
-		\EndFor
-		\State \Return $((h=r)\land(q=\Call{smst\_key\_path}{k}),v_\mathsf{sum})$
-	\EndFunction
-\end{algorithmic}
-
-An implementation MUST NOT accept a hash match without also checking the reconstructed key path. It MUST reject an overflowing intermediate sum before invoking a big-integer implementation that could silently accept values outside the 256-bit amount domain.
+The verifier uses Appendix~\ref{sec:rsmst-verify-inclusion}.  It MUST reject an overflowing intermediate sum before invoking a big-integer implementation that could silently accept values outside the 256-bit amount domain.
 
 \subsection{Split Mint Reason}\label{app:split-mint-reason}
 
@@ -413,7 +377,7 @@ The mint-reason byte string of a split output contains CBOR semantic tag \texttt
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
 0 & CBOR structure & Complete burned source token $\mathcal{L}_\mathsf{burn}$, including its certified manifest-bearing burn transfer. \\
-1 & CBOR array & Compact SMST proofs, one per output asset in canonical output-asset order. \\
+1 & CBOR array & Split allocation proofs, one per output asset in canonical output-asset order. \\
 \end{longtable}
 
 The proof array contains no asset identifiers. Its length and positional interpretation are determined exclusively by $\Call{Assets}{\mathsf{ty}_j,\auxd'_j}$.
@@ -438,19 +402,19 @@ The proof array contains no asset identifiers. Its length and positional interpr
 				\State $d_j\gets\Call{split\_output\_commitment}{\mathcal{L}.\mathsf{id},D_{\mathsf{out},j}}$
 			\EndFor
 			\ForAll{$(\mathsf{aid}_i,v_i)\in\mathcal{A}$ in canonical order}
-				\State $\mathcal{S}_i\gets$ empty SMST
+				\State $\mathcal{S}_i\gets$ empty RSMST
 				\For{$j\gets1$ to $k$}
 					\If{$(\mathsf{aid}_i,v_{i,j})\in\mathcal{A}_j$}
 						\State insert $(\mathsf{id}_j,d_j,v_{i,j})$ into $\mathcal{S}_i$
 					\EndIf
 				\EndFor
-				\State $(r_i,v'_i)\gets\Call{SMSTRoot}{\mathcal{S}_i}$
+				\State $(r_i,v'_i)\gets\Call{RSMSTRoot}{\mathcal{S}_i}$
 				\State ensure($v'_i=v_i$)
 			\EndFor
 			\State $b_\mathcal{M}\gets\Call{EncodeSplitManifest}{\langle r_1,\ldots,r_m\rangle}$
 			\State construct burn transfer with auxiliary data $b_\mathcal{M}$ and recipient $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$
 			\For{$j\gets1$ to $k$}
-				\State $P_j\gets\langle\Call{CompactPath}{\mathcal{S}_i,\mathsf{id}_j}\mid(\mathsf{aid}_i,\_)\in\mathcal{A}_j\rangle$
+				\State $P_j\gets\langle\Call{RSMSTPath}{\mathcal{S}_i,\mathsf{id}_j}\mid(\mathsf{aid}_i,\_)\in\mathcal{A}_j\rangle$
 			\EndFor
 			\State durably persist $b_\mathcal{M}$, the burn transfer, and every $(D_{\mathsf{out},j},P_j)$
 			\State certify the burn and obtain $\mathcal{L}_\mathsf{burn}$
@@ -490,7 +454,7 @@ The following algorithm runs as the token-type-specific mint-reason check after 
 			\For{$\ell\gets1$ to $\len{\mathcal{A}_j}$}
 				\State $(\mathsf{aid},v)\gets\mathcal{A}_j[\ell]$
 				\State $i\gets$ the unique index with $\mathcal{A}[i].\mathsf{aid}=\mathsf{aid}$; ensure it exists
-				\State $(b,v_\mathsf{root})\gets\Call{smst\_verify\_compact}{\mathsf{id}_j,d_j,v,P_j[\ell],r_i}$
+				\State $(b,v_\mathsf{root})\gets\Call{rsmst\_verify\_inclusion}{\mathsf{id}_j,d_j,v,P_j[\ell],r_i}$
 				\State ensure($b=\TRUE$)
 				\State ensure($v_\mathsf{root}=\mathcal{A}[i].v$)
 			\EndFor

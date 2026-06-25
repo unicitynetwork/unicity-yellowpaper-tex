@@ -203,26 +203,26 @@
   SplitManifest = 1*256SplitAssetRoot
       ;~tagged CBOR array: $[r_1,\ldots,r_m]$, $1 \leq m \leq 256$
   SplitAssetRoot = Bytes32
-      ;~raw SHA-256 SMST root digest; roots follow source canonical asset order
+      ;~raw SHA-256 RSMST root digest; roots follow source canonical asset order
 
   SplitMintReasonBytes = Bytes
       ;~CBOR tag 39044 applied to \textsf{SplitMintReason}
-  SplitMintReason = Token 1*256CompactSMSTProof
+  SplitMintReason = Token 1*256SplitAllocationProof
       ;~CBOR array[2]: $[\mathcal{L}_\mathsf{burn},[\bar C_1,\ldots,\bar C_q]]$
       ;~proofs follow output canonical asset order; the token includes the certified burn
+      ;~split verification additionally requires output token type bytes to equal source token type bytes
 
-  CompactSMSTProof = LeafPath 1*256CompactSMSTStep
-      ;~CBOR array[2]: $[p_1,[(p_2,s_2,w_2),\ldots,(p_n,s_n,w_n)]]$
-      ;~one to 256 steps, leaf-to-root in LSB-first SMST path order; the final parent path is $p_n=1$
-  CompactSMSTStep = ParentPath NullableSiblingHash SiblingSum
-      ;~CBOR array[3]: $[p_i,s_i,w_i]$
-  LeafPath = 1*33OCTET
-  ParentPath = 1*33OCTET
-      ;~positive minimal unsigned big-endian SMST path segment
-  NullableSiblingHash = Bytes32 / Null
-      ;~raw SHA-256 digest or CBOR null; null iff sibling sum is zero
+  SplitAllocationProof = *256SplitAllocationStep
+      ;~CBOR array: $[(\delta_1,s_1,w_1),\ldots,(\delta_n,s_n,w_n)]$
+      ;~zero to 256 sibling entries, leaf-to-root; depths are strictly decreasing
+  SplitAllocationStep = BranchDepth SiblingHash SiblingSum
+      ;~CBOR array[3]: $[\delta_i,s_i,w_i]$
+  BranchDepth = Depth
+      ;~CBOR unsigned integer in $0,\ldots,255$
+  SiblingHash = Bytes32
+      ;~raw SHA-256 sibling subtree digest
   SiblingSum = *32OCTET
-      ;~minimal unsigned big-endian sum; zero is the empty byte string
+      ;~positive minimal unsigned big-endian sum
 
   SplitOutputCommitment = Bytes32
       ;~$d_j=\mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SPLIT\_OUTPUT},\mathsf{id}_\mathsf{src},\alpha,$
