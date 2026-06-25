@@ -82,15 +82,16 @@
 
 ; The aggregation layer uses a Radix Sparse Merkle Tree (RSMT, Appendix~\ref{app:rsmt}).
 ; Leaf-anchored: hashes commit to full 256-bit key and bifurcation depth.
-; LSB-first bit addressing.
+; Depth $d$ addresses bit $d \bmod 8$ of byte $\lfloor d/8 \rfloor$.
+; Byte order is preserved; bits are read least-significant first within each byte.
 
   StateIdentifier = Bytes32  ;~$\mathsf{sid} = H(\mathsf{CBOR}(\nu, h_{\mathsf{st}}))$ -- SMT leaf key
   LeafData = TransactionHash    ;~$h_{\mathsf{tx}}$ -- SMT leaf value
   SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, h_{\mathsf{tx}})$
 
   InclusionCertificate = Bitmap *SiblingHash  ;~$C^\mathsf{inc} = (\mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
-      ;~bitmap: 32 bytes (256 bits); bit $d$ set iff sibling needed at depth $d$
-      ;~siblings: $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, leaf-to-root order
+      ;~bitmap: 32 bytes (256 bits); byte $\lfloor d/8 \rfloor$, bit $d \bmod 8$ set iff sibling needed at depth $d$
+      ;~siblings: $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, root-to-leaf order
       ;~Wire: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
 
   NonInclusionCertificate = Key Hash Bitmap *SiblingHash  ;~$C^\mathsf{exc} = (k_\ell, h_\ell, \mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
@@ -161,7 +162,7 @@
 ; --- Fields ---
   Salt = Bytes32  ;~$\mathsf{salt}$ -- 32-byte minter-chosen salt, required to be unique among the minter's choices
   ; used to derive token identifier $\mathsf{id} = H(\mathsf{salt}, \alpha)$
-  TokenType = Bytes32  ;~$\mathsf{ty}$ -- token type classifier (32 bytes)
+  TokenType = Bytes  ;~$\mathsf{ty}$ -- token type classifier (32 bytes generated as a convention, anything supported)
   MintReason = Bytes  ;~$\mathsf{reason}$ -- mint reason (justification)
   SourceStateHash = Hash  ;~$h_\mathsf{st}$ -- current state hash (32 bytes)
   UnlockingArgument = Bytes  ;~$\mathsf{CBOR}(u)$ -- CBOR-encoded unlocking argument (see above)

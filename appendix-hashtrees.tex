@@ -243,7 +243,7 @@ Indexed hash trees can be used to provide and verify both inclusion and exclusio
 
 \section{Radix Sparse Merkle Sum Trees}\label{app:rsmst}
 
-A \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST) is the radix sparse Merkle tree of Appendix~\ref{app:rsmt} with a positive amount at every leaf and an accumulated sum at every internal node. It is used for split allocation roots (Sec.~\ref{sec:token-splitting}). The tree deliberately reuses the RSMT key space, LSB-first bit order, canonical path-compressed structure and inclusion-walk logic.
+A \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST) is the radix sparse Merkle tree of Appendix~\ref{app:rsmt} with a positive amount at every leaf and an accumulated sum at every internal node. It is used for split allocation roots (Sec.~\ref{sec:token-splitting}). The tree deliberately reuses the RSMT key space, byte-order-preserving bit numbering, canonical path-compressed structure and inclusion-walk logic.
 
 \subsection{Tree Structure}
 
@@ -324,11 +324,11 @@ The verifier checks value conservation by comparing $v_\mathsf{root}$ to the aut
 
 \section{Radix Sparse Merkle Trees}\label{app:rsmt}
 
-A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. It authenticates a finite map $k \mapsto v$, where every stored key appears as exactly one leaf and every internal node records the absolute bit position at which its descendant keys bifurcate. The implementation documented here uses LSB-first bit order.\footnote{Reference Python implementation: \href{https://github.com/unicitynetwork/unicity-yellowpaper-tex/blob/main/ndrsmt3o.py}{\texttt{ndrsmt3o.py}}.} Each leaf hash commits to the full 256-bit key, and each internal node hash commits to the explicit bifurcation depth. Consequently, splitting an edge above an unchanged subtree does not alter that subtree's hash: batch insertion rehashes only the changed search frontier and the newly created nodes. The tree supports inclusion certificates, non-inclusion certificates and consistency proofs.
+A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. It authenticates a finite map $k \mapsto v$, where every stored key appears as exactly one leaf and every internal node records the absolute bit position at which its descendant keys bifurcate. The implementation documented here uses byte-order-preserving LSB-in-byte bit numbering. Each leaf hash commits to the full 256-bit key, and each internal node hash commits to the explicit bifurcation depth. Consequently, splitting an edge above an unchanged subtree does not alter that subtree's hash: batch insertion rehashes only the changed search frontier and the newly created nodes. The tree supports inclusion certificates, non-inclusion certificates and consistency proofs.
 
 \subsection{Tree Structure}
 
-Keys are elements of $\bytes{32}$ (256 bits), addressed in LSB-first order\footnote{See Appendix~\ref{app:ordering} for bit-string conventions.}. Bit position $i$ means the $i$-th least significant bit.
+Keys are elements of $\bytes{32}$ (256 bits). Write $k=k_0\|k_1\|\cdots\|k_{31}$ in wire byte order. Bit position $i$ addresses bit $i\bmod 8$ of byte $k_{\lfloor i/8\rfloor}$, where bit $0$ of a byte is its least significant bit. Thus depth $0$ reads the low bit of $k_0$, depth $7$ reads the high bit of $k_0$, depth $8$ reads the low bit of $k_1$, and depth $255$ reads the high bit of $k_{31}$. Tree traversal MUST NOT reinterpret the key as a single big-endian integer for bit addressing.
 
 \subsubsection{Node Format}
 
@@ -471,7 +471,7 @@ For an unordered batch of size $m$, the initial sort costs $O(m \log m)$. The re
 
 \subsection{Shard Split}\label{sec:rsmt-shard-split}
 
-When a shard $\sigma$ is split into two sub-shards $\sigma \| 0$ and $\sigma \| 1$ (Sec.~\ref{sec:sharding}), the RSMT maintained by the parent shard must be partitioned accordingly: each successor keeps only those leaves whose keys route to it under the sharding function $f_{\mathcal{SH}}$. In the LSB-first convention of Section~\ref{sec:rsmt-sort-order}, a key $k$ belongs to $\sigma \| b$ if bit $|\sigma|$ of $k$ equals $b$.
+When a shard $\sigma$ is split into two sub-shards $\sigma \| 0$ and $\sigma \| 1$ (Sec.~\ref{sec:sharding}), the RSMT maintained by the parent shard must be partitioned accordingly: each successor keeps only those leaves whose keys route to it under the sharding function $f_{\mathcal{SH}}$. In the bit-numbering convention of Section~\ref{app:rsmt}, a key $k$ belongs to $\sigma \| b$ if bit $|\sigma|$ of $k$ equals $b$.
 
 \subsubsection{Function $\textsc{rsmt\_shard\_split}$}\label{sec:rsmt-shard-split-fn}
 
@@ -536,8 +536,8 @@ An \emph{Inclusion Certificate}\index{Inclusion Certificate!RSMT} $C^\mathsf{inc
 
 An inclusion certificate is a pair $C^\mathsf{inc} = (\mathit{bitmap}, \mathit{siblings})$ where:
 \begin{itemize}
-	\item $\mathit{bitmap} \in \bytes{32}$ -- a 256-bit vector. Bit $d$ is set if and only if a sibling hash is required at depth $d$ on the path from the leaf to the root.
-	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes ordered leaf-to-root (ascending depth).
+	\item $\mathit{bitmap} \in \bytes{32}$ -- a 256-bit vector. Bit $d$ is stored as bit $d\bmod 8$ of byte $\lfloor d/8\rfloor$ and is set if and only if a sibling hash is required at depth $d$ on the path from the leaf to the root.
+	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes ordered root-to-leaf (ascending depth).
 \end{itemize}
 
 \noindent\textbf{Wire format}: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$, for a total of $32 + 32n$ bytes.
@@ -593,7 +593,7 @@ A non-inclusion certificate is a tuple $C^\mathsf{exc} = (k_\ell, h_\ell, \mathi
 	\item $k_\ell \in \bytes{32}$ -- key of the neighbouring leaf
 	\item $h_\ell \in \hashtype$ -- hash of the neighbouring leaf ($= \Call{rsmt\_leaf\_hash}{k_\ell, v_\ell}$)
 	\item $\mathit{bitmap} \in \bytes{32}$ -- branching-depth bitmap (same semantics as inclusion certificate, Section~\ref{sec:rsmt-inclusion-cert})
-	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes, leaf-to-root
+	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes, root-to-leaf
 \end{itemize}
 
 \noindent\textbf{Wire format}: $k_\ell[32] \,\|\, h_\ell[32] \,\|\, \mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$, for a total of $96 + 32n$ bytes.
@@ -658,11 +658,11 @@ The current implementation proves preservation of committed pre-state subtrees a
 
 \subsubsection{Sort Order}\label{sec:rsmt-sort-order}
 
-The batch and proof use \emph{LSB-first traversal order}. The sort key of a 256-bit key $k$ is obtained by reversing the byte order of $k$ and then independently reversing the bits within each byte. This places the least significant bit of the key first in lexicographic order, matching the tree's branching order.
+The batch and proof use the tree traversal order defined in Section~\ref{app:rsmt}. The sort key of a 256-bit key $k=k_0\|k_1\|\cdots\|k_{31}$ is obtained by independently reversing the bits within each byte while preserving byte order. This places bit $0$ of $k_0$ first in lexicographic order, then bit $1$ of $k_0$, and so on through bit $7$ of $k_{31}$, matching the tree's branching order.
 
 \subsubsection{Proof Format}
 
-The proof $\pi$ is a flat stream of opcodes emitted from a post-order, LSB-first traversal of the tree:
+The proof $\pi$ is a flat stream of opcodes emitted from a post-order traversal of the tree in the order defined above:
 
 \begin{center}
 \begin{tabular}{clcl}
