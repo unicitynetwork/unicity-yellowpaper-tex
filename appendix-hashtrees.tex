@@ -241,87 +241,6 @@ Indexed hash trees can be used to provide and verify both inclusion and exclusio
 \end{itemize}
 
 
-\section{Radix Sparse Merkle Sum Trees}\label{app:rsmst}
-
-A \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST) is the radix sparse Merkle tree of Appendix~\ref{app:rsmt} with a positive amount at every leaf and an accumulated sum at every internal node. It is used for split allocation roots (Sec.~\ref{sec:token-splitting}). The tree deliberately reuses the RSMT key space, byte-order-preserving bit numbering, canonical path-compressed structure and inclusion-walk logic.
-
-\subsection{Tree Structure}
-
-Keys are 32-byte strings. For token splitting the key is the output token identifier $\mathsf{id}_j$, the leaf data is the 32-byte output commitment $d_j$, and the leaf amount is the positive asset allocation $v_j(\mathsf{aid})$.
-
-An RSMST leaf carries $(k,d,v)$ where $k,d\in\bytes{32}$ and $1\leq v<2^{256}$. An internal node carries an absolute bifurcation depth $\delta\in\{0,\ldots,255\}$ and two child pairs $(h_L,v_L)$ and $(h_R,v_R)$; its sum is $v_L+v_R$. Construction MUST use the same canonical path-compressed binary trie as RSMT, MUST reject duplicate keys and zero-valued leaves, and MUST reject any internal sum overflow. A split allocation tree is never empty.
-
-For a tree $\mathcal{S}$, $\Call{RSMSTRoot}{\mathcal{S}}$ returns the root hash and root sum. If $\mathcal{S}$ has one leaf, the root hash is that leaf hash and the root sum is that leaf amount. Otherwise the root is the hash and sum of the top internal node.
-
-\subsection{Hash Computation}
-
-Hash inputs use fixed binary encodings, not general-purpose CBOR tuples. Let $\Call{u256}{x}$ be the 32-byte big-endian encoding of $x$ and let $\Call{u8}{\delta}$ be the one-byte encoding of $\delta$. Define one-byte domain separators:
-\[
-\mathsf{RSMST\_LEAF}=\mathtt{0x10},\qquad
-\mathsf{RSMST\_NODE}=\mathtt{0x11}.
-\]
-
-\begin{algorithmic}
-	\Function{rsmst\_leaf\_hash}{$k,d,v$}
-		\State \Return $\mathsf{SHA\text{-}256}(\mathsf{RSMST\_LEAF}\|k\|d\|\Call{u256}{v})$
-	\EndFunction
-\end{algorithmic}
-
-\begin{algorithmic}
-	\Function{rsmst\_node\_hash}{$\delta,(h_L,v_L),(h_R,v_R)$}
-		\State $v \gets v_L+v_R$ using checked 256-bit addition; on overflow return $(\bot,0)$
-		\State $h \gets \mathsf{SHA\text{-}256}(\mathsf{RSMST\_NODE}\|\Call{u8}{\delta}\|h_L\|\Call{u256}{v_L}\|h_R\|\Call{u256}{v_R})$
-		\State \Return $(h,v)$
-	\EndFunction
-\end{algorithmic}
-
-\subsection{Explicit-Depth Inclusion Proof}\label{sec:rsmst-inclusion-proof}
-
-An RSMST inclusion proof is a leaf-to-root sequence of sibling entries:
-\[
-C^\mathsf{inc}=\langle(\delta_1,s_1,w_1),\ldots,(\delta_n,s_n,w_n)\rangle,
-\]
-where $0\leq n\leq256$, $\delta_i\in\{0,\ldots,255\}$ is the sibling's parent bifurcation depth, $s_i\in\hashtype$ is the sibling subtree hash, and $1\leq w_i<2^{256}$ is the sibling subtree sum. Depths MUST be strictly decreasing in proof order because the proof is ordered from the leaf toward the root. No bitmap is carried; the depth in each sibling entry fully identifies the branch step.
-
-\subsection{Function $\textsc{rsmst\_verify\_inclusion}$}\label{sec:rsmst-verify-inclusion}
-
-\textbf{Input}:
-\begin{enumerate}
-	\item $k \in \bytes{32}$ -- expected leaf key;
-	\item $d \in \bytes{32}$ -- expected leaf data;
-	\item $v \in \mathbb{N}$, $1\leq v<2^{256}$ -- expected leaf amount;
-	\item $C^\mathsf{inc}$ -- explicit-depth inclusion proof; and
-	\item $r \in \bytes{32}$ -- expected root hash.
-\end{enumerate}
-
-\textbf{Output}: $(b,v_\mathsf{root}) \in \bool\times\mathbb{N}$, where $b$ is the success flag and $v_\mathsf{root}$ is the reconstructed root sum.
-
-\begin{algorithmic}
-	\Function{rsmst\_verify\_inclusion}{$k,d,v,C^\mathsf{inc},r$}
-		\If{$v=0$, $v\geq2^{256}$, $\len{C^\mathsf{inc}}>256$, or any field is non-canonical} \State \Return $(\FALSE,0)$ \EndIf
-		\State $h \gets \Call{rsmst\_leaf\_hash}{k,d,v}$
-		\State $v_\mathsf{sum} \gets v$
-		\State $\delta_\mathsf{prev}\gets256$
-		\ForAll{$(\delta,s,w)$ in $C^\mathsf{inc}$}
-			\If{$\delta\geq\delta_\mathsf{prev}$, $\delta\notin\{0,\ldots,255\}$, $w=0$, or $w\geq2^{256}$}
-				\State \Return $(\FALSE,0)$
-			\EndIf
-			\If{bit $\delta$ of $k$ is $0$}
-				\State $(h',v')\gets\Call{rsmst\_node\_hash}{\delta,(h,v_\mathsf{sum}),(s,w)}$
-			\Else
-				\State $(h',v')\gets\Call{rsmst\_node\_hash}{\delta,(s,w),(h,v_\mathsf{sum})}$
-			\EndIf
-			\If{$h'=\bot$} \State \Return $(\FALSE,0)$ \EndIf
-			\State $h\gets h'$
-			\State $v_\mathsf{sum}\gets v'$
-			\State $\delta_\mathsf{prev}\gets\delta$
-		\EndFor
-		\State \Return $((h=r),v_\mathsf{sum})$
-	\EndFunction
-\end{algorithmic}
-
-The verifier checks value conservation by comparing $v_\mathsf{root}$ to the authenticated source amount for the same asset. The root hash alone is not sufficient: sibling sums are verification-critical proof data because they are committed by every internal node hash.
-
 \section{Radix Sparse Merkle Trees}\label{app:rsmt}
 
 A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. It authenticates a finite map $k \mapsto v$, where every stored key appears as exactly one leaf and every internal node records the absolute bit position at which its descendant keys bifurcate. The implementation documented here uses byte-order-preserving LSB-in-byte bit numbering. Each leaf hash commits to the full 256-bit key, and each internal node hash commits to the explicit bifurcation depth. Consequently, splitting an edge above an unchanged subtree does not alter that subtree's hash: batch insertion rehashes only the changed search frontier and the newly created nodes. The tree supports inclusion certificates, non-inclusion certificates and consistency proofs.
@@ -784,3 +703,85 @@ When receiving a ZK-compressed consistency proof, the verifier must:
 	\item Verify the ZK proof, obtaining authentic public inputs $h'$, $h$
 	\item Confirm these values match the claimed Input Reco	rd
 \end{enumerate}
+
+
+\section{Radix Sparse Merkle Sum Trees}\label{app:rsmst}
+
+A \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST) is the radix sparse Merkle tree of Appendix~\ref{app:rsmt} with a positive amount at every leaf and an accumulated sum at every internal node. It is used for split allocation roots (Sec.~\ref{sec:token-splitting}). The tree deliberately reuses the RSMT key space, byte-order-preserving bit numbering, canonical path-compressed structure and inclusion-walk logic.
+
+\subsection{Tree Structure}
+
+Keys are 32-byte strings. For token splitting the key is the output token identifier $\mathsf{id}_j$, the leaf data is the 32-byte output commitment $d_j$, and the leaf amount is the positive asset allocation $v_j(\mathsf{aid})$.
+
+An RSMST leaf carries $(k,d,v)$ where $k,d\in\bytes{32}$ and $1\leq v<2^{256}$. An internal node carries an absolute bifurcation depth $\delta\in\{0,\ldots,255\}$ and two child pairs $(h_L,v_L)$ and $(h_R,v_R)$; its sum is $v_L+v_R$. Construction MUST use the same canonical path-compressed binary trie as RSMT, MUST reject duplicate keys and zero-valued leaves, and MUST reject any internal sum overflow. A split allocation tree is never empty.
+
+For a tree $\mathcal{S}$, $\Call{RSMSTRoot}{\mathcal{S}}$ returns the root hash and root sum. If $\mathcal{S}$ has one leaf, the root hash is that leaf hash and the root sum is that leaf amount. Otherwise the root is the hash and sum of the top internal node.
+
+\subsection{Hash Computation}
+
+Hash inputs use fixed binary encodings, not general-purpose CBOR tuples. Let $\Call{u256}{x}$ be the 32-byte big-endian encoding of $x$ and let $\Call{u8}{\delta}$ be the one-byte encoding of $\delta$. Define one-byte domain separators:
+\[
+\mathsf{RSMST\_LEAF}=\mathtt{0x10},\qquad
+\mathsf{RSMST\_NODE}=\mathtt{0x11}.
+\]
+
+\begin{algorithmic}
+	\Function{rsmst\_leaf\_hash}{$k,d,v$}
+		\State \Return $\mathsf{SHA\text{-}256}(\mathsf{RSMST\_LEAF}\|k\|d\|\Call{u256}{v})$
+	\EndFunction
+\end{algorithmic}
+
+\begin{algorithmic}
+	\Function{rsmst\_node\_hash}{$\delta,(h_L,v_L),(h_R,v_R)$}
+		\State $v \gets v_L+v_R$ using checked 256-bit addition; on overflow return $(\bot,0)$
+		\State $h \gets \mathsf{SHA\text{-}256}(\mathsf{RSMST\_NODE}\|\Call{u8}{\delta}\|h_L\|\Call{u256}{v_L}\|h_R\|\Call{u256}{v_R})$
+		\State \Return $(h,v)$
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Explicit-Depth Inclusion Proof}\label{sec:rsmst-inclusion-proof}
+
+An RSMST inclusion proof is a leaf-to-root sequence of sibling entries:
+\[
+C^\mathsf{inc}=\langle(\delta_1,s_1,w_1),\ldots,(\delta_n,s_n,w_n)\rangle,
+\]
+where $0\leq n\leq256$, $\delta_i\in\{0,\ldots,255\}$ is the sibling's parent bifurcation depth, $s_i\in\hashtype$ is the sibling subtree hash, and $1\leq w_i<2^{256}$ is the sibling subtree sum. Depths MUST be strictly decreasing in proof order because the proof is ordered from the leaf toward the root. No bitmap is carried; the depth in each sibling entry fully identifies the branch step.
+
+\subsection{Function $\textsc{rsmst\_verify\_inclusion}$}\label{sec:rsmst-verify-inclusion}
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $k \in \bytes{32}$ -- expected leaf key;
+	\item $d \in \bytes{32}$ -- expected leaf data;
+	\item $v \in \mathbb{N}$, $1\leq v<2^{256}$ -- expected leaf amount;
+	\item $C^\mathsf{inc}$ -- explicit-depth inclusion proof; and
+	\item $r \in \bytes{32}$ -- expected root hash.
+\end{enumerate}
+
+\textbf{Output}: $(b,v_\mathsf{root}) \in \bool\times\mathbb{N}$, where $b$ is the success flag and $v_\mathsf{root}$ is the reconstructed root sum.
+
+\begin{algorithmic}
+	\Function{rsmst\_verify\_inclusion}{$k,d,v,C^\mathsf{inc},r$}
+		\If{$v=0$, $v\geq2^{256}$, $\len{C^\mathsf{inc}}>256$, or any field is non-canonical} \State \Return $(\FALSE,0)$ \EndIf
+		\State $h \gets \Call{rsmst\_leaf\_hash}{k,d,v}$
+		\State $v_\mathsf{sum} \gets v$
+		\State $\delta_\mathsf{prev}\gets256$
+		\ForAll{$(\delta,s,w)$ in $C^\mathsf{inc}$}
+			\If{$\delta\geq\delta_\mathsf{prev}$, $\delta\notin\{0,\ldots,255\}$, $w=0$, or $w\geq2^{256}$}
+				\State \Return $(\FALSE,0)$
+			\EndIf
+			\If{bit $\delta$ of $k$ is $0$}
+				\State $(h',v')\gets\Call{rsmst\_node\_hash}{\delta,(h,v_\mathsf{sum}),(s,w)}$
+			\Else
+				\State $(h',v')\gets\Call{rsmst\_node\_hash}{\delta,(s,w),(h,v_\mathsf{sum})}$
+			\EndIf
+			\If{$h'=\bot$} \State \Return $(\FALSE,0)$ \EndIf
+			\State $h\gets h'$
+			\State $v_\mathsf{sum}\gets v'$
+			\State $\delta_\mathsf{prev}\gets\delta$
+		\EndFor
+		\State \Return $((h=r),v_\mathsf{sum})$
+	\EndFunction
+\end{algorithmic}
+
+The verifier checks value conservation by comparing $v_\mathsf{root}$ to the authenticated source amount for the same asset. The root hash alone is not sufficient: sibling sums are verification-critical proof data because they are committed by every internal node hash.
