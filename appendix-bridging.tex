@@ -149,7 +149,7 @@ The return reason is a CBOR array under tag $\mathsf{REASON\_TAG}$:
 10 & $t_d$                 & deadline; gates the fee only (Sec.~\ref{app:bridging-settlement}) \\
 \end{longtable}
 
-The holder burns the source token (Sec.~\ref{sec:burn-transaction}) to recipient predicate $\predi_\mathsf{burn}(H(\mathsf{REASON\_TAG},\mathcal{R}))$. Fields $0$--$5$ pin the deployment and MUST equal $\mathcal{C}$; fields $6$--$10$ are the per-return release parameters. Every field is public by nature, since the external release is a public event; the private part of a return is the token's transfer history, which never leaves the witness.
+Let $b_\mathcal{R}$ be the deterministic CBOR encoding of $\mathcal{R}$ under $\mathsf{REASON\_TAG}$. The holder burns the source token (Sec.~\ref{sec:burn-transaction}) with terminal auxiliary data $b_\mathcal{R}$ and recipient predicate $\predi_\mathsf{burn}(H(b_\mathcal{R}))$. The return reason is therefore part of the certified burned token, not a separate witness supplied by the prover. Fields $0$--$5$ pin the deployment and MUST equal $\mathcal{C}$; fields $6$--$10$ are the per-return release parameters. Every field is public by nature, since the external release is a public event; the private part of a return is the token's transfer history, which never leaves the witness.
 
 \section{Nullifier}\label{app:bridging-nullifier}
 
@@ -167,13 +167,15 @@ $\mathsf{sid}_\mathsf{b}$ is recorded at most once by the Unicity Service (Sec.~
 
 Because the SMT is add-only, a single recent certificate suffices for proof validation. Fix an \emph{anchor certificate} $UC^*$ and its root $h^* = UC^*.IR.h$. For each certified transaction needed from a token, with leaf $L = (\mathsf{sid},\txhash)$, an \emph{anchored inclusion proof} is an SMT inclusion certificate $C^\mathsf{inc}$ of $L$ against $h^*$. The relation verifies $UC^*$ once via $\mathsf{VerifyUnicityCert}$ (Sec.~\ref{VerifyUnicityCert}) and each $L$ by $\mathsf{VerifyMember}(h^*, L, C^\mathsf{inc})$ --- the inclusion check of Sec.~\ref{VerifyInclusionProof} with the shared root $h^*$ substituted for the per-proof one. This replaces $m$ Unicity Certificate verifications by one certificate plus $m$ hash-path checks.
 
+Anchored inclusion intentionally omits the original request-validation time $\mathsf{time}(\pi)$ used by ordinary transfer verification (Sec.~\ref{sec:time-extraction}). Consequently, this bridge-return relation is defined only for token predicates whose validation is independent of that time. The current bridge token path uses such predicates. Future support for time-dependent predicates, such as timelocks, requires either carrying authenticated original validation time in the anchored transition data or verifying the relevant per-transition certificates.
+
 \section{Public Statement and Public Calldata}\label{app:bridging-public}
 
 The public statement committed by the proof and checked by the vault is
 \[
 \mathsf{x} = (h_\mathsf{cfg},\; h_\mathcal{T},\; A_\mathsf{old},\; A_\mathsf{new},\; \mathsf{rr},\; \mathsf{lr},\; B,\; V),
 \]
-with $h_\mathcal{T} = H(\mathcal{T})$, $A_\mathsf{old}/A_\mathsf{new}$ the accumulator root transition, $B$ the batch size, $V$ the total gross amount, and $\mathsf{rr}, \mathsf{lr}$ commitments (Sec.~\ref{app:bridging-anchor} hash, or any binding vector commitment) to the calldata below.
+with $h_\mathcal{T} = H(\mathcal{T})$, $A_\mathsf{old}/A_\mathsf{new}$ the accumulator root transition, $B$ the batch size, $V$ the total gross amount, and $\mathsf{rr}, \mathsf{lr}$ commitments to the calldata below. The vector commitment $\Call{Commit}{}$ is fixed by the verification key and the vault implementation; it is not chosen per batch.
 
 A \emph{release leaf} carries everything the vault must execute and emit:
 \[
@@ -184,7 +186,7 @@ The nullifier $\eta$ is included in the leaf, and emitted on settlement, so any 
 
 \section{Batch Proving Relation}\label{app:bridging-relation}
 
-Algorithm~\ref{alg:bridge-relation} defines $\mathfrak{R}$: the relation holds iff every check passes. The witness $\mathsf{w}$ comprises the trust base $\mathcal{T}$, the anchor certificate $UC^*$, and for each burn $i$: the source token $\mathcal{L}_i$, its anchored inclusion proofs, the lock record(s) backing its genesis, and the accumulator non-membership witness $w_i$. $\Call{VerifyToken}{}$ (Sec.~\ref{sec:token-verification}) is invoked in \emph{anchored} mode: wherever it would verify a certified transaction's own Unicity Certificate, it instead verifies an anchored inclusion proof against $h^*$ (Sec.~\ref{app:bridging-anchor}); its recursive split-reason checks (Sec.~\ref{sec:split-verification}) are unchanged and supply value conservation. The genesis backing verifier is \emph{structural}: it checks the binding to the lock record and exports the lock reference as a public obligation, leaving the existence of the lock to the vault's recorded digest (Sec.~\ref{app:bridging-in-security}). The external finality of the lock was already established at mint time by the bridge-in verifier (Sec.~\ref{app:bridging-backing}), so it need not be re-checked inside the proof.
+Algorithm~\ref{alg:bridge-relation} defines $\mathfrak{R}$: the relation holds iff every check passes. The witness $\mathsf{w}$ comprises the trust base $\mathcal{T}$, the anchor certificate $UC^*$, and for each burn $i$: the source token $\mathcal{L}_i$, its anchored inclusion proofs, the lock record(s) backing its genesis, and the accumulator non-membership witness $w_i$. $\Call{VerifyToken}{}$ (Sec.~\ref{sec:token-verification}) is invoked in \emph{anchored} mode: wherever it would verify a certified transaction's own Unicity Certificate, it instead verifies an anchored inclusion proof against $h^*$ (Sec.~\ref{app:bridging-anchor}); its recursive split-reason checks (Sec.~\ref{sec:split-verification}) are unchanged and supply value conservation. The anchored mode accepts only time-independent predicate checks, as noted in Sec.~\ref{app:bridging-anchor}. The genesis backing verifier is \emph{structural}: it checks the binding to the lock record and exports the lock reference as a public obligation, leaving the existence of the lock to the vault's recorded digest (Sec.~\ref{app:bridging-in-security}). The external finality of the lock was already established at mint time by the bridge-in verifier (Sec.~\ref{app:bridging-backing}), so it need not be re-checked inside the proof.
 
 \begin{algorithm}[!htbp]
 \caption{Batch Return Relation $\mathfrak{R}(\mathsf{x},\mathsf{w})$}\label{alg:bridge-relation}
@@ -197,7 +199,7 @@ Algorithm~\ref{alg:bridge-relation} defines $\mathfrak{R}$: the relation holds i
     \State \textbf{Finality:} ensure($\Call{VerifyToken}{\mathcal{L}_i,\mathcal{T}} = 1$ in anchored mode against $h^*$)
     \State ensure(token type of $\mathcal{L}_i$ equals $\mathcal{C}.\mathsf{ty}$)
     \State $T_\mathsf{b} \gets$ final certified transfer of $\mathcal{L}_i$
-    \State $\mathcal{R}_i \gets \Call{DecodeReason}{}$ such that $T_\mathsf{b}.\predi' = \predi_\mathsf{burn}(H(\mathsf{REASON\_TAG},\mathcal{R}_i))$
+    \State $\mathcal{R}_i \gets \Call{DecodeReason}{T_\mathsf{b}.D.\auxd'}$ such that $T_\mathsf{b}.\predi' = \predi_\mathsf{burn}(H(T_\mathsf{b}.D.\auxd'))$
     \State \textbf{Destination:} ensure($\mathcal{R}_i.(\chi,a_\mathsf{V},a_\mathsf{A},\mathsf{ty},\mathsf{aid}) = \mathcal{C}$)
     \State \textbf{Value:} $v_i \gets$ value of $\mathcal{L}_i$ for $\mathsf{aid}$ via $\Call{Assets}{}$
     \State ensure($\mathcal{R}_i.v = v_i$) \textbf{and} ensure($\mathcal{R}_i.v_\mathsf{f} \le v_i$)
@@ -271,7 +273,7 @@ The public statement and the settlement procedure are identical for every value 
 
 \begin{description}
   \item[Single ($B=1$).] One token, one nullifier insertion, one root transition. Establishes the interface.
-  \item[In-circuit batch ($B>1$).] One proof for $B$ burns sharing one anchor certificate $UC^*$ and one accumulator transition. This amortizes, over the whole batch, the single on-chain $\mathsf{Verify}$, the single BFT-certificate verification of $UC^*$, and the single root update. The only cost linear in $B$ on-chain is the $B$ asset transfers.
+  \item[In-circuit batch ($B>1$).] One proof for $B$ burns sharing one anchor certificate $UC^*$ and one accumulator transition. This amortizes, over the whole batch, the single on-chain $\mathsf{Verify}$, the single BFT-certificate verification of $UC^*$, and the single root update. The remaining on-chain settlement work is linear in the number of release leaves, with asset transfers the irreducible dominant term; lock checks are linear in the number of distinct referenced locks.
   \item[Recursion.] Prove each token's lineage independently (parallel across machines), each emitting its nullifier and validated facts; an aggregation relation verifies the child proofs, performs the batch accumulator insertion, binds all returns to one $h_\mathsf{cfg}$ and trust-base policy, and emits the same statement $\mathsf{x}$. This decouples per-token proving latency from batch size.
 \end{description}
 
@@ -319,7 +321,7 @@ Empty root $A_\emptyset$ & empty-RSMT root ($\zerohash$) & Fixed & vault initial
 \hline
 \multicolumn{4}{l}{\textit{Calldata commitment}}\\
 \hline
-$\Call{Commit}{}$ & $H$ over concatenated fixed-width leaf encodings & Default & flat binding commitment; EVM deployments MAY use keccak-256 for cheaper on-chain recomputation \\
+$\Call{Commit}{}$ & deployment-fixed binding vector commitment & Rule & pinned by $\mathsf{vk}$ and the vault; EVM-class deployments use keccak-256 over fixed-width ABI encodings \\
 \hline
 \multicolumn{4}{l}{\textit{External finality}}\\
 \hline

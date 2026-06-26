@@ -558,9 +558,11 @@ A Unicity burn is final the instant it is certified by the BFT Consensus layer a
 
 The vault holds pooled custody of one asset, has persistent storage, can verify a succinct proof for constant cost, and pins (i)~an allow-listed trust-base hash $h_\mathcal{T} = H(\mathcal{T})$, selecting \emph{which} Unicity Service instance is authoritative, and (ii)~an immutable configuration hash $h_\mathsf{cfg}$ committing the external chain identifier, the vault and asset addresses, the bridged token type $\mathsf{ty}$, the asset identifier $\mathsf{aid}$, and the protocol's domain separators (Appendix~\ref{app:bridging-config}). There is no trusted operator, committee, or challenge window: the vault releases funds only against a valid proof.
 
+The return proof is structured in layers: a shared Unicity anchor authenticates historical transition leaves; token-lineage verification checks ownership and chain linkage; value/backing verification ties the burned value to a recorded source-chain lock; replay verification advances the spent-burn accumulator; and the settlement layer binds the public release leaves to the vault transfers. Only the final settlement layer touches source-chain state.
+
 \subsection{Return Authorization}\label{sec:bridge-return-reason}
 
-To return value, the holder burns the token (Sec.~\ref{sec:burn-transaction}) to $\predi_\mathsf{burn}(H(\mathcal{R}))$, where the \emph{return reason} $\mathcal{R}$ commits to the external release: the recipient, a gross amount $v$ equal to the burned token's certified value for $\mathsf{aid}$, an optional relayer fee, a deadline, and the pinned configuration fields (Appendix~\ref{app:bridging-reason}). A fungible token might have been split (Sec.~\ref{sec:token-splitting}), causing fractional returns.
+To return value, the holder forms a \emph{return reason} $\mathcal{R}$ and its canonical encoding $b_\mathcal{R}$. The holder then burns the token (Sec.~\ref{sec:burn-transaction}) with auxiliary data $b_\mathcal{R}$ and recipient predicate $\predi_\mathsf{burn}(H(b_\mathcal{R}))$. The reason commits to the external release: the recipient, a gross amount $v$ equal to the burned token's certified value for $\mathsf{aid}$, an optional relayer fee, a fee deadline, and the pinned configuration fields (Appendix~\ref{app:bridging-reason}). A fungible token might have been split (Sec.~\ref{sec:token-splitting}), causing fractional returns.
 
 \subsection{Replay Prevention}\label{sec:bridge-replay}
 
@@ -574,7 +576,7 @@ For a batch of $B$ burns, the proof attests the conjunction of the following cla
 
 \begin{description}
 \item[Anchor.] A single recent Unicity Certificate $UC^*$ certifies an SMT root $h^* = UC^*.IR.h$ under $\mathcal{T}$, and $H(\mathcal{T}) = h_\mathcal{T}$. Because the SMT is add-only (Sec.~\ref{sec:smt}), every state a token ever occupied remains provable under any later root, so one $UC^*$ anchors entire token histories. The proof verifies this BFT certificate \emph{once} per batch, instead of one certificate per transition.
-\item[Finality.] Each burned token verifies by $\Call{VerifyToken}{}$, with every certified transaction's leaf shown included under the shared root $h^*$; in particular the final state is a burn to $\predi_\mathsf{burn}(H(\mathcal{R}))$.
+\item[Finality.] Each burned token verifies by $\Call{VerifyToken}{}$, with every certified transaction's leaf shown included under the shared root $h^*$; in particular the final state is a burn whose auxiliary data is the encoded return reason and whose recipient predicate binds its hash. This anchored mode is restricted to predicates whose validation does not depend on the original Unicity request-validation time.
 \item[Value and backing.] Each burned amount equals the token's certified value for $\mathsf{aid}$, which traces --- through split value-conservation (Sec.~\ref{sec:split-verification}) --- to a genesis whose backing proof references a lock the vault recorded at bridge-in.
 \item[Destination.] Each $\mathcal{R}$ matches the pinned configuration and yields a public \emph{release leaf} (recipient, amount, fee).
 \item[Replay.] Each nullifier is absent from the input accumulator root $A_\mathsf{old}$; inserting them yields $A_\mathsf{new}$.
