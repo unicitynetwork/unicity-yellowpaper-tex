@@ -542,6 +542,8 @@ Minting is permissionless: the minter key is a public constant derived from $\ma
 
 Bridge-in cannot be instantaneous. A reorganization of the external chain could undo the lock after the token is minted and in circulation, so a recipient must wait for the lock to be final on the external chain before treating the token as good. This finality wait is intrinsic to accepting a deposit from a chain with probabilistic finality. Confirming the lock requires reading external-chain state: the recipient does so either by querying an external-chain node, or by verifying an external-chain inclusion proof carried in the backing reason against a pinned external-chain anchor (Appendix~\ref{app:bridging-finality}). Either way each recipient is its own verifier, so bridge-in introduces no trusted bridge party; its only assumption is the external chain's own consensus.
 
+The wait is enforced by each verifier for itself, not attached to the token as a global condition. In particular, the locker minting to a predicate it already controls needs no wait: it already knows whether its own deposit exists, so no reorganization can surprise it, and a wallet may show such a token to its own owner immediately. The wait binds the first party that did \emph{not} witness the lock --- typically the first recipient the token reaches after leaving the locker's own custody --- since only that party's own $\Call{LockFinal}{}$ check protects it from a lock later undone by a reorganization.
+
 \paragraph{Security.}
 \begin{description}
 \item[No mint without a lock] The backing verifier accepts the genesis only if a matching final lock exists on the configured chain and asset; a token minted without a lock fails verification and is never accepted.
@@ -593,8 +595,9 @@ The vault verifies the proof, checks $h_\mathsf{cfg}$ and that $h_\mathcal{T}$ i
 \item[No trusted parties.] The prover cannot alter the recipient or amount (fixed in the certified $\mathcal{R}$) nor fabricate a release; it can only stall, and any party holding the burned token can reproduce the proof.
 \end{description}
 
-The full data structures, the proving relation, the settlement procedure, and the batched proving mechanism are in Appendix~\ref{app:bridging}.
+\paragraph{Relation upgrades.} The verification key $\mathsf{vk}$ is immutable once a vault is deployed: this is what makes proof verification trustworthy, since no party --- including the deployer --- can silently swap in a different relation later. The consequence is that fixing a bug in the proving relation, or extending it, requires deploying a \emph{new} vault under a new $\mathsf{vk}$; it cannot be done in place. The old and new vaults share no state, so value locked under the superseded configuration must be returned under the old relation before, or independently of, adopting the new one. Appendix~\ref{app:bridging-upgrades} details the upgrade procedure.
 
+The full data structures, the proving relation, the settlement procedure, and the batched proving mechanism are in Appendix~\ref{app:bridging}.
 
 \section{Private Transactions}\label{sec:private-transactions}
 

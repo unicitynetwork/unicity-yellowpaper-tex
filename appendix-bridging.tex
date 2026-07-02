@@ -45,6 +45,8 @@ h_\mathsf{cfg} = H(\mathsf{CFG\_DOMAIN},\; \chi,\; a_\mathsf{V},\; a_\mathsf{A},
 \]
 The vault MUST derive $h_\mathsf{cfg}$ and its custody asset $a_\mathsf{A}$ from the \emph{same} configuration value at deployment, so that the asset the proof validates against and the asset the vault pays out cannot diverge. $\mathsf{CFG\_DOMAIN}$, $\mathsf{LOCK\_DOMAIN}$, $\mathsf{NUL\_DOMAIN}$ are distinct fixed byte strings and $\mathsf{REASON\_TAG}$ is the CBOR semantic tag of the return reason.
 
+Note that $\mathcal{C}$ pins \emph{which} asset identifier is bridged but not how $\Call{Assets}{}$ decodes it (Sec.~\ref{sec:asset-structure}) --- that decoding is fixed by the token type $\mathsf{ty}$ itself and must be identical across every independent implementation that mints, backs, or returns the bridged token.
+
 \section{Bridge-In: Lock, Record, and Backing Proof}\label{app:bridging-lock}
 
 Bridge-in escrows the external asset and mints a Unicity token whose genesis backing reason ties it to that escrow. This section gives the lock event, the digest the vault retains for return-time backing, the backing-reason structure, the external-finality black box, and the verification algorithm a recipient runs.
@@ -254,8 +256,9 @@ Properties:
 \begin{itemize}
   \item \textbf{No external query, no light client.} The proof self-certifies its anchor under the allow-listed $\mathcal{T}$, and backing is confirmed against locally recorded digests; the vault tracks no Unicity roots.
   \item \textbf{Deadline never strands funds.} $t_d$ gates only the fee. After it, the recipient receives the full amount; anyone (including the recipient) can submit the proof, so a slow or absent relayer costs only the fee.
-  \item \textbf{Batch atomicity.} All $B$ transfers settle together; a single recipient that rejects receipt reverts the batch. This is a liveness concern, not a safety one: on revert $A$ is unchanged and no nullifier is consumed, so the offending leaf is dropped and the batch rebuilt. A deployment expecting blockable recipients\footnote{e.g., compliance reasons} may settle by crediting a withdrawable balance instead of directly transferring.
+  \item \textbf{Batch atomicity.} All $B$ transfers settle together; a single recipient that rejects receipt reverts the batch. This is a liveness concern, not a safety one: on revert $A$ is unchanged and no nullifier is consumed, so the offending leaf is dropped and the batch rebuilt. A deployment expecting blockable recipients\footnote{e.g., compliance reasons} may settle by crediting a withdrawable balance instead of directly transferring; doing so also isolates one misbehaving or reverting recipient from every other release leaf in the same batch, which matters because a proof, once produced, commits an entire batch as a unit.
   \item \textbf{Reconstructability.} $\mathsf{Released}$ emits each nullifier and $\mathsf{BatchFulfilled}$ each root transition, so the off-chain accumulator is rebuildable from public data alone and verified against the on-chain $A$ before use.
+  \item \textbf{Transfer gas/energy.} On EVM-class chains, a low-level call the vault issues to move the asset to $\ell_i.a_\mathsf{r}$ does not necessarily receive the caller's full remaining gas or energy by default, particularly immediately following an expensive operation such as proof verification within the same transaction; some execution environments cap or otherwise constrain forwarding to nested calls. A vault implementation should budget an explicit, sufficient tx fee for each transfer rather than relying on default forwarding.
 \end{itemize}
 
 \section{Security Properties}\label{app:bridging-security}
@@ -276,6 +279,20 @@ The public statement and the settlement procedure are identical for every value 
   \item[In-circuit batch ($B>1$).] One proof for $B$ burns sharing one anchor certificate $UC^*$ and one accumulator transition. This amortizes, over the whole batch, the single on-chain $\mathsf{Verify}$, the single BFT-certificate verification of $UC^*$, and the single root update. The remaining on-chain settlement work is linear in the number of release leaves, with asset transfers the irreducible dominant term; lock checks are linear in the number of distinct referenced locks.
   \item[Recursion.] Prove each token's lineage independently (parallel across machines), each emitting its nullifier and validated facts; an aggregation relation verifies the child proofs, performs the batch accumulator insertion, binds all returns to one $h_\mathsf{cfg}$ and trust-base policy, and emits the same statement $\mathsf{x}$. This decouples per-token proving latency from batch size.
 \end{description}
+
+\section{Relation and Configuration Upgrades}\label{app:bridging-upgrades}
+
+Both $\mathsf{vk}$ and $h_\mathsf{cfg}$ are fixed at vault deployment (Sec.~\ref{app:bridging-config}, \ref{app:bridging-primitives}) and neither can be changed in place. $h_\mathsf{cfg}$ is in fact self-referential through $a_\mathsf{V}$: a new vault address necessarily produces a new $h_\mathsf{cfg}$, so relocating custody to a new vault instance and changing the proving relation are, mechanically, the same kind of event even when only one of them was the actual motivation.
+
+A relation upgrade, e.g., correcting a defect in $\mathfrak{R}$ (Alg.~\ref{alg:bridge-relation}) or extending it, proceeds as:
+\begin{enumerate}
+  \item Deploy a new vault with the new $\mathsf{vk}$ and the resulting $h_\mathsf{cfg}$, initialized with an empty accumulator ($A = A_\emptyset$), an empty lock-digest map, and no allow-listed trust base; each MUST be populated before the vault is usable.
+  \item Publish the new configuration to wallets and provers, and stop bridge-in against the superseded vault.
+  \item Return outstanding value locked in the superseded vault under the \emph{old} relation. The new vault has no record of old locks and cannot settle proofs referencing them, so this step cannot be deferred to the new deployment.
+\end{enumerate}
+Value not returned before the superseded vault is abandoned is unrecoverable through the protocol: $\mathsf{lockDigest}$ (Sec.~\ref{app:bridging-lock-op}) is local, per-instance state.
+
+This rigidity is the direct consequence of $\mathsf{vk}$ being immutable, which is what makes the vault trustworthy in the first place.
 
 \section{Shared Parameters}\label{app:bridging-params}
 
@@ -338,7 +355,7 @@ Fee constraint & $v_\mathsf{f} \le v$ & Fixed & enforced in circuit and vault \\
 \hline
 Trust-base allow-list & timelocked add/rotate & Policy & for validator-set epochs \\
 Governance timelock $\Delta_\mathsf{gov}$ & $\ge 7$ days (suggested) & Policy & deployment-set \\
-Proof system & Groth16-wrapped STARK & Default & $\mathsf{vk}$ pinned per circuit version (Sec.~\ref{app:bridging-primitives}) \\
+Proof system & Groth16-wrapped STARK & Default & $\mathsf{vk}$ pinned per circuit version (Sec.~\ref{app:bridging-primitives}); changing it is a vault redeployment (Appendix~\ref{app:bridging-upgrades}) \\
 \end{longtable}
 
 A deployment must select the chain-specific entries ($\chi$, the address width, $K$ or the external anchor), pinned $\mathsf{vk}$ for the chosen proof system, and publish the resulting $h_\mathsf{cfg}$ and the allowed trust-base hashes.
