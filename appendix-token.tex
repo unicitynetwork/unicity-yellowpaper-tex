@@ -294,7 +294,7 @@ All structures below use deterministic CBOR and must be consumed completely. Dec
 
 \subsection{Output Commitment}\label{app:split-output-commitment}
 
-The output commitment binds an allocation leaf to the complete output mint transaction except for its mint reason. Split verification additionally requires the output token type to equal the source token type byte-for-byte; including $\mathsf{ty}_j$ in this commitment prevents replay of a prepared proof under any other mint transaction. Define $\mathsf{SPLIT\_OUTPUT}$ as the ASCII byte string \texttt{UNICITY\_SPLIT\_OUTPUT}. For source identifier $\mathsf{id}_\mathsf{src}$ and output mint data
+The output commitment binds an allocation leaf to the complete output mint transaction except for its mint reason. Split verification additionally requires the output token type to equal the source token type byte-for-byte; including $\mathsf{ty}_j$ in this commitment prevents replay of a prepared proof under any other mint transaction. Define $\mathsf{SPLIT\_OUTPUT}$ as the ASCII byte string \texttt{"UNICITY\_SPLIT\_OUTPUT"}. For source identifier $\mathsf{id}_\mathsf{src}$ and output mint data
 \[
 D_{\mathsf{mint},j}
 =(\alpha,\predi'_j,\mathsf{salt}_j,\mathsf{ty}_j,
