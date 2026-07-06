@@ -53,13 +53,11 @@ A \emph{partition type descriptor} is a tuple $\mathcal{SD} = (\mathsf{hf}, \mat
 
 For the SMT-based aggregation, the partition maintains a sparse Merkle tree mapping state identifiers to transaction hashes. The hash function $\mathsf{hf}$ is used for all cryptographic operations, and the encoding scheme $\mathsf{enc}$ specifies how data structures are serialized before hashing (see Sec.~\ref{sec:smt} for SMT structure).
 
-The \emph{consistency proof}\index{consistency proof} is an opaque data structure that allows BFT Core nodes to verify that aggregation layer shard nodes correctly performed SMT manipulations during a round. The actual mechanism and content of consistency proofs will be defined separately for each partition type.
+The \emph{consistency proof}\index{consistency proof} is a data structure that allows BFT Core nodes to verify that aggregation layer shard nodes performed the SMT manipulations correctly during the round. The actual mechanism and content of consistency proofs will be defined separately for each partition type.
 
 \subsection{Standard Partition Types}
 
 \textbf{Unicity SMT} ($\mathsf{st} = 1$) -- Sparse Merkle Tree based unicity prover
-
-\textbf{PoW FP} ($\mathsf{st} = 2$) -- Finality Gadget partition for the PoW chain (Sec.~\ref{sec:fg-partition})
 
 \textbf{EVM} ($\mathsf{st} = 8$) -- Enshrined EVM runtime
 
@@ -555,10 +553,13 @@ For the hash-based instantiation of the consistency proof in this model, the bat
 Statistical record of type $\mathbb{SR}$ is a tuple $\mathsf{SR}=(n_e, \overline{\ell}_B, \overline{\ell}_S, \hat{\ell}_B, \hat{\ell}_S)$, where:\index{statistical record ($\mathsf{SR}$)}
 \begin{enumerate}
 	\item $n_e$ -- number of non-empty rounds (adding at least one new leaf), of type $\uint{64}$
-	\item $\overline{\ell}_S$ -- memory usage of the SMT, of type $\uint{64}$
+	\item $\overline{\ell}_B$ -- cumulative number of new SMT leaves added during the epoch's rounds, of type $\uint{64}$
+	\item $\overline{\ell}_S$ -- cumulative sum of the per-round SMT memory usage in bytes (for computing epoch averages), of type $\uint{64}$
 	\item $\hat{\ell}_B$ -- maximum number of SMT additions processed during a round, of type $\uint{64}$
-	\item $\dots$ -- other necessary data: fees, etc.
+	\item $\hat{\ell}_S$ -- maximum SMT memory usage in bytes observed during a round, of type $\uint{64}$
 \end{enumerate}
+
+The record may be extended with other accounting data (fees, etc.).
 
 There is one Statistical Record of current epoch where the values are being updated, reflecting the current state since the beginning of the epoch; and one invariant Statistical Record of the preceding epoch of every shard of every public partition.
 
@@ -681,7 +682,7 @@ Epoch number\index{$e$ (epoch number)} can be interpreted as the version number 
 
 \subsection{Certification Request}\label{certification-request}
 
-\emph{Certification Request} (CR)\index{certification request (CR)} of a shard is a message $\langle \alpha, \beta, \sigma, \nu; \mathcal{IR}, \ell_B, \ell_S, [\pi_{CP}]; s; \rangle$, where:
+\emph{Certification Request} (CR)\index{certification request (CR)} of a shard is a message $\langle \alpha, \beta, \sigma, \nu; \mathcal{IR}, \ell_B, \ell_S, [\pi_{CP}]; s \rangle$, where:
 \begin{enumerate}
 	\item $\alpha$ -- network identifier of type $\mathbb{A}$
 	\item $\beta$ -- partition identifier of type $\mathbb{C}$
@@ -731,7 +732,7 @@ As every shard $\sigma$ of a partition $\beta$ is implemented by a redundant dis
 It is possible that not every shard sends its shard input record to the BFT Core during the round, and the majority voting may fail (see the Consensus specification for details).
 
 
-For every incoming certificate request $\mathsf{CR}=\langle \alpha, \beta, \sigma, \nu; t, \mathcal{IR}, \ell_B, \ell_S\rangle$ the following checks are made
+For every incoming certificate request $\mathsf{CR}=\langle \alpha, \beta, \sigma, \nu; \mathcal{IR}, \ell_B, \ell_S, [\pi_{CP}]; s \rangle$ (Sec.~\ref{certification-request}) the following checks are made
 (if any of them fails, $\mathsf{CR}$ is discarded):
 \begin{enumerate}
 \item $\mathsf{CR}.\alpha = \alpha$ -- request came from the same network instance
@@ -741,7 +742,7 @@ For every incoming certificate request $\mathsf{CR}=\langle \alpha, \beta, \sigm
 \item $\mathsf{CR}.\mathcal{IR}.e=\mathcal{SI}[\beta,\sigma].e$ -- epoch number matches
 \item $\mathsf{CR}.\mathcal{IR}.h'=\mathcal{SI}[\beta,\sigma].h_-$ -- previous round's SMT root hash in IR matches the recorded one
 	\item $\mathcal{CD}[\beta].\gamma_{CP}(\mathsf{CR}.\mathcal{IR}, \mathsf{CR}.\pi_{CP})$ -- consistency proof verification (Sec.~\ref{sec:consistency-proof}) succeeds: verify $\mathsf{VerifyConsistencyProof}(\mathsf{CR}.\pi_{CP}, B, \mathsf{CR}.\mathcal{IR}.h', \mathsf{CR}.\mathcal{IR}.h) = \TRUE$ and $|B| = \mathsf{CR}.\ell_B$ (batch size matches).
-\item $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta, \sigma].UC_-.IR.C^\mathsf{r}.t$ -- time reference is equal to the time field of the previous unicity seal
+\item $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta, \sigma].UC_-.C^\mathsf{r}.t$ -- time reference is equal to the time field of the previous unicity seal
 \end{enumerate}
 Only one (majority-voted) certificate request (denoted by $\mathsf{CR}_{\beta,\sigma}$) is accepted from every shard.
 
@@ -752,10 +753,10 @@ When the BFT Core's round $n$ is completed, then:
 		\item $\mathcal{SI}[\beta, \sigma].n \gets \mathsf{CR}.\mathcal{IR}.n$
 		\item $\mathcal{SI}[\beta, \sigma].h_- \gets \mathsf{CR}.\mathcal{IR}.h$
 		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.n_e \gets \mathcal{SI}[\beta, \sigma].\mathsf{SR}.n_e + 1$
-		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_B \gets \mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_B + \mathsf{CR}.\mathcal{IR}.\ell_B$
-		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_S \gets \mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_S + \mathsf{CR}.\mathcal{IR}.\ell_S$
-		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_B \gets \max\{\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_B, \mathsf{CR}.\mathcal{IR}.\ell_B\}$
-		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_S \gets \max\{\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_S, \mathsf{CR}.\mathcal{IR}.\ell_S\}$
+		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_B \gets \mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_B + \mathsf{CR}.\ell_B$
+		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_S \gets \mathcal{SI}[\beta, \sigma].\mathsf{SR}.\overline{\ell}_S + \mathsf{CR}.\ell_S$
+		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_B \gets \max\{\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_B, \mathsf{CR}.\ell_B\}$
+		\item $\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_S \gets \max\{\mathcal{SI}[\beta, \sigma].\mathsf{SR}.\hat{\ell}_S, \mathsf{CR}.\ell_S\}$
 		\item The leader for next round: \\
 			$\mathcal{SI}[\beta, \sigma].\nu_\ell \gets \Call{leaderfunc}{UC_-, \mathcal{SI}[\beta, \sigma].\mathcal{V}}$
 		\item Technical record: \\
