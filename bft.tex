@@ -972,7 +972,7 @@ See Algorithm~\ref{alg:P1-req}.
       \If{$IR.n \ne \mathcal{SI}[\beta, \sigma].n+1$            \Comment{Round is behind/ahead}
         \State $\;\;\lor\; IR.e \ne \mathcal{SI}[\beta, \sigma].e$  \Comment{Epoch can be incremented by RP only}
         \State $\;\;\lor\; IR.h' \ne \mathcal{SI}[\beta, \sigma].h$ \Comment{Extending of unknown state}
-        \State $\;\;\lor\; \lnot\mathcal{CD}[\beta].\gamma_{CP}(IR.h', IR.h, \ell_B, \pi_{CP})$  \Comment{Consistency proof verification}
+        \State $\;\;\lor\; \lnot\mathcal{CD}[\beta].\gamma_{CP}(IR, \pi_{CP})$  \Comment{Consistency proof verification (Sec.~\ref{sec:consistency-proof})}
         \State $\;\;\lor\; IR.t \ne \mathcal{SI}[\beta, \sigma].UC_-.C^\mathsf{r}.t$}   \Comment{Time not set as expected}
         \State \Call{send\_CReS}{$context; \beta, \sigma, \mathcal{SI}[\beta, \sigma].UC_-, \Call{get\_te}{\mathcal{SI}[\beta, \sigma]}$}
         \State \Return

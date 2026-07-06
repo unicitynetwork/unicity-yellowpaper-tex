@@ -101,7 +101,7 @@ to the last pre-split tree $T_\sigma$ (whose root was $\mathcal{SI}[\beta,\sigma
 \[
 \mathsf{CR}.\mathcal{IR}.h' = \rho_{\sigma\|b} = \mathcal{SI}[\beta,\sigma\|b].h_-,
 \]
-and if no new leaves are inserted during that round then $\mathsf{CR}.\mathcal{IR}.h = \rho_{\sigma\|b}$ and the batch $B$ is empty. The consistency proof $\pi_{CP}$ for this bridging round is therefore the empty-batch proof (accepted by $\textsc{rsmt\_verify\_consistency}$ when $B = \langle\rangle$ and $h' = h$, Appendix~\ref{sec:rsmt-verify-consistency}). Subsequent rounds proceed normally. The correctness of the $\rho_{\sigma\|b}$ seeding is not proved on-chain by the child shard; it follows deterministically from the parent's last-certified root by Appendix~\ref{sec:rsmt-shard-split-fn}, which any validator can recompute.
+and if no new leaves are inserted during that round then $\mathsf{CR}.\mathcal{IR}.h = \rho_{\sigma\|b}$ and the batch $B$ is empty. The consistency proof $\pi_{CP}$ for this bridging round is therefore the empty-batch proof (accepted by $\textsc{rsmt\_verify\_consistency}$ when $B = \langle\rangle$, $\pi_{CP} = \langle\rangle$ and $h' = h$, Appendix~\ref{sec:rsmt-verify-consistency}). Subsequent rounds proceed normally. The correctness of the $\rho_{\sigma\|b}$ seeding is not proved on-chain by the child shard; it follows deterministically from the parent's last-certified root by Appendix~\ref{sec:rsmt-shard-split-fn}, which any validator can recompute.
 
 \section{Unicity Service Request}
 
@@ -210,7 +210,7 @@ See Fig.~\ref{fi:inc-proof} for the Inclusion Proof structure and Fig.~\ref{fi:u
 \subsection{Sparse Merkle Tree}\label{sec:smt}
 
 \index{sparse merkle tree}\index{SMT}\index{RSMT}
-The aggregation layer maintains a \emph{(Radix) Sparse Merkle Tree} (SMT), a path-compressed authenticated map from 256-bit state identifiers to transaction hashes. Leaves are anchored by full keys, and internal nodes record the branching structure needed to route lookups and authenticate the root. The SMT supports batch insertion, inclusion certificates, non-inclusion certificates and consistency proofs. Exact formats and algorithms are given in Appendix~\ref{app:rsmt}.
+The aggregation layer maintains a \emph{(Radix) Sparse Merkle Tree} (SMT), a path-compressed authenticated map from 256-bit state identifiers to transaction hashes. Leaves are anchored by full keys, and internal nodes commit to their absolute branching depth and to the key prefix (\emph{region}) addressing them, which both routes lookups and pins every node to its position in the key space. The SMT supports batch insertion, inclusion certificates, non-inclusion certificates and consistency proofs. Exact formats and algorithms are given in Appendix~\ref{app:rsmt}.
 
 
 \subsubsection{SMT Leaf Structure}
@@ -376,7 +376,7 @@ $\mathsf{VerifyUnicitySeal}$ -- unicity seal verification function of type $\has
 Elements of the tuple form an authenticated chain, see function \nameref{VerifyUnicityCert}.
 
 
-\subsubsection{Verication: $\mathsf{VerifyUnicityCert}$}\label{VerifyUnicityCert}\index{functions!VerifyUnicityCert}
+\subsubsection{Verification: $\mathsf{VerifyUnicityCert}$}\label{VerifyUnicityCert}\index{functions!VerifyUnicityCert}
 
 Verifies if unicity certificate is valid, based on unicity trust base as the root of trust.
 This function authenticates the certificate chain itself. It does not, by itself, prove that a particular state identifier belongs to the shard named in $C^\mathsf{shard}$; that binding is checked by the proof verification functions below.
@@ -476,7 +476,7 @@ $\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function 
 \subsection{Consistency Proof}\label{sec:consistency-proof}
 
 \index{consistency proof}\index{$\pi_{CP}$ (consistency proof)}
-A \emph{Consistency Proof} (also called \emph{non-deletion proof}) is a cryptographic construction that validates one round of operation of the append-only SMT maintained by aggregation layer nodes. It proves that the state transition from previous SMT root hash $h'$ to current SMT root hash $h$ was performed correctly: only new leaves were added, and no pre-existing leaves were removed or modified. For a round with inserted batch
+A \emph{Consistency Proof} (in earlier documents also called a \emph{non-deletion proof}; we use \emph{consistency proof} throughout) is a cryptographic construction that validates one round of operation of the append-only SMT maintained by aggregation layer nodes. It proves that the state transition from previous SMT root hash $h'$ to current SMT root hash $h$ was performed correctly: only new leaves were added, each at the position determined by its own key, and no pre-existing leaves were removed or modified. For a round with inserted batch
 \[
 B = \langle (\mathsf{sid}_1, h_{\mathsf{tx},1}), \ldots, (\mathsf{sid}_j, h_{\mathsf{tx},j}) \rangle,
 \]
@@ -514,20 +514,22 @@ $\mathsf{VerifyConsistencyProof}$ -- consistency proof verification function of 
 
 The verification algorithm ($\textsc{rsmt\_verify\_consistency}$) is defined in Appendix~\ref{sec:rsmt-verify-consistency}.
 
-The proof system must enforce the following property:
+The proof system must enforce \emph{append-only consistency}\index{append-only consistency}, which combines the following two properties. Let $M_0, M_1 \colon \bytes{32} \to \hashtype\opt$ denote the partial maps committed by $h'$ and $h$, respectively (a binding is committed exactly when an inclusion certificate for it verifies against the root).
 
 \begin{itemize}
-	\item \textbf{Soundness of prior-state preservation}: Let $M_0, M_1 \colon \bytes{32} \to \hashtype\opt$ denote the partial maps committed by $h'$ and $h$, respectively. If $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$, then
+	\item \textbf{Prior-state preservation}: If $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$, then
 	\[
 		\forall\, \mathsf{sid} \in \bytes{32}\colon\; M_0(\mathsf{sid}) \ne \bot \Rightarrow M_1(\mathsf{sid}) = M_0(\mathsf{sid}).
 	\]
 	That is, no previously committed SMT leaf can be deleted or modified.
-
+	\item \textbf{Coherent placement}: every leaf inserted in the round is placed at the position determined by its own key; together with the above, $M_1$ extends $M_0$ by exactly the bindings of $B$, whose keys must be fresh---no accepting proof exists for a batch that re-records an already-present key.
 \end{itemize}
 
-This property is required to avoid potential double-spending with the help of malicious operators.
+Append-only consistency is required to avoid potential double-spending with the help of malicious operators. Coherent placement cannot be omitted: a single misplaced junction above a preserved subtree makes every binding in that subtree unprovable under the new root, and allows the freed key positions to be re-recorded with different values in later rounds---an equivocation that passes every purely structural check. Applied round by round from the empty genesis tree, append-only consistency also guarantees that every certified tree is the unique canonical tree of its key set.
 
-The security model where an untrusted Aggregator machine generates (non-)inclusion proofs, anchored by committed root hashes, allows us to avoid stronger consistency guarantees like \emph{completeness} (free service is not a big issue), \emph{batch incorporation} (failure to inserting some leaves results in denial of service at worst), \emph{batch binding} (inclusion proofs do it better), \emph{no phantom insertions} (free service), \emph{canonical inserts} (denial of service at worst).
+The security model where an untrusted Aggregator machine generates (non-)inclusion proofs, anchored by committed root hashes, allows us to avoid stronger guarantees like \emph{completeness} (censoring a request is denial of service at worst), \emph{batch incorporation} (failure to insert some leaves results in denial of service at worst), \emph{batch binding} (inclusion proofs do it better), and \emph{no phantom insertions} (free recording service at worst; phantom entries carry fresh keys, since coherent placement forbids re-recording).
+
+For the hash-based instantiation of the consistency proof in this model, the batch $B$ (the sorted list of inserted $(\mathsf{sid}, h_\mathsf{tx})$ pairs) accompanies the opcode stream on the wire, since the BFT Core does not otherwise possess it; the check $|B| = \mathsf{CR}.\ell_B$ cross-links it to the certification request. Supplying $B$ from the untrusted aggregator is safe in this model: append-only consistency holds for whatever batch is declared, and batch contents beyond that are covered by the scoping argument above. The ZK-compressed instantiation (Appendix~\ref{app:zk-consistency-proof}) keeps the batch private and exposes only the two roots.
 
 
 %%%%%%%% BFT Core
