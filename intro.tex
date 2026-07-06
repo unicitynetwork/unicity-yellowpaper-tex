@@ -18,7 +18,7 @@ The Unicity protocol employs a hierarchical three-layer architecture designed fo
 \end{figure}
 
 \begin{description}
-\item[Consensus Layer] PoW chain and BFT Core. Provides token minting, decentralized agreement and finality through Byzantine Fault Tolerant consensus. This layer verifies the integrity of the Aggregation Layer's state transitions and serves as the root of trust for the entire system. The BFT Core certifies SMT root hashes submitted by the aggregation layer.
+\item[Consensus Layer] The BFT Core: a bounded-size committee of validator nodes running a leader-based Byzantine Fault Tolerant (BFT) consensus protocol, elected and weighted by bonded stake under delegated Proof of Stake (Sec.~\ref{sec:staking}). It provides decentralized agreement and single-round finality, verifies the integrity of the Aggregation Layer's state transitions, and serves as the root of trust for the entire system by certifying the SMT root hashes submitted by the aggregation layer. New native tokens enter circulation as protocol emission, claimed by mint transactions against the certified staking state (Sec.~\ref{sec:rewards}).
 
 \item[Aggregation Layer] Maintains a global append-only registry of spent token states using sharded Sparse Merkle Trees (SMT). Each partition within this layer processes state certification requests, provides inclusion proofs, and uses consistency proofs to enable trustless verification. The layer is organized into partitions for service design flexibility, with each partition potentially divided into shards for horizontal scalability.
 

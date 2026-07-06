@@ -5,7 +5,7 @@ By \emph{governance}\index{governance}, we mean the operational management and r
 Governance\index{governance} is an organizational process run by the Unicity Foundation, and potentially involving on-chain community voting (``coinvote'') to make high-level governance decisions, which become binding to the Foundation. Governance parameters and algorithms can be changed only through the Governance.
 
 
-\section{Governance of the Dynamic Distributed Machine}
+\section{Governance of the Dynamic Distributed Machine}\label{sec:governance-dynamic}
 
 The sections so far document a blockchain system which is entirely bootstrapped and managed by a centralized entity. This includes both administrative management and technical management, in the form of system administrators implementing requested changes. For example, if a validator wants to join the Unicity platform, the entity must give it explicitly a permit, and this is executed as a change made by system administrators. Analogously, in order to add a new partition, the change must be approved and executed by trusted entities. This may include restarting of the system.
 
@@ -50,9 +50,11 @@ It is assumed, that the party who runs a BFT Core validator authenticates the ch
 
 \chapter{Governance Mechanisms}
 
+For the BFT Core committee, the normative mechanism is delegated Proof of Stake, specified in Sec.~\ref{sec:staking}: committee membership and voting power derive from bonded stake, the election is a deterministic function of the certified staking registry, and the Governance Body's role for the committee reduces to setting the economic parameters. The mechanisms below describe the modular framing and the bootstrap path.
+
 \section{Proof of Authority}
 
-In the Proof of Authority mechanism, a permissioned, \emph{authorized} entity provides the governance information by sending signed transactions to the governance partition.
+In the Proof of Authority mechanism, a permissioned, \emph{authorized} entity provides the governance information by sending signed transactions to the governance partition. Proof of Authority is the bootstrap mechanism: the system launches under the support and control of the Unicity Foundation, and the on-chain DPoS processes take over along the decentralization roadmap.
 
 \section{Proof of Stake}
 
@@ -62,12 +64,9 @@ Proof of Stake mechanism\index{PoS (Proof of Stake)} is based on the fact that t
 
 Also, the staking mechanism provides a commitment and shared ownership structure for the Unicity Community.
 
-Validator's voting power in consensus correlates to its staked amount. That is, votes have weights, and the quorum size is defined as the arithmetic sum of stakes of agreeing validators which is necessary to reach a consensus.
+Validator's voting power in consensus correlates to its staked amount. That is, votes have weights, and the quorum size is defined as the arithmetic sum of stakes of agreeing validators which is necessary to reach a consensus. The normative stake-weighted quorum rule, the bonding and delegation mechanics, slashing and rewards are specified in Sec.~\ref{sec:staking}.
 
-The leader election algorithm may use stake amounts as an input, so that the probability of becoming a leader correlates to the stake amount (assuming PoS).
-
-\section{Proof of Work}
-% TODO write me
+The leader election algorithm may use stake amounts as an input, so that the probability of becoming a leader correlates to the stake amount.
 
 \section{Tokenomics Toolbox}
 
@@ -81,7 +80,7 @@ Governance implements the tokenomics layer. In order to do so, there are certain
 	\item[Slashing] is a mechanism enabled by staking: to disincentivize malicious behavior, it is possible to forfeit part or all of the stake as a punitive measure.
 	\item[Stake Limits] per validator allow the system to influence the number of participating physical validator machines; e.g., when there is an upper limit of staking rewards per machine, the stakers are incentivized to bring in more machine instances.
 	\item[Liquid Staking] is a mechanism where otherwise locked stake can be used for other purposes, for example used for staking in multiple partitions. This allows stakers to achieve better yield at the cost of higher risks.
-	\item[Delegated Proof of Stake] is an extension to PoS where external parties can delegate their state to specific validator nodes. Crucially, this democratizes the staking, so that non-sophisticated parties can participate, and also brings in external knowledge about the trustfulness of validators: delegators choose which validators they are placing their stakes on.
+	\item[Delegated Proof of Stake] is an extension to PoS where external parties can delegate their stake to specific validator nodes. Crucially, this democratizes the staking, so that non-sophisticated parties can participate, and also brings in external knowledge about the trustfulness of validators: delegators choose which validators they are placing their stakes on. This is the enshrined mechanism for the BFT Core committee (Sec.~\ref{sec:staking}).
 \end{description}
 
 
@@ -92,7 +91,7 @@ Governance is divided logically to a set of independent processes. Following sub
 \section{Validator Assignment}
 
 % note: there are more operational parameters which may need per-epoch management, so it may be more general than "validator assignment"
-The process produces change records (called Validator Assignment Records), which assign validators to specific partitions and shards, as shown in Table~\ref{ta:var}.
+The process produces change records (called Validator Assignment Records), which assign validators to specific partitions and shards, as shown in Table~\ref{ta:var}. Its scope is the aggregation layer: for the BFT Core committee, the assignment record is not produced by a Governance Process but derived deterministically from the certified staking registry by the election function (Sec.~\ref{sec:election}).
 
 \begin{table}[!htbp]
 	\begin{center}

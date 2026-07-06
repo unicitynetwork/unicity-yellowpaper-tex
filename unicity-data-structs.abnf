@@ -37,10 +37,11 @@
 
   ProposalMsg = BlockData [LastRoundTc] Signature
   BlockData   = Author Round Epoch Timestamp Payload AncestorQC
-  Payload     = *IRChangeReq | RPEpochChangeReq
+  Payload     = *(IRChangeReq | RegistryTx) | RPEpochChangeReq
   IRChangeReq = PartitionIdentifier CertReason *CR [EpochChangeJustification] SenderSignature
               ; presence of justification ==> epoch++
   RPEpochChangeReq = Epoch *(NodeID Pubkey Stake) QuorumThreshold StateHash ChangeRecordHash PreviousEntryHash SenderSignature [ChangeRecord]
+      ;~fields 1--3 are the output of the election function elect(G, e) (Sec.~\ref{sec:election})
 
   TimeoutMsg = Timeout Author Signature [LastTC]
       ;~If HighQC is not from prev. round then there must be TC of prev,
@@ -76,6 +77,30 @@
   ; Trust Base Distribution protocol
   GetTrustBaseMsg = NetworkIdentifier EpochStart [EpochEnd]
   TrustBaseResponse = *UnicityTrustBaseEntry
+
+; --- Staking and DPoS (Sec.~\ref{sec:staking}) ---
+  RegistryTx = RegisterCandidateTx | BondTx | UnbondTx | EvidenceTx | CheckpointTx
+      ;~carried in the block proposal payload; effects apply at the next epoch boundary
+  RegisterCandidateTx = NodeID Pubkey ServiceAddresses Commission OwnerPredicate Signature
+  BondTx = BondDeclaration BurnEvidence
+      ;~burn-to-bond (Sec.~\ref{sec:bonding}); credits the staking registry
+  BondDeclaration = NetworkIdentifier BondOp NodeID OwnerPredicate
+      ;~the burned token's final transfer is locked to the burn predicate over $H(\mathcal{D})$
+  BondOp = %x01 | %x02   ;~1 = self-bond (candidate), 2 = delegation
+  BurnEvidence = Bytes   ;~certified burn transfer + inclusion proof (Execution Layer formats)
+  UnbondTx = BondId OwnerSignature   ;~withdrawable after the unbonding delay
+  EvidenceTx = EvidenceClass Epoch NodeID SignedPayload SignedPayload SubmitterPredicate
+      ;~equivocation evidence: two conflicting signatures by the same key (Sec.~\ref{sec:slashing})
+  EvidenceClass = %x01 | %x02   ;~1 = conflicting Unicity Seals, 2 = conflicting consensus votes
+  SignedPayload = Bytes Signature
+  CheckpointTx = AggregateProof CheckpointPublicValues
+      ;~full-history audit checkpoint (Sec.~\ref{sec:audit-checkpoint})
+  CheckpointPublicValues = NetworkIdentifier GenesisDigest RoundNumber GlobalRoot RootHistoryCommitment RewardPredicate
+  AggregateProof = Bytes ;~recursive STARK; verified against a versioned protocol constant (verifying-key digest)
+
+  ; Registry claims are Execution Layer mints; the mint reason carries an inclusion
+  ; certificate of the registry entry against the certified registry commitment
+  ; (Trust Base entry, state summary field), Sec.~\ref{sec:rewards}.
 
 ; ============================================================================
 ; 4. AGGREGATION LAYER

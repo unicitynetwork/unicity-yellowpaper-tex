@@ -893,8 +893,13 @@ Communication layer:
 \subsection{Safety}
 BFT Core enforces that each round is `extended' by one round only. This excludes conflicting rounds (forks). BFT Core must not generate ``equivocating'' UCs (see Section \ref{round-finalization} and Algorithm~\ref{alg:malicious-uc}).
 
+Under DPoS, safety is additionally \emph{accountable}: generating equivocating UCs or conflicting consensus votes cannot be prevented cryptographically, but it produces self-contained evidence (classes E1 and E2 of Sec.~\ref{sec:slashing}) that is detectable by any observer holding two conflicting artifacts, attributable to specific keys, and punished by stake destruction. The classical ``nothing at stake'' objection to Proof of Stake does not apply in its usual form, because there is no chain to fork: each round, the BFT Core certifies exactly one successor state or none, and the objection's analogue---a quorum signing two conflicting successor states---is exactly the punished equivocation case. Note also that the correctness of certified state transitions does not rest on the committee at all: append-only consistency is verified cryptographically before certification (Sec.~\ref{sec:consistency-proof}) and re-verifiable from the round archive (Sec.~\ref{sec:audit-checkpoint}); what the committee is trusted with is uniqueness of the certified tip, and that trust is accountable.
+
 \subsection{Liveness}
-Usual properties of a partially synchronous communication model apply.
+Usual properties of a partially synchronous communication model apply. Under DPoS, liveness additionally depends on validators holding more than two thirds of the committee's voting power being online and cooperative; prolonged unavailability is disincentivized by withheld rewards and eviction (Sec.~\ref{sec:slashing}).
+
+\subsection{Long-Range Attacks}
+A fully unbonded former committee cannot be slashed retroactively. Three mechanisms bound the resulting long-range risk: the unbonding delay guarantees that stake is still bonded throughout the evidence window, so any equivocation visible while the committee is live is punishable; the Unicity Trust Base chain acts as a weak-subjectivity anchor---a verifier bootstrapped from a recent authentic Trust Base copy (Sec.~\ref{sec:rp-versions}) rejects alternative histories signed by retired keys; and the aggregate history proof (Sec.~\ref{sec:audit-checkpoint}) pins the certified history to the genesis configuration by cryptographic assumptions alone, with no reference to the validator set.
 
 \subsection{Data Availability}
 If a validator issues a RoundCertificationRequest call then it must not lose the block proposal (request data) until the block is finalized and committed to persistent storage.
@@ -1333,13 +1338,124 @@ Table~\ref{ta:when-epoch} provides a non-exhaustive list of configuration change
 
 Adding and removing of validators may incur changes in the respective quorum sizes. Communication layer changes are entirely handled by the communication layer. By ``adding or removing a validator'' we mean a change in actively participating validator identifier sets.
 
+\section{Staking and Delegated Proof of Stake}\label{sec:staking}
+
+\index{DPoS (delegated Proof of Stake)}\index{staking}
+Permissionless participation in the BFT Core is achieved through delegated Proof of Stake (DPoS), using the native token (ALPHA). Committee membership and voting power derive from bonded stake: any token holder may bond tokens, either as a \emph{validator candidate}\index{validator candidate}, operating a node, or as a \emph{delegator}\index{delegator}, assigning bonded tokens to a candidate of their choice. Safety violations are attributable and punished by partial destruction of the offender's bonded stake (Sec.~\ref{sec:slashing}). The mechanism is specified in this section; the economic parameters---emission schedule, commission bounds, minimum stakes, penalty fractions, epoch length---are governance-controlled constants (Sec.~\ref{sec:governance-dynamic}) and appear below only by name.
+
+DPoS applies to the BFT Core committee only. Aggregation layer shard validators remain assigned by the Governance Process (Validator Assignment Records, Table~\ref{ta:var}) and need no stake: their critical behavior---append-only extension of the certified state---is verified cryptographically in every round (Sec.~\ref{sec:consistency-proof}), so a misbehaving shard node is an operationally replaceable service problem, not a consensus-security one.
+
+The DPoS instantiation is a new version of the Unicity Trust Base and Unicity Seal in the sense of Sec.~\ref{sec:rp-versions}; proofs issued under earlier versions remain verifiable.
+
+\subsection{Staking Registry}\label{sec:staking-registry}
+
+The \emph{staking registry}\index{staking registry} $\mathcal{G}$ is part of the BFT Core's cumulative state (Sec.~\ref{sec:bft-core-state}). It records, per network $\alpha$:
+
+\begin{itemize}
+  \item \textbf{Candidates}: $\nu \mapsto (\mathsf{pk}_\nu, \text{service addresses}, \text{commission rate}, \predi_\mathsf{own}, \text{status})$, where $\mathsf{pk}_\nu$ is the consensus public key and $\predi_\mathsf{own}$ is the owner predicate authorizing the candidate's registry operations;
+  \item \textbf{Bonds}: bond identifier $\mapsto (\mathsf{op}, \nu, \predi_\mathsf{own}, v, \mathsf{status})$ with $\mathsf{op} \in \{\textsc{selfbond}, \textsc{delegate}\}$, amount $v$, and $\mathsf{status} \in \{\textsc{bonded}, \textsc{unbonding}(e_\mathsf{ready}), \textsc{withdrawable}, \textsc{withdrawn}, \textsc{slashed}\}$;
+  \item \textbf{Accruals}: unclaimed reward amounts per candidate and per delegator (Sec.~\ref{sec:rewards});
+  \item \textbf{Audit checkpoint}: the latest accepted full-history checkpoint $(n_\mathsf{cp}, \mathsf{pv}_\mathsf{cp})$ (Sec.~\ref{sec:audit-checkpoint});
+  \item \textbf{Evidence log}: digests of processed slashing evidence (replay protection, Sec.~\ref{sec:slashing});
+  \item \textbf{Parameters}: the governance-set constants of this section: committee size $c$, epoch length, minimum self-stake $b_\mathsf{min}$, unbonding delay $\Delta_\mathsf{ub}$, evidence window $W$, slashing fractions $f_\mathsf{slash}, f_\mathsf{rep}$, per-epoch emission $E_e$, checkpoint bounty.
+\end{itemize}
+
+At every epoch boundary the registry is committed as an authenticated dictionary (the indexed hash tree of Appendix~\ref{app:hashtrees} over canonically ordered entries); the commitment $H(\mathcal{G})$ is bound into the epoch's Unicity Trust Base entry through the state summary field (Table~\ref{ta:t-drc}, field 6). Inclusion certificates against this commitment serve as the claim witnesses of Sections~\ref{sec:bonding} and~\ref{sec:rewards}, and make the election of Sec.~\ref{sec:election} publicly recomputable.
+
+\subsubsection{Registry Transactions}
+
+The registry is updated by \emph{registry transactions}: $\mathsf{register}$, $\mathsf{bond}$, $\mathsf{unbond}$ (Sec.~\ref{sec:bonding}), $\mathsf{evidence}$ (Sec.~\ref{sec:slashing}), and $\mathsf{checkpoint}$ (Sec.~\ref{sec:audit-checkpoint}). Each transaction carries its own authorization (an owner-predicate signature, or embedded cryptographic evidence) and is validatable deterministically, so registry transactions are the ordinary BFT Core block proposal payload and their effects are part of the certified state transition; no new consensus features are needed.
+
+Registry transactions take effect at the epoch boundary following their commitment: bond and delegation amounts are read once per epoch by the election function.
+
+\subsection{Bonding, Unbonding, Withdrawal}\label{sec:bonding}
+
+The native token is an Execution Layer token: it ``lives'' off-chain and the state transitions of its spends are recorded in the Aggregation Layer like any other token. Bonding therefore follows a \emph{burn-to-bond / mint-to-withdraw} pattern: bonding irreversibly spends the token and credits the registry; withdrawal mints a fresh token authorized by the certified registry state. The registry is the single authority over bonded value, so slashing is a registry state change and no locked-token machinery is needed in the Execution Layer.
+
+\begin{description}
+  \item[Register.] A $\mathsf{register}$ transaction records a candidate: consensus public key $\mathsf{pk}_\nu$, service addresses, commission rate, and owner predicate $\predi_\mathsf{own}$. A candidate is electable only while its self-bond is at least $b_\mathsf{min}$.
+  \item[Bond.] The holder burns an ALPHA token whose final transfer is locked to the burn predicate over the hash of a \emph{bond declaration}
+  \[ \mathcal{D} = (\alpha, \mathsf{op}, \nu, \predi_\mathsf{own}), \qquad \mathsf{op} \in \{\textsc{selfbond}, \textsc{delegate}\}, \]
+  and submits a $\mathsf{bond}$ transaction carrying $\mathcal{D}$ together with the burn evidence: the certified burn transfer and its inclusion proof. Validators check that the token is valid per Execution Layer rules, that its final transfer's recipient predicate is exactly the burn predicate over $H(\mathcal{D})$, and that the inclusion proof verifies against a certified root of this network; the bonded amount $v$ is the burned token's ALPHA amount. Verifying a full token history is comparatively heavy, but bond transactions are rare and off the round-critical path.
+  \item[Unbond.] An $\mathsf{unbond}$ transaction, authorized by $\predi_\mathsf{own}$, marks a bond $\textsc{unbonding}(e_\mathsf{ready})$ with $e_\mathsf{ready}$ at least $\Delta_\mathsf{ub}$ epochs ahead. Unbonding stake carries no voting power in elections. Re-delegation is unbond followed by bond, subject to the same delay.
+  \item[Withdraw.] From epoch $e_\mathsf{ready}$ the bond is $\textsc{withdrawable}$: the owner mints an ALPHA token whose mint reason is a \emph{withdrawal claim}---an inclusion certificate of the withdrawable registry entry against the epoch's certified registry commitment, together with the certificate chain authenticating that commitment. The claim token's identifier is derived from the registry entry identifier, and the registry marks the entry $\textsc{withdrawn}$, so a claim cannot be replayed: a double claim is a double mint of the same identifier, rejected by the unicity mechanism of the Aggregation Layer. The wire format of claim mint reasons is specified together with the other mint reason types of the Execution Layer.
+\end{description}
+
+\begin{ruledef*}{Unbonding Delay} \\
+  $\Delta_\mathsf{ub} \ge 1$ full epoch $+\; W$, where $W$ is the evidence window of Sec.~\ref{sec:slashing}. This guarantees that misbehaving stake is still bonded when evidence against it is submitted.
+\end{ruledef*}
+
+\subsection{Validator Election}\label{sec:election}
+
+Committees serve for fixed epochs. At each epoch boundary, the committee of the next epoch is computed by the deterministic function $\textsc{elect}$ from the certified registry snapshot---a stake-weighted ranking in which delegators continuously vote with their stake and candidates compete on reliability, performance, and commission. Because $\textsc{elect}$ is a pure function of certified state, anyone can recompute and verify the committee of any epoch.
+
+\begin{algorithmic}
+  \Function{elect}{$\mathcal{G}, e$}
+    \State $C \gets \{\nu \mid \nu \text{ registered, not evicted, } \mathsf{selfbond}(\nu) \ge b_\mathsf{min}\}$
+    \ForAll{$\nu \in C$}
+      \State $b_\nu \gets \mathsf{selfbond}(\nu) + \sum \{\, v \mid \text{bonds } (\textsc{delegate}, \nu, \cdot, v, \textsc{bonded}) \,\}$
+    \EndFor
+    \State $V_e \gets$ the $c$ candidates of $C$ with the largest $b_\nu$ \Comment{ties broken by ascending $\nu$}
+    \State $k_e \gets \lfloor \frac{2}{3} \sum_{\nu \in V_e} b_\nu \rfloor + 1$ \Comment{minimum voting power of a quorum}
+    \State \Return $(\{(\nu, \mathsf{pk}_\nu, b_\nu) \mid \nu \in V_e\},\; k_e)$
+  \EndFunction
+\end{algorithmic}
+
+Voting power within the committee is proportional to bonded stake: wherever this specification requires a quorum of BFT Core validators---consensus votes, Unicity Seals, signing the next Trust Base entry---the requirement is that the aggregate voting power $\sum b_\nu$ of the distinct valid signers is at least $k_e$. Leader selection remains uniform over the committee (function $\textsc{leaderfunc}$).
+
+TODO: stake-weighted leader schedules
+
+TODO: prioritize stability --- up to 1/4 or so validators are changed at a time
+
+\subsection{Slashing and Evidence}\label{sec:slashing}
+
+\index{slashing}\index{equivocation}
+Safety violations of a BFT protocol are \emph{attributable}: producing two conflicting statements for the same slot requires the same key to sign two conflicting payloads, and the signature pair is self-contained cryptographic evidence, verifiable by anyone against the Unicity Trust Base alone. Two evidence classes are defined:
+
+\begin{description}
+  \item[E1 -- conflicting seals.] Two valid Unicity Seals for the same $(\alpha, n_r)$ with different unicity tree root hashes $r$, each carrying the offender's signature.
+  \item[E2 -- conflicting votes.] Two valid signed votes ($\mathsf{VoteMsg}$) by the same key for conflicting proposals in the same consensus round, per the rules of the atomic broadcast primitive (Sec.~\ref{sec:distributed-bft-core}).
+\end{description}
+
+An \emph{evidence record} is a tuple $\mathcal{E} = (\alpha, \mathsf{class}, e_\mathsf{off}, \nu, m_1, s_1, m_2, s_2, \predi_\mathsf{sub})$, where $e_\mathsf{off}$ is the offence epoch, $(m_1, s_1)$ and $(m_2, s_2)$ are the two conflicting signed payloads, and $\predi_\mathsf{sub}$ is the submitter's predicate for the reward. Validation is mechanical: both signatures verify under $\mathsf{pk}_\nu$ of the Trust Base entry of $e_\mathsf{off}$; the payloads conflict per the class rule; $e_\mathsf{off}$ is within the last $W$ epochs; and the evidence digest is not yet in the evidence log. Processing an accepted record:
+
+\begin{enumerate}
+  \item destroy the fraction $f_\mathsf{slash}$ of the offender's total bonded stake---self-bond \emph{and} delegations, pro rata; slashing delegations is what keeps delegators diligent in their choice of candidate;
+  \item accrue the fraction $f_\mathsf{rep}$ of the destroyed amount to the submitter (claimable per Sec.~\ref{sec:rewards});
+  \item evict the offender from candidacy; its remaining stake enters unbonding;
+  \item append the evidence digest to the evidence log.
+\end{enumerate}
+
+Prolonged unavailability is handled more mildly: withheld rewards for the epoch and non-election at the next boundary, with no stake destruction. The participation measure is derived from the signer sets of committed rounds, which the accountable multi-signatures provide at no extra cost.
+
+Certifying an inconsistent round is prevented \emph{before the fact} by consistency proof verification (Sec.~\ref{sec:consistency-proof}), and the audit path (Sec.~\ref{sec:audit-checkpoint}) makes any protocol deviations publicly provable. Equivocation is attributable based on E1 and E2 and is subject of economical security.
+
+\subsection{Rewards and Fees}\label{sec:rewards}
+
+Per epoch $e$, the reward pool is the protocol emission $E_e$ plus the fees accounted during the epoch (Statistical Records, Sec.~\ref{statistical-record}). At the epoch boundary the pool is distributed \emph{in the registry}, as part of the deterministic certified state transition: pro rata to the voting power $b_\nu$ across the committee, with each candidate retaining its declared commission from its delegators' share. Distribution creates accrual entries; nothing is transferred.
+
+An accrual is \emph{claimed} as an Execution Layer mint of ALPHA whose mint reason is a \emph{reward claim}: an inclusion certificate of the accrual entry against the certified registry commitment, plus the certificate chain authenticating that commitment. Claiming consumes the entry (the registry marks it claimed), and the claim token's identifier derives from the entry identifier, so double claims are rejected exactly as double spends. This is the same mint-by-proof pattern as stake withdrawal (Sec.~\ref{sec:bonding}); rewards compound only when the claimed tokens are bonded again.
+
+Emission schedule, commission bounds and fee pricing are governance parameters; this specification fixes only the formats and the verification rules.
+
+\subsection{Audit Checkpoints and Round Archive}\label{sec:audit-checkpoint}
+
+\index{round archive}\index{audit checkpoint}
+Beyond per-round certification, the entire operating history of the Aggregation Layer is periodically folded into a single fixed-size recursive proof (the \emph{aggregate history proof}), produced off the critical path by a permissionless prover. The BFT Core has two obligations towards this audit path.
+
+\emph{Round archive.} BFT Core validators, jointly with the shard validators, publish the per-round artifacts to a content-addressed public archive: for every shard with a changed root, the tuple $(h', h, \pi_{CP})$; the round's unicity tree root; the issued Unicity Certificates; the Unicity Trust Base entries at epoch changes; and the accepted checkpoints. Consistency proofs carry no user data. An artifact span may be pruned once it is covered by an accepted checkpoint plus a protocol-defined safety margin.
+
+\emph{Checkpoint acceptance.} The registry stores the latest accepted checkpoint $(n_\mathsf{cp}, \mathsf{pv}_\mathsf{cp})$, where $\mathsf{pv}$ are the public values of the aggregate proof (network identifier, genesis configuration digest, round number, global root, root-history commitment, and the prover's reward predicate). A $\mathsf{checkpoint}$ transaction carries a candidate $(\Pi, \mathsf{pv})$; validators accept it iff the proof verifies against the aggregation program's verifying-key digest---a versioned protocol constant distributed with the software release, like the pinned Trust Base---and $\mathsf{pv}$ continues the recorded checkpoint ($\mathsf{pv}.\alpha$ and the genesis digest match, $\mathsf{pv}.n > n_\mathsf{cp}$). Verification happens via the usual proposal validation flow.
+
+\emph{Bounty.} The first accepted checkpoint past each protocol-defined target round accrues a reward, funded from the same emission as validator rewards, to the reward predicate committed inside $\mathsf{pv}$. The prover role is permissionless and disposable: if no checkpoint is submitted, audit latency grows, but no safety property degrades.
+
 \section{BFT Core Epoch Change}
 
 In order to facilitate a dynamic, responsive BFT Core, it is necessary to adjust its parameters on the fly. In particular, it is necessary to add new validators and retire some existing ones to maintain a healthy validator set, due to changing requirements and operating conditions.
 
-The configuration can be changed once per epoch. The source information comes from an Governance Process whose output is change records called Validator Assignment Records.
+The configuration can be changed once per epoch. For the BFT Core committee, the change record is not decreed by an external process: it is computed by the deterministic election function $\textsc{elect}$ (Sec.~\ref{sec:election}) from the certified staking registry snapshot at the epoch boundary. Every validator recomputes the record; a proposal whose Change Request differs from the recomputed record is invalid. (Validator Assignment Records produced by the Governance Process, Table~\ref{ta:var}, remain the change-record source for aggregation layer shards.)
 
-Any BFT Core protocol leader can initiate an epoch change, given it has received the change record. The procedure works as follows:
+Any BFT Core protocol leader can initiate an epoch change, once the epoch switching condition holds. The procedure works as follows:
 
 \begin{enumerate}
   \item The leader produces a proposal where the usual payload is replaced by the Change Request justifying the increment of Epoch (Table~\ref{ta:rc-ecr});
@@ -1350,11 +1466,11 @@ Any BFT Core protocol leader can initiate an epoch change, given it has received
 \begin{table}[!htbp]
 	\begin{center}
 		\caption{BFT Core Epoch Change Request.}\label{ta:rc-ecr}
-		\begin{tabular}{|p{0.5cm}|p{8cm}|p{1.7cm}|p{3.5cm}|}\hline
+		\begin{tabular}{|p{0.5cm}|p{8cm}|p{1.9cm}|p{3.5cm}|}\hline
 			No & Field                          & Notation  & Type                  \\\hline\hline
 			1. & Epoch number                   & $e$       & $\uint{64}$           \\\hline
-			2. & Validator identifiers and stakes& $\{\nu, b_\nu\}_e$ & $\{ (\bytestr, \uint{64}) \}$  \\\hline
-			3. & Quorum size (Voting power)     & $k_e$     & $\uint{64}$           \\\hline
+			2. & Validator identifiers, public keys and voting powers & $\{\nu, \mathsf{pk}_\nu, b_\nu\}_e$ & $\{ (\bytestr, \bytestr, \uint{64}) \}$  \\\hline
+			3. & Quorum condition (min.\ voting power) & $k_e$     & $\uint{64}$           \\\hline
 			4. & Hash of state summary          & $r$       & $\hashtype$          \\\hline
 			5. & Hash of Change Record         & $h_{\mathsf{cr}}$ & $\hashtype$ \\\hline
 			6. & Hash of the previous record    & $h_{e-1}$ & $\hashtype$          \\\hline
@@ -1363,7 +1479,7 @@ Any BFT Core protocol leader can initiate an epoch change, given it has received
 	\end{center}
 \end{table}
 
-Fields 1, 2, 3 are copied from the Validator Assignment Records. The change record is a ``justification'': it is used as helper data for validators, but not included into the finalized record and resulting entry in the Unicity Trust Base. An implementation may choose to rely on alternative channels for distributing change records.
+Fields 1, 2, 3 are the output of the election function $\textsc{elect}$ (Sec.~\ref{sec:election}). The change record is a ``justification''---for the BFT Core, the registry snapshot underlying the election: it is used as helper data for validators, but not included into the finalized record and resulting entry in the Unicity Trust Base. An implementation may choose to rely on alternative channels for distributing change records, since every validator can recompute the election from certified state.
 
 BFT Core's epoch change updates the Unicity Trust Base. On record-oriented Unicity Trust Base, the new record becomes part of Root Validator's state (see section~\ref{sec:ddrc}); and the new record gets propagated to Shard validators together with the next Unicity Certificate, as an extra field of the UCResp message.
 
@@ -1531,8 +1647,10 @@ If there is a double assignment before leaving then the validator must continue 
 
 \subsection{BFT Core Node, joining}
 
+A node becomes a BFT Core committee member by being elected (Sec.~\ref{sec:election}): the operator registers a candidacy and attracts sufficient bonded stake, and the node learns the outcome from the committed epoch-change record of the epoch that includes it.
+
 \begin{shaded}
-  On receiving a change record:
+  On learning of an epoch change record that includes the node:
   \begin{enumerate}[nosep]
     \item Obtain the current BFT Core configuration via the GetUnicityTrustBase RPC call
     \item Validate the updated Unicity Trust Base
@@ -1552,7 +1670,7 @@ If there is a double assignment before leaving then the validator must continue 
 
 A BFT Core node may leave the active validator set after performing a successful epoch change, where this node is not a member of the new validator set anymore. The node is responsible for successful hand-over: by making its state available to the new joining nodes briefly after the beginning of the next epoch, and offering the Unicity Trust Base distribution service without limitations to all current and near-future validators.
 
-A BFT Core node (more specifically, the operator of the node) can initiate the leaving process by sending a specific ``unassign transaction'' to the Governance Body. Processing may take arbitrary time, and the unassignment may happen for other reasons as well. BFT Core validators are strongly encouraged to not drop off without executing the unassignment process.
+A BFT Core node (more specifically, the operator of the node) initiates the leaving process through the staking registry: unbonding its self-stake (Sec.~\ref{sec:bonding}) removes the candidate from the next election, and the stake becomes withdrawable only after the unbonding delay. A node may also drop out of the committee involuntarily, by being outranked at an election or evicted (Sec.~\ref{sec:slashing}). BFT Core validators are strongly encouraged not to drop off without executing the hand-over.
 
 \begin{ruledef*}
   BFT Core Node must keep running until the next epoch's Unicity Trust Base entry gets committed.
@@ -1702,13 +1820,13 @@ The Unicity Trust Base Record is defined by Table~\ref{ta:t-drc}.
 \begin{table}[!htbp]
 	\begin{center}
 		\caption{Unicity Trust Base Record of Dynamic Distributed BFT Core.}\label{ta:t-drc}
-		\begin{tabular}{|p{0.5cm}|p{8cm}|p{1.7cm}|p{3.5cm}|}\hline
+		\begin{tabular}{|p{0.5cm}|p{8cm}|p{1.9cm}|p{3.5cm}|}\hline
 			No & Field                           & Notation       & Type                       \\\hline\hline
 			1. & Network instance identifier     & $\alpha$       & $\mathbb{A}$ (invariant)   \\\hline
 			2. & Epoch number                    & $e$            & $\uint{64}$                \\\hline
 			3. & Epoch starting round            & $n_e$          & $\uint{64}$                \\\hline
-			4. & Validator identifiers and stakes& $\{\nu, b_\nu\}_e$& $\{ (\bytestr, \uint{64}) \}$\\\hline
-			5. & Quorum size (voting power)      & $k_e$          & $\uint{64}$                \\\hline
+			4. & Validator identifiers, public keys and voting powers & $\{\nu, \mathsf{pk}_\nu, b_\nu\}_e$& $\{ (\bytestr, \bytestr, \uint{64}) \}$\\\hline
+			5. & Quorum condition (min.\ voting power) & $k_e$          & $\uint{64}$                \\\hline
 			6. & Hash of state summary           & $r$            &  $\hashtype$              \\\hline
 			7. & Hash of related change record   & $h_{\mathsf{cr}}$& $\hashtype$             \\\hline
 			8. & Hash of previous record         & $h_{e-1}$      & $\hashtype$               \\\hline
@@ -1717,13 +1835,36 @@ The Unicity Trust Base Record is defined by Table~\ref{ta:t-drc}.
 	\end{center}
 \end{table}
 
-Fields 1, 2, 4 and 5 are copied from the referenced Governance Record. Initially, the stakes are fixed to $1$. When appropriate orchestrating processes implementing (delegated) Proof of Stake mechanisms are in place, the stakes reflect the epoch's locked stake amounts of each particular validator.
+Fields 1--5 are the output of the election function (Sec.~\ref{sec:election}): $b_\nu$ is validator $\nu$'s voting power---its bonded self-stake plus delegations at the epoch boundary---and $k_e = \lfloor \frac{2}{3} \sum_\nu b_\nu \rfloor + 1$ is the minimum aggregate voting power of a valid quorum. The state summary $r$ commits the BFT Core cumulative state at the epoch boundary, including the staking registry commitment $H(\mathcal{G})$ (Sec.~\ref{sec:staking-registry}); this is what makes the election publicly recomputable and the registry claims of Sections~\ref{sec:bonding} and~\ref{sec:rewards} provable.
 
-Unicity Trust Base is a chain of records defined by Table~\ref{ta:t-drc}.
+Unicity Trust Base is a chain of records defined by Table~\ref{ta:t-drc}. Signature $s_{e-1}$ is a multi-party signature by a quorum---in the stake-weighted sense below---of the previous epoch's validators; in the genesis record, the previous-record hash and the signature are zero values (Sec.~\ref{sec:rp-versions}).
 
-Unicity Seal is a record signed by the validator set of the respective epoch as defined in \ref{ch:m-rc}, with an additional requirement of using the required multi-party signature scheme.
+Unicity Seal is a record signed by the validator set of the respective epoch as defined in \ref{ch:m-rc}, using the required multi-party signature scheme. Seal verification generalizes the signature-counting rule of the static case to voting powers: the aggregate voting power of the distinct valid signers must meet the quorum condition.
 
-The verification functions are as defined in \ref{ch:m-rc}, where the signatures are interpreted in broader sense as multi-party signatures, created by respective quorums of validators.
+\begin{algorithmic}[0]
+  \Function{VerifyUnicitySeal}{$r, C^\mathsf{r}, \mathcal{T}$}
+    \State $T \gets \mathcal{T}[C^\mathsf{r}.e]$
+    \If{$T = \bot$}
+      \State \Return \textbf{error}  \Comment{No record in trust base for the epoch}
+    \EndIf
+    \If{$T.\alpha \ne C^\mathsf{r}.\alpha \lor r \ne C^\mathsf{r}.r$}
+      \State \Return $0$
+    \EndIf
+    \If{$\lnot ( \forall\ m, n \in 1 \,.\,.\, \lvert C^\mathsf{r}.s \rvert,\ m \ne n \colon C^\mathsf{r}.s[m].\nu \ne C^\mathsf{r}.s[n].\nu )$}
+      \State \Return 0 \Comment{Duplicate signers}
+    \EndIf
+    \State $w \gets 0$ \Comment{Aggregate voting power of valid signers}
+    \For{ $(\nu, s) \in C^\mathsf{r}.s$ }
+      \If{$\nu \notin T \lor \mathsf{Ver}_{T.\mathsf{pk}_\nu}(C^\mathsf{r}, s) = 0$}\Comment{Calculated over all fields except signature}
+        \State \Return 0 \Comment{Unknown signer or invalid signature}
+      \EndIf
+      \State $w \gets w + T.b_\nu$
+    \EndFor
+    \State \Return $(w \ge T.k_e)$ \Comment{Quorum condition}
+  \EndFunction
+\end{algorithmic}
+
+$\mathsf{VerifyUnicityTrustBase}$ is as defined in \ref{ch:m-rc}, with each chain step's signature interpreted as a multi-party signature verified by the same weighted rule against the \emph{previous} entry's validator set and quorum condition.
 
 
 \subsection{Signature Aggregation}

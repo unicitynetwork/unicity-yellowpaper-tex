@@ -61,6 +61,8 @@ The \emph{consistency proof}\index{consistency proof} is a data structure that a
 
 \textbf{EVM} ($\mathsf{st} = 8$) -- Enshrined EVM runtime
 
+The identifier $\mathsf{st} = 2$ was used by a retired partition type and remains reserved; it must not be reassigned.
+
 \subsection{Partition Description Record}
 
 A \emph{partition description record}\index{$\mathcal{CD}$ (partition description)}\index{partition description} is a tuple $\mathcal{CD} = (\alpha, \beta, \mathsf{st}, \mathcal{SD}, \mathcal{SH}) \in \mathbb{CD}$, where:
@@ -657,9 +659,9 @@ Unicity Tree is an indexed Merkle tree that aggregates the state of all partitio
 	\State \Return $\Call{\textsc{index\_tree\_root}}{(C_1, x_1), (C_2, x_2), \ldots, (C_n, x_n)}$ \Comment{Sec.~\ref{sec:index-tree-root}}
 \end{algorithmic}
 
-\section{State of the BFT Core}
+\section{State of the BFT Core}\label{sec:bft-core-state}
 
-\emph{State of the BFT Core}\index{BFT Core!BFT Core state} is a tuple $(\alpha, n, e, r_-, \mathcal{T}, \mathcal{C}, \mathcal{CD}, \mathcal{SI})$, where:
+\emph{State of the BFT Core}\index{BFT Core!BFT Core state} is a tuple $(\alpha, n, e, r_-, \mathcal{T}, \mathcal{C}, \mathcal{CD}, \mathcal{SI}, \mathcal{G})$, where:
 \begin{enumerate}
 	\item $\alpha$ -- network identifier of type $\mathbb{A}$
 	\item $n$ -- BFT Core's round number of type $\uint{64}$
@@ -669,6 +671,7 @@ Unicity Tree is an indexed Merkle tree that aggregates the state of all partitio
 	\item $\mathcal{C}$ -- set of partition identifiers, with elements of type $\mathbb{C}$
 	\item $\mathcal{CD}$ -- partition descriptions of type $\mathbb{CD}[\mathbb{C}]$
 	\item $\mathcal{SI}$ -- shard info of type $\mathbb{SI}[\mathbb{C},\{0,1\}^\ast]$
+	\item $\mathcal{G}$ -- staking registry (Sec.~\ref{sec:staking-registry})
 \end{enumerate}
 
 Epoch number\index{$e$ (epoch number)} can be interpreted as the version number of some shard's or BFT Core's configuration. It is used by supporting layers like orchestration and consensus. On static configuration, the epoch is $0$.
