@@ -740,15 +740,21 @@ When receiving a ZK-compressed consistency proof, the verifier must:
 
 \section{Radix Sparse Merkle Sum Trees}\label{app:rsmst}
 
-A \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST) is the radix sparse Merkle tree of Appendix~\ref{app:rsmt} with a positive amount at every leaf and an accumulated sum at every internal node. It is used for split allocation roots (Sec.~\ref{sec:token-splitting}). The tree deliberately reuses the RSMT key space, byte-order-preserving bit numbering, canonical path-compressed structure and inclusion-walk logic. Its node hashes commit sibling sums instead of regions: an RSMST is built once by the token owner and verified leaf by leaf against an externally authenticated root and total sum, so it needs no consistency proofs and no region commitments.
+A \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST) is a leaf-anchored, path-compressed binary Merkle sum tree over the 256-bit key space: every leaf carries a positive amount, and every internal node commits the hashes \emph{and} the sums of its two subtrees.
+
+The use-cases (e.g., fungible token splitting) are one-shot: tree is built once and never updated.
+
+The RSMST shares with the RSMT (Appendix~\ref{app:rsmt}) the following conventions: the 256-bit key space and byte-order-preserving LSB-in-byte bit numbering, leaf anchoring by the full key, the absolute bifurcation-depth commitment, and the canonical construction rule (every junction sits at the first bit position at which its descendant keys diverge; single-child chains are compressed away). Differences: RSMST has a single version and a single, per-leaf verification pattern: node hashes commit child sums instead of regions, the inclusion proof format is different, and none of the RSMT's version-transition logic (consistency proofs, openings, non-inclusion certificates) applies. Precise properties are given in Sec.~\ref{sec:rsmst-properties}.
 
 \subsection{Tree Structure}
 
-Keys are 32-byte strings. For token splitting the key is the output token identifier $\mathsf{id}_j$, the leaf data is the 32-byte output commitment $d_j$, and the leaf amount is the positive asset allocation $v_j(\mathsf{aid})$.
+Keys are 32-byte strings. Concretely, on token splitting use-case, the key is the output token identifier $\mathsf{id}_j$, the leaf data is the 32-byte output commitment $d_j$, and the leaf amount is the positive asset allocation $v_j(\mathsf{aid})$.
 
-An RSMST leaf carries $(k,d,v)$ where $k,d\in\bytes{32}$ and $1\leq v<2^{256}$. An internal node carries an absolute bifurcation depth $\delta\in\{0,\ldots,255\}$ and two child pairs $(h_L,v_L)$ and $(h_R,v_R)$; its sum is $v_L+v_R$. Construction MUST use the same canonical path-compressed binary trie as RSMT, MUST reject duplicate keys and zero-valued leaves, and MUST reject any internal sum overflow. A split allocation tree is never empty.
+An RSMST leaf carries $(k,d,v)$ where $k,d\in\bytes{32}$ and $1\leq v<2^{256}$. Notation: $d$ denotes the 32-byte leaf \emph{data} (the output commitment $d_j$ above), matching the token-split notation; bifurcation depths are always written $\delta$. An internal node carries an absolute bifurcation depth $\delta\in\{0,\ldots,255\}$ and two child pairs $(h_L,v_L)$ and $(h_R,v_R)$; its sum is $v_L+v_R$. A split allocation tree is never empty.
 
-For a tree $\mathcal{S}$, $\Call{RSMSTRoot}{\mathcal{S}}$ returns the root hash and root sum. If $\mathcal{S}$ has one leaf, the root hash is that leaf hash and the root sum is that leaf amount. Otherwise the root is the hash and sum of the top internal node.
+\textbf{Construction requirements}: the builder MUST use the canonical path-compressed trie shape defined above, MUST reject duplicate keys and zero-valued leaves, and MUST reject any internal sum overflow. Canonical shape makes the root a deterministic function of the allocation set, so any party holding the allocations can reproduce and cross-check the manifest roots. These requirements are not observable by the per-leaf verifier, and---as stated in Sec.~\ref{sec:rsmst-properties}---the verifier's security guarantees do not depend on them.
+
+For a tree $\mathcal{S}$, $\Call{RSMSTRoot}{\mathcal{S}}$ returns the root hash and root sum. If $\mathcal{S}$ has one leaf, the root hash is that leaf hash and the root sum is that leaf amount. Otherwise, the  hash and sum of the top internal node are returned.
 
 \subsection{Hash Computation}
 
@@ -817,4 +823,18 @@ where $0\leq n\leq256$, $\delta_i\in\{0,\ldots,255\}$ is the sibling's parent bi
 	\EndFunction
 \end{algorithmic}
 
-The verifier checks value conservation by comparing $v_\mathsf{root}$ to the authenticated source amount for the same asset. The root hash alone is not sufficient: sibling sums are verification-critical proof data because they are committed by every internal node hash.
+The caller checks value conservation by comparing the reconstructed root sum $v_\mathsf{root}$ to the authenticated source amount for the same asset (Sec.~\ref{sec:token-splitting}). The root hash alone is not sufficient for this: sibling sums are verification-critical proof data because they are committed by every internal node hash.
+
+\subsection{Properties}\label{sec:rsmst-properties}
+
+The trust setting is asymmetric: the previous token owner (the splitter) who constructed the tree is untrusted; each output recipient verifies only its own leaf against the manifest's root hash and never sees the tree. Assuming collision resistance of the hash function, $\textsc{rsmst\_verify\_inclusion}$ enforces the following even against an adversarially constructed root:
+
+\begin{itemize}
+	\item \emph{Conservation (no inflation)}: for any set of verifying proofs for pairwise distinct keys against the same root hash, the leaf amounts sum to at most the reconstructed root sum. Every internal node hash commits both children's (hash, sum) pairs, so hash equality forces each chain's running sum to equal the corresponding committed subtree sum---every committed sum is a hard limit for everything provable below it. Chains for distinct keys are forced to coincide from the root down to the first junction whose depth is a bit position where the keys differ, and there they descend into the two disjoint child limits. Strict positivity of leaf amounts and sibling sums and the overflow checks close the argument.
+	\item \emph{Per-key uniqueness}: for a given root hash and key, at most one (data, amount) pair is provable. The descent direction at each junction is recomputed from the key's bits, depths are hash-committed, domain separation distinguishes leaf from node preimages, and the leaf hash commits the full key, so the verifying chain for a key is unique.
+	\item \emph{Root-sum binding}: all verifying proofs against the same root hash reconstruct the same root sum. The conservation comparison against the source amount is therefore consistent across independent verifiers, and the root sum does not need to travel in the manifest.
+\end{itemize}
+
+These guarantees do not rely on the tree being canonical or duplicate-free. A malformed tree can only strand sum budget in sibling entries that correspond to no provable leaf, or waste it on duplicate keys---reducing what can be minted, not inflating it. Canonical construction is required of the splitter for determinism and reproducibility only.
+
+\textbf{Non-goals.} No non-inclusion certificates: without region commitments, the absence of a key is not provable. No consistency proofs: the tree has exactly one version, so there is no state transition to validate. Coherent placement matters only when new leaves must be positioned relative to preserved, partially opaque pre-state.
