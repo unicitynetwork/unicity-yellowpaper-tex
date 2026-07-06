@@ -588,14 +588,14 @@ The batch and proof use the tree traversal order defined in Section~\ref{app:rsm
 The proof $\pi$ is a flat stream of opcodes emitted from a post-order traversal of the touched part of the post-state tree, in the order defined above:
 
 \begin{center}
-\begin{tabular}{clcl}
-\textbf{Opcode} & \textbf{Semantics} & \textbf{Wire encoding} & \textbf{Size} \\
+\begin{tabular}{lll}
+\textbf{Opcode} & \textbf{Semantics} & \textbf{Wire encoding}  \\
 \hline
-$\mathtt{S}(h)$ & Preserved subtree, opaque & $\mathtt{0x00} \,\|\, h[32]$ & 33 bytes \\
-$\mathtt{L}$ & New leaf (consumed from sorted batch) & $\mathtt{0x01}$ & 1 byte \\
-$\mathtt{N}(d)$ & Junction at bifurcation depth $d$ & $\mathtt{0x02} \,\|\, d[1]$ & 2 bytes \\
-$\mathtt{O}(d, p, h_L, h_R)$ & Preserved junction, opened one level & $\mathtt{0x03} \,\|\, d[1] \,\|\, \langle p \rangle[32] \,\|\, h_L[32] \,\|\, h_R[32]$ & 98 bytes \\
-$\mathtt{O_L}(k, v)$ & Preserved leaf, opened & $\mathtt{0x04} \,\|\, k[32] \,\|\, v$ & $33 + \len{v}$ bytes \\
+$\mathtt{S}(h)$ & Preserved subtree, opaque & $\mathtt{0x00} \,\|\, h[32]$  \\
+$\mathtt{L}$ & New leaf (consumed from sorted batch) & $\mathtt{0x01}$  \\
+$\mathtt{N}(d)$ & Junction at bifurcation depth $d$ & $\mathtt{0x02} \,\|\, d[1]$ \\
+$\mathtt{O}(d, p, h_L, h_R)$ & Preserved junction, opened one level & $\mathtt{0x03} \,\|\, d[1] \,\|\, \langle p \rangle[32] \,\|\, h_L[32] \,\|\, h_R[32]$  \\
+$\mathtt{O_L}(k, v)$ & Preserved leaf, opened & $\mathtt{0x04} \,\|\, k[32] \,\|\, v$  \\
 \end{tabular}
 \end{center}
 
