@@ -474,7 +474,7 @@ $\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function 
 \subsection{Consistency Proof}\label{sec:consistency-proof}
 
 \index{consistency proof}\index{$\pi_{CP}$ (consistency proof)}
-A \emph{Consistency Proof} (in earlier documents also called a \emph{non-deletion proof}; we use \emph{consistency proof} throughout) is a cryptographic construction that validates one round of operation of the append-only SMT maintained by aggregation layer nodes. It proves that the state transition from previous SMT root hash $h'$ to current SMT root hash $h$ was performed correctly: only new leaves were added, each at the position determined by its own key, and no pre-existing leaves were removed or modified. For a round with inserted batch
+A \emph{Consistency Proof} (in earlier documents also called a \emph{non-deletion proof}; we use \emph{consistency proof} throughout) is a cryptographic construction that validates one round of operation of the append-only SMT maintained by aggregation layer nodes. It proves that the state transition from previous SMT root hash $h'$ to current SMT root hash $h$ was performed correctly: only new leaves were added, each at the position determined by its key, and no pre-existing leaves were removed or modified. For a round with inserted batch
 \[
 B = \langle (\mathsf{sid}_1, h_{\mathsf{tx},1}), \ldots, (\mathsf{sid}_j, h_{\mathsf{tx},j}) \rangle,
 \]
@@ -520,7 +520,7 @@ The proof system must enforce \emph{append-only consistency}\index{append-only c
 		\forall\, \mathsf{sid} \in \bytes{32}\colon\; M_0(\mathsf{sid}) \ne \bot \Rightarrow M_1(\mathsf{sid}) = M_0(\mathsf{sid}).
 	\]
 	That is, no previously committed SMT leaf can be deleted or modified.
-	\item \textbf{Coherent placement}: every leaf inserted in the round is placed at the position determined by its own key; together with the above, $M_1$ extends $M_0$ by exactly the bindings of $B$, whose keys must be fresh---no accepting proof exists for a batch that re-records an already-present key.
+	\item \textbf{Coherent placement}: every leaf inserted in the round is placed at the position determined by its key; together with the above, $M_1$ extends $M_0$ by exactly the bindings of $B$, whose keys must be fresh---no accepting proof exists for a batch that re-records an already-present key.
 \end{itemize}
 
 Append-only consistency is required to avoid potential double-spending with the help of malicious operators. Coherent placement cannot be omitted: a single misplaced junction above a preserved subtree makes every binding in that subtree unprovable under the new root, and allows the freed key positions to be re-recorded with different values in later rounds---an equivocation that passes every purely structural check. Applied round by round from the empty genesis tree, append-only consistency also guarantees that every certified tree is the unique canonical tree of its key set.

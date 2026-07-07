@@ -256,7 +256,7 @@ For a key $k$ and a depth $d$, we write $k[d]$ for the bit of $k$ at position $d
 \begin{itemize}
 	\item \textbf{Empty tree}: The empty tree has root $\bot$.
 	\item \textbf{Leaf node}: A leaf stores a pair $(k, v)$ with $k \in \bytes{32}$ and $v \in \bytestr$. The full key $k$ anchors the leaf position in the tree. A leaf's region is its full key and its depth is $256$.
-	\item \textbf{Internal node}: An internal node (\emph{junction}) stores a tuple $(d, p, c_0, c_1)$, where $d \in \{0, \ldots, 255\}$ is the bifurcation depth, $p \in \bits{d}$ is the \emph{region}: the common value $k[0..d)$ of all descendant keys $k$, and $c_0$ and $c_1$ are the left and right child subtrees. A search key $k$ may descend through the node if and only if $k[0..d) = p$; the next bit $k[d]$ then selects child $c_0$ for $0$ and child $c_1$ for $1$.
+	\item \textbf{Internal node}: An internal node (\emph{junction}) stores a tuple $(d, p, c_0, c_1)$, where $d \in \{0, \ldots, 255\}$ is the bifurcation depth, $p \in \bits{d}$ is the \emph{region}: the common prefix $k[0..d)$ of all descendant keys $k$, and $c_0$ and $c_1$ are the left and right child subtrees. A search key $k$ may descend through the node if and only if $k[0..d) = p$; the next bit $k[d]$ then selects child $c_0$ for $0$ and child $c_1$ for $1$.
 \end{itemize}
 
 The region both routes lookups and is part of the Merkle commitment: the commitment is determined by the leaf contents, the child hashes, the absolute bifurcation depths and the regions.
@@ -575,7 +575,7 @@ Note that the terminal leaf opening exposes the neighbouring leaf's value $v_\el
 A \emph{consistency proof}\index{consistency proof} demonstrates that a batch $B$ of new key-value pairs was correctly inserted into a tree with root $\rho_0$, producing a new tree with root $\rho_1$. An accepting proof establishes \emph{append-only consistency}\index{append-only consistency}, which combines two properties:
 \begin{itemize}
 	\item \emph{prior-state preservation}: no pre-existing leaf was removed or modified; and
-	\item \emph{coherent placement}: every new leaf is placed at the position determined by its own key.
+	\item \emph{coherent placement}: every new leaf is placed at the position determined by its key.
 \end{itemize}
 
 
