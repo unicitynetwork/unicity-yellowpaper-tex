@@ -343,7 +343,7 @@ Pending Block Proposal ($pr$) must be stored in durable way before Certification
     \EndFunction
 
     \Function{do\_cert\_req\_against}{$sr$}  \Comment{Voting against the proposal}
-      \State $h' \gets luc.IR.h$, $n \gets lte.n$, $e \gets lte.e$, $t \gets luc.IR.C^\mathsf{r}.t$
+      \State $h' \gets luc.IR.h$, $n \gets lte.n$, $e \gets lte.e$, $t \gets luc.C^\mathsf{r}.t$
       \State $h \gets \zerohash$
       \State $IR \gets (n, e, h', h, t)$
       \State $\ell_B \gets 0$, $\ell_S \gets 0$ \Comment{No additions when voting against}
@@ -962,7 +962,7 @@ See Algorithm~\ref{alg:P1-req}.
 \begin{algorithm}
   \caption{CR Message Handling.}\label{alg:P1-req}
   \begin{algorithmic}[0]
-    \Message[CR]{$m=(\alpha, \beta, \sigma, \nu, IR, \ell_B, \ell_S; s; [\pi_{CP}]); context$}
+    \Message[CR]{$m=\langle \alpha, \beta, \sigma, \nu; IR, \ell_B, \ell_S, [\pi_{CP}]; s \rangle; context$}
       \State ensure(\Call{valid}{$m$})
       \State ensure($m.\alpha = \alpha$)                           \Comment{Right network id}
       \State ensure($\beta \in \mathcal{C}$)                       \Comment{Valid part. id}
@@ -972,7 +972,7 @@ See Algorithm~\ref{alg:P1-req}.
       \If{$IR.n \ne \mathcal{SI}[\beta, \sigma].n+1$            \Comment{Round is behind/ahead}
         \State $\;\;\lor\; IR.e \ne \mathcal{SI}[\beta, \sigma].e$  \Comment{Epoch can be incremented by RP only}
         \State $\;\;\lor\; IR.h' \ne \mathcal{SI}[\beta, \sigma].h$ \Comment{Extending of unknown state}
-        \State $\;\;\lor\; \lnot\mathcal{CD}[\beta].\gamma_{CP}(IR.h', IR.h, \ell_B, \pi_{CP})$  \Comment{Consistency proof verification}
+        \State $\;\;\lor\; \lnot\mathcal{CD}[\beta].\gamma_{CP}(IR, \pi_{CP})$  \Comment{Consistency proof verification (Sec.~\ref{sec:consistency-proof})}
         \State $\;\;\lor\; IR.t \ne \mathcal{SI}[\beta, \sigma].UC_-.C^\mathsf{r}.t$}   \Comment{Time not set as expected}
         \State \Call{send\_CReS}{$context; \beta, \sigma, \mathcal{SI}[\beta, \sigma].UC_-, \Call{get\_te}{\mathcal{SI}[\beta, \sigma]}$}
         \State \Return
@@ -1337,7 +1337,7 @@ Adding and removing of validators may incur changes in the respective quorum siz
 
 In order to facilitate a dynamic, responsive BFT Core, it is necessary to adjust its parameters on the fly. In particular, it is necessary to add new validators and retire some existing ones to maintain a healthy validator set, due to changing requirements and operating conditions.
 
-The configuration can be changed once per epoch. The source information comes from an Governance Process whose output is change records called Validator Assignment Records (Table~\ref{ta:var}).
+The configuration can be changed once per epoch. The source information comes from an Governance Process whose output is change records called Validator Assignment Records.
 
 Any BFT Core protocol leader can initiate an epoch change, given it has received the change record. The procedure works as follows:
 
@@ -1358,7 +1358,7 @@ Any BFT Core protocol leader can initiate an epoch change, given it has received
 			4. & Hash of state summary          & $r$       & $\hashtype$          \\\hline
 			5. & Hash of Change Record         & $h_{\mathsf{cr}}$ & $\hashtype$ \\\hline
 			6. & Hash of the previous record    & $h_{e-1}$ & $\hashtype$          \\\hline
-			7. & (attached) Change Record      &           & (Table~\ref{ta:var})  \\\hline
+			7. & (attached) Change Record      &           &   \\\hline
 		\end{tabular}
 	\end{center}
 \end{table}

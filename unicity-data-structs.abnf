@@ -81,7 +81,8 @@
 ; 4. AGGREGATION LAYER
 
 ; The aggregation layer uses a Radix Sparse Merkle Tree (RSMT, Appendix~\ref{app:rsmt}).
-; Leaf-anchored: hashes commit to full 256-bit key and bifurcation depth.
+; Leaf-anchored: leaf hashes commit to the full 256-bit key; junction hashes
+; commit to the bifurcation depth $d$ and the region $p$ (key prefix, packed).
 ; Depth $d$ addresses bit $d \bmod 8$ of byte $\lfloor d/8 \rfloor$.
 ; Byte order is preserved; bits are read least-significant first within each byte.
 
@@ -92,13 +93,15 @@
   InclusionCertificate = Bitmap *SiblingHash  ;~$C^\mathsf{inc} = (\mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
       ;~bitmap: 32 bytes (256 bits); byte $\lfloor d/8 \rfloor$, bit $d \bmod 8$ set iff sibling needed at depth $d$
       ;~siblings: $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, root-to-leaf order
+      ;~regions not transmitted: verifier derives $k[0..d)$ from the queried key
       ;~Wire: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
 
-  NonInclusionCertificate = Key Hash Bitmap *SiblingHash  ;~$C^\mathsf{exc} = (k_\ell, h_\ell, \mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
-      ;~$k_\ell$: key of neighbouring leaf
-      ;~$h_\ell$: hash of neighbouring leaf ($= \textsc{rsmt\_leaf\_hash}(k_\ell, v_\ell)$)
-      ;~bitmap, siblings: same semantics as InclusionCertificate
-      ;~Wire: $k_\ell[32] \,\|\, h_\ell[32] \,\|\, \mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
+  NonInclusionCertificate = *OpeningJunction *1OpeningLeaf  ;~$C^\mathsf{exc} = \langle e_1, \ldots, e_\ell \rangle$
+      ;~chain of one-level openings along the key-directed descent, root first
+      ;~terminal: junction whose region is not a prefix of the key, or foreign leaf
+      ;~empty chain: valid iff the tree is empty
+  OpeningLeaf = %x00 Key Bytes  ;~$(k_\ell, v_\ell)$: opened leaf, $33 + |v_\ell|$ bytes; last element only
+  OpeningJunction = %x01 Depth Region Hash Hash  ;~$(d, p, h_L, h_R)$: opened junction, 98 bytes
 
   InclusionProof = StateIdentifier LeafData InclusionCertificate UC  ;~$\pi^\mathsf{inc} = (\mathsf{sid}, h_{\mathsf{tx}}, C^\mathsf{inc}, UC)$
       ;~Proves that $\mathsf{sid}$ EXISTS in the SMT with value $h_{\mathsf{tx}}$
@@ -107,12 +110,16 @@
       ;~Proves that a queried $\mathsf{sid}$ does NOT exist in the SMT
 
   ConsistencyProof = *ConsistencyProofOp | ZKProof
-      ;~$\pi_{\mathsf{CP}}$ -- proves correct append-only SMT manipulation
-  ConsistencyProofOp = OpS | OpL | OpN  ;~post-order flat opcode stream
-  OpS = %x00 Hash    ;~S(h): unchanged subtree, 33 bytes
+      ;~$\pi_{\mathsf{CP}}$ -- proves append-only consistency of the SMT round update;
+      ;~accompanied by the sorted round batch for hash-based verification
+  ConsistencyProofOp = OpS | OpL | OpN | OpO | OpOL  ;~post-order flat opcode stream
+  OpS = %x00 Hash    ;~S(h): preserved subtree, opaque, 33 bytes
   OpL = %x01          ;~L: new leaf (consumed from sorted batch), 1 byte
-  OpN = %x02 Depth    ;~N(d): internal node at bifurcation depth $d$, 2 bytes
+  OpN = %x02 Depth    ;~N(d): junction at bifurcation depth $d$, 2 bytes; region derived by verifier
+  OpO = %x03 Depth Region Hash Hash  ;~$O(d, p, h_L, h_R)$: preserved junction opened one level, 98 bytes
+  OpOL = %x04 Key Bytes  ;~$O_L(k, v)$: preserved leaf opened, $33 + |v|$ bytes
   Depth = OCTET       ;~$d \in \{0, \ldots, 255\}$
+  Region = Bytes32    ;~$\langle p \rangle$: region packed, bits at positions $\ge d$ cleared
   Bitmap = Bytes32    ;~256-bit branching-depth vector
   ZKProof = Bytes     ;~Opaque ZK proof (SNARK/STARK)
 

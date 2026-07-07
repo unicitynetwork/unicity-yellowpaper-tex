@@ -243,7 +243,7 @@ Indexed hash trees can be used to provide and verify both inclusion and exclusio
 
 \section{Radix Sparse Merkle Trees}\label{app:rsmt}
 
-A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. It authenticates a finite map $k \mapsto v$, where every stored key appears as exactly one leaf and every internal node records the absolute bit position at which its descendant keys bifurcate. The implementation documented here uses byte-order-preserving LSB-in-byte bit numbering. Each leaf hash commits to the full 256-bit key, and each internal node hash commits to the explicit bifurcation depth. Consequently, splitting an edge above an unchanged subtree does not alter that subtree's hash: batch insertion rehashes only the changed search frontier and the newly created nodes. The tree supports inclusion certificates, non-inclusion certificates and consistency proofs.
+A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. It authenticates a finite map $k \mapsto v$, where every stored key appears as exactly one leaf and every internal node records the absolute bit position at which its descendant keys bifurcate, together with the key prefix (the \emph{region}) shared by all keys below it. The implementation documented here uses byte-order-preserving LSB-in-byte bit numbering. Each leaf hash commits to the full 256-bit key, and each internal node hash commits to the explicit bifurcation depth and to the region. Depth and region are absolute properties of a node---splitting an edge above an unchanged subtree alters neither---so batch insertion rehashes only the changed search frontier and the newly created nodes. The region commitment pins every node to its position in the key space; the consistency proof (Sec.~\ref{sec:rsmt-consistency-proof}) relies on it to verify that every new leaf is placed at the position determined by its own key. The tree supports inclusion certificates, non-inclusion certificates and consistency proofs.
 
 \subsection{Tree Structure}
 
@@ -251,19 +251,21 @@ Keys are elements of $\bytes{32}$ (256 bits). Write $k=k_0\|k_1\|\cdots\|k_{31}$
 
 \subsubsection{Node Format}
 
-Let $s$ denote the next key-bit position examined during a top-down traversal.
+For a key $k$ and a depth $d$, we write $k[d]$ for the bit of $k$ at position $d$ and $k[0..d)$ for the bit string formed by the bits of $k$ at positions $0, \ldots, d-1$, all in the bit numbering above.
 
 \begin{itemize}
 	\item \textbf{Empty tree}: The empty tree has root $\bot$.
-	\item \textbf{Leaf node}: A leaf stores a pair $(k, v)$ with $k \in \bytes{32}$ and $v \in \bytestr$. The full key $k$ anchors the leaf position in the tree.
-	\item \textbf{Internal node}: An internal node stores a tuple $(q, d, c_0, c_1)$, where $q \in \bits{d-s}$ is the maximal common path segment shared by all descendant keys from bit positions $s, \ldots, d-1$, $d \in \{0, \ldots, 255\}$ is the bifurcation depth, and $c_0$ and $c_1$ are the left and right child subtrees. A search key $k$ may descend through the node if and only if its bits $k[s], \ldots, k[d-1]$ equal $q$; the next bit $k[d]$ then selects child $c_0$ for $0$ and child $c_1$ for $1$.
+	\item \textbf{Leaf node}: A leaf stores a pair $(k, v)$ with $k \in \bytes{32}$ and $v \in \bytestr$. The full key $k$ anchors the leaf position in the tree. A leaf's region is its full key and its depth is $256$.
+	\item \textbf{Internal node}: An internal node (\emph{junction}) stores a tuple $(d, p, c_0, c_1)$, where $d \in \{0, \ldots, 255\}$ is the bifurcation depth, $p \in \bits{d}$ is the \emph{region}: the common prefix $k[0..d)$ of all descendant keys $k$, and $c_0$ and $c_1$ are the left and right child subtrees. A search key $k$ may descend through the node if and only if $k[0..d) = p$; the next bit $k[d]$ then selects child $c_0$ for $0$ and child $c_1$ for $1$.
 \end{itemize}
 
-The path segment $q$ is stored for routing but is not part of the Merkle hash. The commitment is determined entirely by the leaf contents, the child hashes and the absolute bifurcation depth.
+The region both routes lookups and is part of the Merkle commitment: the commitment is determined by the leaf contents, the child hashes, the absolute bifurcation depths and the regions.
 
 \subsection{Hash Computation}
 
 The hash function $H$ is SHA-256. Domain separation is achieved via a one-byte prefix: $\mathtt{0x00}$ for leaves and $\mathtt{0x01}$ for internal nodes.
+
+For hashing, a region $p \in \bits{d}$ is packed into a 32-byte string $\langle p \rangle$: the bits of $p$ are placed at bit positions $0, \ldots, d-1$ (in the bit numbering of this appendix) and all bits at positions $d, \ldots, 255$ are zero. Equivalently, $\langle p \rangle$ is obtained from any descendant key by clearing all bits at positions $\ge d$. Together with the one-byte depth, the packing is injective.
 
 \subsubsection{Function $\textsc{rsmt\_leaf\_hash}$}\label{sec:rsmt-leaf-hash}
 
@@ -293,18 +295,19 @@ Computes the hash of an RSMT internal node.
 	\item $h_L \in \hashtype$ -- left child hash
 	\item $h_R \in \hashtype$ -- right child hash
 	\item $d \in \uint{8}$ -- bifurcation depth
+	\item $p \in \bits{d}$ -- region
 \end{enumerate}
 
 \textbf{Output}: $h \in \hashtype$
 
 \textbf{Computation}:
 \begin{algorithmic}
-	\Function{rsmt\_node\_hash}{$h_L, h_R, d$}
-		\State \Return $H(\mathtt{0x01} \,\|\, d \,\|\, h_L \,\|\, h_R)$
+	\Function{rsmt\_node\_hash}{$h_L, h_R, d, p$}
+		\State \Return $H(\mathtt{0x01} \,\|\, d \,\|\, \langle p \rangle \,\|\, h_L \,\|\, h_R)$
 	\EndFunction
 \end{algorithmic}
 
-The internal-node hash does not include the compressed path segment $q$. Every leaf hash already commits to the full key, and every internal-node hash commits to the absolute branching depth $d$.
+Every leaf hash commits to the full key, and every internal-node hash commits to the absolute branching depth $d$ and the absolute region $p$. Splitting an edge above a node changes neither its depth nor its region, so an insertion never recomputes any pre-existing node hash. Inclusion certificates do not transmit regions: the verifier derives each expected region from the queried key itself (Sec.~\ref{sec:rsmt-verify-inclusion}).
 
 \subsection{Batch Insertion}\label{sec:rsmt-batch-insert}
 
@@ -330,57 +333,59 @@ $T$ updated in place, with root replaced by the root of the post-state tree
 		\If{$B' = \langle \rangle$}
 			\State \Return
 		\EndIf
-		\State $T.\mathsf{root} \gets \Call{rsmt\_merge\_batch}{T.\mathsf{root}, B'; 0}$
+		\State $T.\mathsf{root} \gets \Call{rsmt\_merge\_batch}{T.\mathsf{root}, B'}$
 	\EndFunction
 \end{algorithmic}
 
 
-The helper procedure $\textsc{rsmt\_merge\_batch}(r, S; s)$ receives a current subtree root $r$, a contiguous slice $S$ of the traversal-sorted batch, and the next bit position $s$. The following pseudocode omits low-level bit manipulations.
+The helper procedure $\textsc{rsmt\_merge\_batch}(r, S)$ receives a current subtree root $r$ and a contiguous slice $S$ of the traversal-sorted batch. Because depths and regions are absolute, no traversal position needs to be threaded through the recursion. The following pseudocode omits low-level bit manipulations.
 
 \begin{algorithmic}
-	\Function{rsmt\_merge\_batch}{$r, S; s$}
+	\Function{rsmt\_merge\_batch}{$r, S$}
 		\If{$S = \langle \rangle$}
 			\State \Return $r$
 		\EndIf
 		\If{$r = \bot$}
-			\State \Return \Call{rsmt\_build\_subtree}{S; s}
+			\State \Return \Call{rsmt\_build\_subtree}{S}
 		\EndIf
 		\If{$r$ is a leaf $(k_\ell, v_\ell)$}
 			\State let $U$ be the traversal-order merge of $S$ with $(k_\ell, v_\ell)$, omitting any batch element whose key is $k_\ell$
 			\If{$\len{U} = 1$}
 				\State \Return $r$
 			\EndIf
-			\State \Return \Call{rsmt\_build\_subtree}{U; s}
+			\State \Return \Call{rsmt\_build\_subtree}{U}
 		\EndIf
-		\State parse $r$ as internal node $(q, d, r_0, r_1)$
-		\If{the first or last key of $S$ diverges from prefix $q$ before depth $d$}
-			\State let $t < d$ be the first divergent depth
+		\State parse $r$ as internal node $(d, p, r_0, r_1)$
+		\If{$k[0..d) = p$ for every key $k$ in $S$}
+			\State partition $S$ into $S_0$ and $S_1$ according to bit $d$
+			\State $r_0' \gets \Call{rsmt\_merge\_batch}{r_0, S_0}$
+			\State $r_1' \gets \Call{rsmt\_merge\_batch}{r_1, S_1}$
+			\State \Return the node $(d, p, r_0', r_1')$
+		\Else
+			\State let $t < d$ be the lowest position at which any key in $S$ diverges from $p$
 			\State partition $S$ into $S_0$ and $S_1$ according to bit $t$
-			\State let $b \in \{0,1\}$ be the branch of the old subtree at depth $t$, as determined by $q$
+			\State $b \gets p[t]$ \Comment{the branch taken by the old subtree}
 			\If{$b = 0$}
-				\State $r_0' \gets \Call{rsmt\_merge\_batch}{r, S_0; t}$
-				\State $r_1' \gets \Call{rsmt\_merge\_batch}{\bot, S_1; t}$
+				\State $r_0' \gets \Call{rsmt\_merge\_batch}{r, S_0}$
+				\State $r_1' \gets \Call{rsmt\_build\_subtree}{S_1}$
 			\Else
-				\State $r_0' \gets \Call{rsmt\_merge\_batch}{\bot, S_0; t}$
-				\State $r_1' \gets \Call{rsmt\_merge\_batch}{r, S_1; t}$
+				\State $r_0' \gets \Call{rsmt\_build\_subtree}{S_0}$
+				\State $r_1' \gets \Call{rsmt\_merge\_batch}{r, S_1}$
 			\EndIf
-			\State \Return a new parent node at depth $t$ with children $r_0'$ and $r_1'$
+			\State \Return the new node $(t, p[0..t), r_0', r_1')$ \Comment{edge split}
 		\EndIf
-		\State partition $S$ into $S_0$ and $S_1$ according to bit $d$
-		\State $r_0' \gets \Call{rsmt\_merge\_batch}{r_0, S_0; d}$
-		\State $r_1' \gets \Call{rsmt\_merge\_batch}{r_1, S_1; d}$
-		\State \Return the node $(q, d, r_0', r_1')$
 	\EndFunction
 \end{algorithmic}
 
-Because $S$ is already sorted in traversal order, the implementation can locate the first relevant divergence by inspecting only the first and the last key of the slice. Thus each recursive call either descends into the already committed frontier or constructs a fresh subtree for a non-empty batch slice, without extra per-key membership lookups.
+Because $S$ is already sorted in traversal order, the implementation can locate the first relevant divergence by inspecting only the first and the last key of the slice. Thus each recursive call either descends into the already committed frontier or constructs a fresh subtree for a batch slice, without extra per-key membership lookups.
 
-The helper procedure $\textsc{rsmt\_build\_subtree}(S; s)$ is applied only to a non-empty traversal-sorted slice:
+The helper procedure $\textsc{rsmt\_build\_subtree}(S)$ is applied to a traversal-sorted slice:
 
 \begin{enumerate}
+	\item If $S = \langle \rangle$, return $\bot$.
 	\item If $\len{S} = 1$, create a leaf for the single pair in $S$ and return it.
-	\item Otherwise compute the first bit position $d \ge s$ at which the first and the last key of $S$ differ. This determines the unique bifurcation depth of the subtree root.
-	\item Partition $S$ into $S_0$ and $S_1$ according to bit $d$, recursively build the two child subtrees, and return the internal node whose compressed path is the common bit string from positions $s, \ldots, d-1$.
+	\item Otherwise compute the first bit position $d$ at which the first and the last key of $S$ differ. This determines the unique bifurcation depth of the subtree root.
+	\item Partition $S$ into $S_0$ and $S_1$ according to bit $d$, recursively build the two child subtrees, and return the internal node $(d, p, \cdot, \cdot)$ whose region $p = k[0..d)$ is the shared prefix of the keys $k$ in $S$.
 \end{enumerate}
 
 Unlike the consistency-proof-producing batch insertion path, this proof-free variant does not return the subset of leaves that were actually inserted. That auxiliary list is only needed for pairing with a consistency proof.
@@ -426,11 +431,11 @@ The helper $\textsc{rsmt\_split\_node}(r, s, b)$ descends the subtree rooted at 
 				\State \Return $\bot$
 			\EndIf
 		\EndIf
-		\State parse $r$ as internal node $(q, d, c_0, c_1)$
+		\State parse $r$ as internal node $(d, p, c_0, c_1)$
 		\If{$d = s$}
 			\State \Return $c_b$ \Comment{selector bit resolves the split}
 		\Else \Comment{$d > s$: all descendant keys agree on bit $s$}
-			\State let $b^* \in \{0,1\}$ be bit $s$ of any descendant key (equivalently, the bit of $q$ at offset $s$)
+			\State $b^* \gets p[s]$ \Comment{bit $s$ of the region, equal to bit $s$ of any descendant key}
 			\If{$b^* = b$}
 				\State \Return $r$
 			\Else
@@ -442,9 +447,9 @@ The helper $\textsc{rsmt\_split\_node}(r, s, b)$ descends the subtree rooted at 
 
 \textbf{Properties}.
 \begin{itemize}
-	\item \emph{No rehashing}: Because internal-node hashes commit to the absolute bifurcation depth $d$ (Sec.~\ref{sec:rsmt-node-hash}) and leaf hashes commit to the full key (Sec.~\ref{sec:rsmt-leaf-hash}), every retained node keeps its pre-split hash. The post-split root hash equals the hash of whichever existing node the procedure returns.
-	\item \emph{Inclusion Proof change}: An inclusion certificate (Sec.~\ref{sec:rsmt-inclusion-cert}) that was valid against the pre-split root is now different, the sibling entry at depth $s$, if any, from both the bitmap and the sibling list is dropped. This is compensated by the Unicity Certificates being larger, due to extra entry in Shard Tree.
-	\item The procedure may be executed as many times as necessary to obtain necessary number of shards.
+	\item \emph{No rehashing}: Because internal-node hashes commit to the absolute bifurcation depth $d$ and region $p$ (Sec.~\ref{sec:rsmt-node-hash}) and leaf hashes commit to the full key (Sec.~\ref{sec:rsmt-leaf-hash}), every retained node keeps its pre-split hash. In particular, the regions of retained nodes keep their full absolute prefixes, including the bits fixed by the shard identifier. The post-split root hash equals the hash of whichever existing node the procedure returns.
+	\item \emph{Inclusion certificate change}: An inclusion certificate (Sec.~\ref{sec:rsmt-inclusion-cert}) issued against the post-split root differs from a pre-split one only in that the entry at depth $s$, if any, is dropped from both the bitmap and the sibling list. This is compensated by the Unicity Certificates being larger, due to the extra entry in the Shard Tree.
+	\item The procedure may be executed as many times as necessary to obtain the necessary number of shards.
 \end{itemize}
 
 \subsection{Inclusion Certificate}\label{sec:rsmt-inclusion-cert}
@@ -458,6 +463,8 @@ An inclusion certificate is a pair $C^\mathsf{inc} = (\mathit{bitmap}, \mathit{s
 	\item $\mathit{bitmap} \in \bytes{32}$ -- a 256-bit vector. Bit $d$ is stored as bit $d\bmod 8$ of byte $\lfloor d/8\rfloor$ and is set if and only if a sibling hash is required at depth $d$ on the path from the leaf to the root.
 	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes ordered root-to-leaf (ascending depth).
 \end{itemize}
+
+Junction regions are not part of the certificate: the verifier reconstructs the expected region at each depth $d$ on the path as $k[0..d)$ from the queried key itself.
 
 \noindent\textbf{Wire format}: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$, for a total of $32 + 32n$ bytes.
 
@@ -491,10 +498,11 @@ Verifies an inclusion certificate by reconstructing the root hash from the leaf 
 			\State $j \gets j - 1$
 			\If{$j < 0$} \Return \FALSE \EndIf
 			\State $s \gets \mathit{siblings}[j]$
+			\State $p \gets k[0..d)$ \Comment{Expected region, derived from the key}
 			\If{bit $d$ of $k$ is $1$} \Comment{Leaf went right at depth $d$}
-				\State $h \gets \Call{rsmt\_node\_hash}{s, h, d}$
+				\State $h \gets \Call{rsmt\_node\_hash}{s, h, d, p}$
 			\Else
-				\State $h \gets \Call{rsmt\_node\_hash}{h, s, d}$
+				\State $h \gets \Call{rsmt\_node\_hash}{h, s, d, p}$
 			\EndIf
 		\EndFor
 		\State \Return $(j = 0) \land (h = \rho)$
@@ -503,25 +511,23 @@ Verifies an inclusion certificate by reconstructing the root hash from the leaf 
 
 \subsection{Non-Inclusion Certificate}\label{sec:rsmt-non-inclusion-cert}
 
-A \emph{Non-Inclusion Certificate}\index{Non-Inclusion Certificate!RSMT} $C^\mathsf{exc}$ demonstrates that a key $k$ does \emph{not} appear in a tree with root hash $\rho$. In a path-compressed RSMT, searching for a key that is absent terminates at a leaf whose key $k_\ell$ shares a common prefix with $k$ up to some bifurcation depth but differs from $k$. The non-inclusion certificate carries the neighbouring leaf's key and hash (but not its value), together with the sibling hashes needed to reconstruct the root.
+A \emph{Non-Inclusion Certificate}\index{Non-Inclusion Certificate!RSMT} $C^\mathsf{exc}$ demonstrates that a key $k$ does \emph{not} appear in a tree with root hash $\rho$. It is a chain of one-level node openings along the key-directed descent from the root. In a path-compressed RSMT, the descent for an absent key terminates either at a junction whose region is not a prefix of $k$ (the key diverges inside a compressed edge), or at a leaf carrying a different key. Opening every node on the descent binds the terminal to the root: the hash of each opening must equal the child digest expected by the previous opening.
 
 \subsubsection{Format}
 
-A non-inclusion certificate is a tuple $C^\mathsf{exc} = (k_\ell, h_\ell, \mathit{bitmap}, \mathit{siblings})$ where:
+A non-inclusion certificate is a sequence $C^\mathsf{exc} = \langle e_1, \ldots, e_\ell \rangle$ of openings, ordered from the root downward, where each element is either
 \begin{itemize}
-	\item $k_\ell \in \bytes{32}$ -- key of the neighbouring leaf
-	\item $h_\ell \in \hashtype$ -- hash of the neighbouring leaf ($= \Call{rsmt\_leaf\_hash}{k_\ell, v_\ell}$)
-	\item $\mathit{bitmap} \in \bytes{32}$ -- branching-depth bitmap (same semantics as inclusion certificate, Section~\ref{sec:rsmt-inclusion-cert})
-	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes, root-to-leaf
+	\item a \emph{junction opening} $(d, p, h_L, h_R)$ with $d \in \{0, \ldots, 255\}$, $p \in \bits{d}$, $h_L, h_R \in \hashtype$; or
+	\item a \emph{leaf opening} $(k_\ell, v_\ell)$ with $k_\ell \in \bytes{32}$, $v_\ell \in \bytestr$; only admissible as the last element.
 \end{itemize}
 
-\noindent\textbf{Wire format}: $k_\ell[32] \,\|\, h_\ell[32] \,\|\, \mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$, for a total of $96 + 32n$ bytes.
+\noindent\textbf{Wire format}: junction opening $\mathtt{0x01} \,\|\, d[1] \,\|\, \langle p \rangle[32] \,\|\, h_L[32] \,\|\, h_R[32]$ (98 bytes); leaf opening $\mathtt{0x00} \,\|\, k_\ell[32] \,\|\, v_\ell$ ($33 + \len{v_\ell}$ bytes).
 
-For the special case of an empty tree ($\rho = \bot$), the non-inclusion certificate is empty---every key is trivially absent.
+For the special case of an empty tree ($\rho = \bot$), the non-inclusion certificate is the empty sequence---every key is trivially absent.
 
 \subsubsection{Generation}
 
-To generate a non-inclusion certificate for $k$, walk from the root toward $k$. The walk terminates at a leaf with key $k_\ell \neq k$ (since $k$ is absent). Record $k_\ell$ and its leaf hash $h_\ell$, then collect sibling hashes and the bitmap exactly as for an inclusion certificate (Section~\ref{sec:rsmt-inclusion-cert}).
+To generate a non-inclusion certificate for an absent key $k$, walk from the root along the descent directed by $k$. At each junction whose region is a prefix of $k$ (i.e., $k[0..d) = p$), append the junction's opening and descend into the child selected by $k[d]$. Stop after appending the opening of the first node that terminates the descent: a junction whose region is not a prefix of $k$, or the reached leaf (its key differs from $k$, since $k$ is absent).
 
 \subsubsection{Function $\textsc{rsmt\_verify\_non\_inclusion}$}\label{sec:rsmt-verify-non-inclusion}
 
@@ -529,7 +535,7 @@ Verifies that key $k$ is absent from a tree with root hash $\rho$.
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $C^\mathsf{exc} = (k_\ell, h_\ell, \mathit{bitmap}, \mathit{siblings})$ -- non-inclusion certificate
+	\item $C^\mathsf{exc} = \langle e_1, \ldots, e_\ell \rangle$ -- non-inclusion certificate
 	\item $\rho \in \hashtype \opt$ -- root hash ($\bot$ if tree is empty)
 	\item $k \in \bytes{32}$ -- queried key
 \end{enumerate}
@@ -540,40 +546,40 @@ Verifies that key $k$ is absent from a tree with root hash $\rho$.
 \begin{algorithmic}
 	\Function{rsmt\_verify\_non\_inclusion}{$C^\mathsf{exc}, \rho, k$}
 		\If{$\rho = \bot$}
-			\State \Return \TRUE \Comment{Empty tree contains no keys}
+			\State \Return $C^\mathsf{exc} = \langle \rangle$ \Comment{Empty tree contains no keys}
 		\EndIf
-		\If{$k_\ell = k$}
-			\State \Return \FALSE \Comment{Neighbour key must differ from queried key}
+		\If{$C^\mathsf{exc} = \langle \rangle$}
+			\State \Return \FALSE
 		\EndIf
-		\State $d^* \gets$ lowest bit position where $k$ and $k_\ell$ differ
-		\If{bit $d^*$ of $\mathit{bitmap}$ is set}
-			\State \Return \FALSE \Comment{A branch at $d^*$ means $k$ could exist in the opposite subtree}
-		\EndIf
-		\State $h \gets h_\ell$ \Comment{Start from the neighbouring leaf hash}
-		\State $j \gets \len{\mathit{siblings}}$
-		\For{$d \gets 255$ \textbf{downto} $0$}
-			\If{bit $d$ of $\mathit{bitmap}$ is not set}
-				\State \textbf{continue}
+		\State $h \gets \rho$ \Comment{Expected digest of the next opening}
+		\For{$i \gets 1$ \textbf{to} $\ell$}
+			\If{$e_i$ is a leaf opening $(k_\ell, v_\ell)$}
+				\State \Return $(i = \ell) \land (\Call{rsmt\_leaf\_hash}{k_\ell, v_\ell} = h) \land (k_\ell \ne k)$
 			\EndIf
-			\State $j \gets j - 1$
-			\If{$j < 0$} \Return \FALSE \EndIf
-			\State $s \gets \mathit{siblings}[j]$
-			\If{bit $d$ of $k_\ell$ is $1$}
-				\State $h \gets \Call{rsmt\_node\_hash}{s, h, d}$
-			\Else
-				\State $h \gets \Call{rsmt\_node\_hash}{h, s, d}$
+			\State parse $e_i$ as junction opening $(d, p, h_L, h_R)$
+			\If{$\Call{rsmt\_node\_hash}{h_L, h_R, d, p} \ne h$}
+				\State \Return \FALSE
 			\EndIf
+			\If{$k[0..d) \ne p$}
+				\State \Return $i = \ell$ \Comment{Divergence junction: valid terminal}
+			\EndIf
+			\State \textbf{if} $k[d] = 1$ \textbf{then} $h \gets h_R$ \textbf{else} $h \gets h_L$          \Comment{Key-directed descent}
 		\EndFor
-		\State \Return $(j = 0) \land (h = \rho)$
+		\State \Return \FALSE \Comment{Chain ended without a terminal}
 	\EndFunction
 \end{algorithmic}
+
+Note that the terminal leaf opening exposes the neighbouring leaf's value $v_\ell$; in the Unicity SMT, values are transaction hashes, so no payload data is revealed.
 
 
 \subsection{Consistency Proof}\label{sec:rsmt-consistency-proof}
 
-A \emph{consistency proof} demonstrates that a batch $B$ of new key-value pairs was correctly inserted into a tree with root $\rho'$, producing a new tree with root $\rho$, without modifying or deleting any pre-existing data.
+A \emph{consistency proof}\index{consistency proof} demonstrates that a batch $B$ of new key-value pairs was correctly inserted into a tree with root $\rho_0$, producing a new tree with root $\rho_1$. An accepting proof establishes \emph{append-only consistency}\index{append-only consistency}, which combines two properties:
+\begin{itemize}
+	\item \emph{prior-state preservation}: no pre-existing leaf was removed or modified; and
+	\item \emph{coherent placement}: every new leaf is placed at the position determined by its key.
+\end{itemize}
 
-The current implementation proves preservation of committed pre-state subtrees and incorporation of the declared batch into the post-state hash. It does \emph{not} additionally prove that the resulting post-state is the unique canonical radix sparse Merkle tree induced by the final key set. This stronger structural property is omitted for efficiency reasons: enforcing it would require additional witness data, larger inclusion proofs and more expensive verification.
 
 \subsubsection{Sort Order}\label{sec:rsmt-sort-order}
 
@@ -581,28 +587,34 @@ The batch and proof use the tree traversal order defined in Section~\ref{app:rsm
 
 \subsubsection{Proof Format}
 
-The proof $\pi$ is a flat stream of opcodes emitted from a post-order traversal of the tree in the order defined above:
+The proof $\pi$ is a flat stream of opcodes emitted from a post-order traversal of the touched part of the post-state tree, in the order defined above:
 
 \begin{center}
-\begin{tabular}{clcl}
-\textbf{Opcode} & \textbf{Semantics} & \textbf{Wire encoding} & \textbf{Size} \\
+\begin{tabular}{lll}
+\textbf{Opcode} & \textbf{Semantics} & \textbf{Wire encoding}  \\
 \hline
-$\mathtt{S}(h)$ & Unchanged subtree with hash $h$ & $\mathtt{0x00} \,\|\, h[32]$ & 33 bytes \\
-$\mathtt{L}$ & New leaf (consumed from sorted batch) & $\mathtt{0x01}$ & 1 byte \\
-$\mathtt{N}(d)$ & Internal node at bifurcation depth $d$ & $\mathtt{0x02} \,\|\, d[1]$ & 2 bytes \\
+$\mathtt{S}(h)$ & Preserved subtree, opaque & $\mathtt{0x00} \,\|\, h[32]$  \\
+$\mathtt{L}$ & New leaf (consumed from sorted batch) & $\mathtt{0x01}$  \\
+$\mathtt{N}(d)$ & Junction at bifurcation depth $d$ & $\mathtt{0x02} \,\|\, d[1]$ \\
+$\mathtt{O}(d, p, h_L, h_R)$ & Preserved junction, opened one level & $\mathtt{0x03} \,\|\, d[1] \,\|\, \langle p \rangle[32] \,\|\, h_L[32] \,\|\, h_R[32]$  \\
+$\mathtt{O_L}(k, v)$ & Preserved leaf, opened & $\mathtt{0x04} \,\|\, k[32] \,\|\, v$  \\
 \end{tabular}
 \end{center}
 
 \noindent In the post-order encoding, the two children of every $\mathtt{N}$ node precede it in the stream (left child first, then right child), enabling efficient validation using a stack machine algorithm.
 
+An opaque $\mathtt{S}$ is admissible only where the parent junction already exists in the pre-state. Where a preserved subtree becomes the child of a junction created this round (an edge split, including the leaf-merge case), it must be presented opened, as $\mathtt{O}$ or $\mathtt{O_L}$, so that the verifier can check the new edge against the child's authenticated depth and region. Junction regions are not carried by $\mathtt{N}$ opcodes; the verifier derives them from the children.
+
 \subsubsection{Generation}
 
-To generate the proof during batch insertion, perform a post-order traversal of the tree regions affected by the insertion. Emit $\mathtt{S}(h)$ for every unchanged subtree (carrying its pre-existing hash), $\mathtt{L}$ for every newly inserted leaf, and $\mathtt{N}(d)$ for every internal node at bifurcation depth $d$.
+To generate the proof during batch insertion, perform a post-order traversal of the tree regions affected by the insertion. Emit $\mathtt{S}(h)$ for every preserved subtree whose parent junction is pre-existing (carrying the subtree's pre-existing hash); $\mathtt{O}(d, p, h_L, h_R)$ or $\mathtt{O_L}(k, v)$ for every preserved junction or leaf that becomes a child of a junction created this round; $\mathtt{L}$ for every newly inserted leaf; and $\mathtt{N}(d)$ for every junction on the touched frontier (pre-existing or new) at bifurcation depth $d$.
 
 
 \subsubsection{Function $\textsc{rsmt\_verify\_consistency}$}\label{sec:rsmt-verify-consistency}
 
-Verifies a consistency proof using a stack machine. Each opcode either pushes a pair of hashes (pre-state, post-state) onto the stack, or pops children and pushes a combined parent.
+Verifies a consistency proof using a stack machine. The stack holds triples $(h_\mathsf{pre}, h_\mathsf{post}, a)$: the subtree's pre-state hash ($\bot$ if the subtree is new), its post-state hash, and an \emph{advice tuple} $a = (\delta, \varrho)$ carrying the depth and region of the subtree's top node---$(256, k)$ for leaves---or $a = \bot$ for opaque $\mathtt{S}$ subtrees, whose top node is not disclosed. Advice is authenticated: it is recomputed by the verifier from an opened preimage ($\mathtt{O}$, $\mathtt{O_L}$), consumed from the batch ($\mathtt{L}$), or derived at a lower junction ($\mathtt{N}$).
+
+Processing $\mathtt{N}(d)$ enforces \emph{edge coherence}: every child that carries advice $(\delta, \varrho)$ must satisfy $\delta > d$ and $\varrho[d] = \beta$, where $\beta \in \{0, 1\}$ is the child's side, and all advised children must agree on the derived junction region $p = \varrho[0..d)$; at least one child must be advised, so $p$ is always defined. If the junction is absent from the pre-state (at least one child's pre-state hash is $\bot$), \emph{both} children must carry advice: an opaque $\mathtt{S}$ may appear only under pre-existing junctions, whose edges were checked in the round that created them and are frozen by the hashes. An accepting run therefore reconstructs $\rho_0$ exactly from preserved material, reconstructs $\rho_1$ from the same material plus the batch, and validates every edge created this round.
 
 \textbf{Input}:
 \begin{enumerate}
@@ -618,25 +630,45 @@ Verifies a consistency proof using a stack machine. Each opcode either pushes a 
 \begin{algorithmic}
 	\Function{rsmt\_verify\_consistency}{$\pi, \rho_0, \rho_1, B$}
 		\If{$B = \langle\rangle$}
-			\State \Return $\rho_0 = \rho_1$
+			\State \Return $(\rho_0 = \rho_1) \land (\pi = \langle\rangle)$
 		\EndIf
 		\State Sort $B$ by $\textsc{rsmt\_sort\_key}$ to obtain $B' = \langle (k'_1, v'_1), \ldots, (k'_m, v'_m) \rangle$
-		\State $\mathcal{S} \gets \langle\rangle$ \Comment{Stack of $(h_\mathsf{pre}, h_\mathsf{post})$ pairs}
+		\State \Assert the keys of $B'$ are strictly increasing \Comment{In particular, no repeated keys}
+		\State $\mathcal{S} \gets \langle\rangle$ \Comment{Stack of $(h_\mathsf{pre}, h_\mathsf{post}, a)$ triples}
 		\State $b \gets 1$ \Comment{Batch index into $B'$}
 		\For{each opcode $\mathsf{op}$ in $\pi$}
 			\If{$\mathsf{op} = \mathtt{S}(h)$}
-				\State push $(h, h)$ onto $\mathcal{S}$
+				\State push $(h, h, \bot)$ onto $\mathcal{S}$
+			\ElsIf{$\mathsf{op} = \mathtt{O}(d, p, h_L, h_R)$}
+				\State \Assert $0 \le d < 256$ and $p \in \bits{d}$
+				\State $h \gets \Call{rsmt\_node\_hash}{h_L, h_R, d, p}$
+				\State push $(h, h, (d, p))$ onto $\mathcal{S}$
+			\ElsIf{$\mathsf{op} = \mathtt{O_L}(k, v)$}
+				\State $h \gets \Call{rsmt\_leaf\_hash}{k, v}$
+				\State push $(h, h, (256, k))$ onto $\mathcal{S}$
 			\ElsIf{$\mathsf{op} = \mathtt{L}$}
 				\If{$b > m$} \Return \FALSE \EndIf
-				\State push $(\bot, \Call{rsmt\_leaf\_hash}{k'_b, v'_b})$ onto $\mathcal{S}$
+				\State push $(\bot, \Call{rsmt\_leaf\_hash}{k'_b, v'_b}, (256, k'_b))$ onto $\mathcal{S}$
 				\State $b \gets b + 1$
 			\ElsIf{$\mathsf{op} = \mathtt{N}(d)$}
-				\If{$\len{\mathcal{S}} < 2$} \Return \FALSE \EndIf
-				\State pop $(r_0, r_1)$ from $\mathcal{S}$ \Comment{Right child}
-				\State pop $(\ell_0, \ell_1)$ from $\mathcal{S}$ \Comment{Left child}
-				\State $h_0 \gets \Call{rsmt\_resolve\_pre\_state}{\ell_0, r_0, d}$
-				\State $h_1 \gets \Call{rsmt\_node\_hash}{\ell_1, r_1, d}$
-				\State push $(h_0, h_1)$ onto $\mathcal{S}$
+				\If{$\len{\mathcal{S}} < 2 \lor d \notin \{0, \ldots, 255\}$} \Return \FALSE \EndIf
+				\State pop $(r_0, r_1, a_R)$ from $\mathcal{S}$ \Comment{Right child}
+				\State pop $(\ell_0, \ell_1, a_L)$ from $\mathcal{S}$ \Comment{Left child}
+				\State $p \gets \bot$
+				\For{$(a, \beta) \in \langle (a_L, 0), (a_R, 1) \rangle$} \Comment{Edge coherence}
+					\If{$a = (\delta, \varrho) \ne \bot$}
+						\State \Assert $\delta > d$ and $\varrho[d] = \beta$
+						\State \Assert $p = \bot \lor p = \varrho[0..d)$
+						\State $p \gets \varrho[0..d)$
+					\EndIf
+				\EndFor
+				\State \Assert $p \ne \bot$ \Comment{At least one child advised}
+				\If{$\ell_0 = \bot \lor r_0 = \bot$} \Comment{Junction absent from pre-state}
+					\State \Assert $a_L \ne \bot \land a_R \ne \bot$ \Comment{No opaque child on a new edge}
+				\EndIf
+				\State $h_0 \gets \Call{rsmt\_resolve\_pre\_state}{\ell_0, r_0, d, p}$
+				\State $h_1 \gets \Call{rsmt\_node\_hash}{\ell_1, r_1, d, p}$
+				\State push $(h_0, h_1, (d, p))$ onto $\mathcal{S}$
 			\Else
 				\State \Return \FALSE \Comment{Unknown opcode}
 			\EndIf
@@ -644,12 +676,14 @@ Verifies a consistency proof using a stack machine. Each opcode either pushes a 
 		\If{$b \neq m + 1 \lor \len{\mathcal{S}} \neq 1$}
 			\State \Return \FALSE
 		\EndIf
-		\State pop $(\rho'_0, \rho'_1)$ from $\mathcal{S}$
+		\State pop $(\rho'_0, \rho'_1, a)$ from $\mathcal{S}$
 		\State \Return $(\rho'_0 = \rho_0) \land (\rho'_1 = \rho_1)$
 	\EndFunction
 \end{algorithmic}
 
-We define helper function $\textsc{rsmt\_resolve\_pre\_state}$ which resolves the pre-insertion hash of a node. When one child is new ($\bot$), the parent node did not exist in the pre-state; only the existing child's subtree occupied that position, so its hash passes through without hashing.
+Any failing assertion, stack underflow or malformed operand rejects the proof. The verifier is a single linear pass with memory bounded by the tree depth. For the honest prover, the stream differs from a depth-only encoding without regions only in the openings: one $\mathtt{O}$ or $\mathtt{O_L}$ per split edge; the derived regions cost nothing on the wire.
+
+We define the helper function $\textsc{rsmt\_resolve\_pre\_state}$, which resolves the pre-insertion hash of a node. When one child is new ($\bot$), the parent node did not exist in the pre-state; only the existing child's subtree occupied that position, so its hash passes through without hashing.
 
 
 \textbf{Input}:
@@ -657,13 +691,14 @@ We define helper function $\textsc{rsmt\_resolve\_pre\_state}$ which resolves th
 	\item $h_L \in \hashtype \opt$ -- left child pre-state hash ($\bot$ if new)
 	\item $h_R \in \hashtype \opt$ -- right child pre-state hash ($\bot$ if new)
 	\item $d \in \uint{8}$ -- bifurcation depth
+	\item $p \in \bits{d}$ -- region
 \end{enumerate}
 
 \textbf{Output}: $h \in \hashtype \opt$
 
 \textbf{Computation}:
 \begin{algorithmic}
-	\Function{rsmt\_resolve\_pre\_state}{$h_L, h_R, d$}
+	\Function{rsmt\_resolve\_pre\_state}{$h_L, h_R, d, p$}
 		\If{$h_L = \bot \land h_R = \bot$}
 			\State \Return $\bot$ \Comment{Entire subtree is new}
 		\ElsIf{$h_L = \bot$}
@@ -671,7 +706,7 @@ We define helper function $\textsc{rsmt\_resolve\_pre\_state}$ which resolves th
 		\ElsIf{$h_R = \bot$}
 			\State \Return $h_L$ \Comment{Only left child existed}
 		\Else
-			\State \Return $\Call{rsmt\_node\_hash}{h_L, h_R, d}$ \Comment{Both children existed}
+			\State \Return $\Call{rsmt\_node\_hash}{h_L, h_R, d, p}$ \Comment{Both children existed}
 		\EndIf
 	\EndFunction
 \end{algorithmic}
@@ -701,21 +736,27 @@ When receiving a ZK-compressed consistency proof, the verifier must:
 \begin{enumerate}
 	\item Verify that the proof is proving the right statement (hash-based consistency proof verification algorithm)
 	\item Verify the ZK proof, obtaining authentic public inputs $h'$, $h$
-	\item Confirm these values match the claimed Input Reco	rd
+	\item Confirm these values match the claimed Input Record
 \end{enumerate}
 
 
 \section{Radix Sparse Merkle Sum Trees}\label{app:rsmst}
 
-A \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST) is the radix sparse Merkle tree of Appendix~\ref{app:rsmt} with a positive amount at every leaf and an accumulated sum at every internal node. It is used for split allocation roots (Sec.~\ref{sec:token-splitting}). The tree deliberately reuses the RSMT key space, byte-order-preserving bit numbering, canonical path-compressed structure and inclusion-walk logic.
+A \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST) is a leaf-anchored, path-compressed binary Merkle sum tree over the 256-bit key space: every leaf carries a positive amount, and every internal node commits the hashes \emph{and} the sums of its two subtrees.
+
+The use-cases (e.g., fungible token splitting) are one-shot: tree is built once and never updated.
+
+The RSMST shares with the RSMT (Appendix~\ref{app:rsmt}) the following conventions: the 256-bit key space and byte-order-preserving LSB-in-byte bit numbering, leaf anchoring by the full key, the absolute bifurcation-depth commitment, and the canonical construction rule (every junction sits at the first bit position at which its descendant keys diverge; single-child chains are compressed away). Differences: RSMST has a single version and a single, per-leaf verification pattern: node hashes commit child sums instead of regions, the inclusion proof format is different, and none of the RSMT's version-transition logic (consistency proofs, openings, non-inclusion certificates) applies. Precise properties are given in Sec.~\ref{sec:rsmst-properties}.
 
 \subsection{Tree Structure}
 
-Keys are 32-byte strings. For token splitting the key is the output token identifier $\mathsf{id}_j$, the leaf data is the 32-byte output commitment $d_j$, and the leaf amount is the positive asset allocation $v_j(\mathsf{aid})$.
+Keys are 32-byte strings. Concretely, on token splitting use-case, the key is the output token identifier $\mathsf{id}_j$, the leaf data is the 32-byte output commitment $d_j$, and the leaf amount is the positive asset allocation $v_j(\mathsf{aid})$.
 
-An RSMST leaf carries $(k,d,v)$ where $k,d\in\bytes{32}$ and $1\leq v<2^{256}$. An internal node carries an absolute bifurcation depth $\delta\in\{0,\ldots,255\}$ and two child pairs $(h_L,v_L)$ and $(h_R,v_R)$; its sum is $v_L+v_R$. Construction MUST use the same canonical path-compressed binary trie as RSMT, MUST reject duplicate keys and zero-valued leaves, and MUST reject any internal sum overflow. A split allocation tree is never empty.
+An RSMST leaf carries $(k,d,v)$ where $k,d\in\bytes{32}$ and $1\leq v<2^{256}$. Notation: $d$ denotes the 32-byte leaf \emph{data} (the output commitment $d_j$ above), matching the token-split notation; bifurcation depths are always written $\delta$. An internal node carries an absolute bifurcation depth $\delta\in\{0,\ldots,255\}$ and two child pairs $(h_L,v_L)$ and $(h_R,v_R)$; its sum is $v_L+v_R$. A split allocation tree is never empty.
 
-For a tree $\mathcal{S}$, $\Call{RSMSTRoot}{\mathcal{S}}$ returns the root hash and root sum. If $\mathcal{S}$ has one leaf, the root hash is that leaf hash and the root sum is that leaf amount. Otherwise the root is the hash and sum of the top internal node.
+\textbf{Construction requirements}: the builder MUST use the canonical path-compressed trie shape defined above, MUST reject duplicate keys and zero-valued leaves, and MUST reject any internal sum overflow. Canonical shape makes the root a deterministic function of the allocation set, so any party holding the allocations can reproduce and cross-check the manifest roots. These requirements are not observable by the per-leaf verifier, and---as stated in Sec.~\ref{sec:rsmst-properties}---the verifier's security guarantees do not depend on them.
+
+For a tree $\mathcal{S}$, $\Call{RSMSTRoot}{\mathcal{S}}$ returns the root hash and root sum. If $\mathcal{S}$ has one leaf, the root hash is that leaf hash and the root sum is that leaf amount. Otherwise, the  hash and sum of the top internal node are returned.
 
 \subsection{Hash Computation}
 
@@ -784,4 +825,18 @@ where $0\leq n\leq256$, $\delta_i\in\{0,\ldots,255\}$ is the sibling's parent bi
 	\EndFunction
 \end{algorithmic}
 
-The verifier checks value conservation by comparing $v_\mathsf{root}$ to the authenticated source amount for the same asset. The root hash alone is not sufficient: sibling sums are verification-critical proof data because they are committed by every internal node hash.
+The caller checks value conservation by comparing the reconstructed root sum $v_\mathsf{root}$ to the authenticated source amount for the same asset (Sec.~\ref{sec:token-splitting}). The root hash alone is not sufficient for this: sibling sums are verification-critical proof data because they are committed by every internal node hash.
+
+\subsection{Properties}\label{sec:rsmst-properties}
+
+The trust setting is asymmetric: the previous token owner (the splitter) who constructed the tree is untrusted; each output recipient verifies only its own leaf against the manifest's root hash and never sees the tree. Assuming collision resistance of the hash function, $\textsc{rsmst\_verify\_inclusion}$ enforces the following even against an adversarially constructed root:
+
+\begin{itemize}
+	\item \emph{Conservation (no inflation)}: for any set of verifying proofs for pairwise distinct keys against the same root hash, the leaf amounts sum to at most the reconstructed root sum. Every internal node hash commits both children's (hash, sum) pairs, so hash equality forces each chain's running sum to equal the corresponding committed subtree sum---every committed sum is a hard limit for everything provable below it. Chains for distinct keys are forced to coincide from the root down to the first junction whose depth is a bit position where the keys differ, and there they descend into the two disjoint child limits. Strict positivity of leaf amounts and sibling sums and the overflow checks close the argument.
+	\item \emph{Per-key uniqueness}: for a given root hash and key, at most one (data, amount) pair is provable. The descent direction at each junction is recomputed from the key's bits, depths are hash-committed, domain separation distinguishes leaf from node preimages, and the leaf hash commits the full key, so the verifying chain for a key is unique.
+	\item \emph{Root-sum binding}: all verifying proofs against the same root hash reconstruct the same root sum. The conservation comparison against the source amount is therefore consistent across independent verifiers, and the root sum does not need to travel in the manifest.
+\end{itemize}
+
+These guarantees do not rely on the tree being canonical or duplicate-free. A malformed tree can only strand sum budget in sibling entries that correspond to no provable leaf, or waste it on duplicate keys---reducing what can be minted, not inflating it. Canonical construction is required of the splitter for determinism and reproducibility only.
+
+\textbf{Non-goals.} No non-inclusion certificates: without region commitments, the absence of a key is not provable. No consistency proofs: the tree has exactly one version, so there is no state transition to validate. Coherent placement matters only when new leaves must be positioned relative to preserved, partially opaque pre-state.
