@@ -356,31 +356,33 @@ The helper procedure $\textsc{rsmt\_merge\_batch}(r, S)$ receives a current subt
 			\State \Return \Call{rsmt\_build\_subtree}{U}
 		\EndIf
 		\State parse $r$ as internal node $(d, p, r_0, r_1)$
-		\If{$k[0..d) \ne p$ for the first or last key $k$ of $S$}
-			\State let $t < d$ be the lowest position at which such a key diverges from $p$
+		\If{$k[0..d) = p$ for every key $k$ in $S$}
+			\State partition $S$ into $S_0$ and $S_1$ according to bit $d$
+			\State $r_0' \gets \Call{rsmt\_merge\_batch}{r_0, S_0}$
+			\State $r_1' \gets \Call{rsmt\_merge\_batch}{r_1, S_1}$
+			\State \Return the node $(d, p, r_0', r_1')$
+		\Else
+			\State let $t < d$ be the lowest position at which any key in $S$ diverges from $p$
 			\State partition $S$ into $S_0$ and $S_1$ according to bit $t$
 			\State $b \gets p[t]$ \Comment{the branch taken by the old subtree}
 			\If{$b = 0$}
 				\State $r_0' \gets \Call{rsmt\_merge\_batch}{r, S_0}$
-				\State $r_1' \gets \Call{rsmt\_merge\_batch}{\bot, S_1}$
+				\State $r_1' \gets \Call{rsmt\_build\_subtree}{S_1}$
 			\Else
-				\State $r_0' \gets \Call{rsmt\_merge\_batch}{\bot, S_0}$
+				\State $r_0' \gets \Call{rsmt\_build\_subtree}{S_0}$
 				\State $r_1' \gets \Call{rsmt\_merge\_batch}{r, S_1}$
 			\EndIf
 			\State \Return the new node $(t, p[0..t), r_0', r_1')$ \Comment{edge split}
 		\EndIf
-		\State partition $S$ into $S_0$ and $S_1$ according to bit $d$
-		\State $r_0' \gets \Call{rsmt\_merge\_batch}{r_0, S_0}$
-		\State $r_1' \gets \Call{rsmt\_merge\_batch}{r_1, S_1}$
-		\State \Return the node $(d, p, r_0', r_1')$
 	\EndFunction
 \end{algorithmic}
 
-Because $S$ is already sorted in traversal order, the implementation can locate the first relevant divergence by inspecting only the first and the last key of the slice. Thus each recursive call either descends into the already committed frontier or constructs a fresh subtree for a non-empty batch slice, without extra per-key membership lookups.
+Because $S$ is already sorted in traversal order, the implementation can locate the first relevant divergence by inspecting only the first and the last key of the slice. Thus each recursive call either descends into the already committed frontier or constructs a fresh subtree for a batch slice, without extra per-key membership lookups.
 
-The helper procedure $\textsc{rsmt\_build\_subtree}(S)$ is applied only to a non-empty traversal-sorted slice:
+The helper procedure $\textsc{rsmt\_build\_subtree}(S)$ is applied to a traversal-sorted slice:
 
 \begin{enumerate}
+	\item If $S = \langle \rangle$, return $\bot$.
 	\item If $\len{S} = 1$, create a leaf for the single pair in $S$ and return it.
 	\item Otherwise compute the first bit position $d$ at which the first and the last key of $S$ differ. This determines the unique bifurcation depth of the subtree root.
 	\item Partition $S$ into $S_0$ and $S_1$ according to bit $d$, recursively build the two child subtrees, and return the internal node $(d, p, \cdot, \cdot)$ whose region $p = k[0..d)$ is the shared prefix of the keys $k$ in $S$.
@@ -561,7 +563,7 @@ Verifies that key $k$ is absent from a tree with root hash $\rho$.
 			\If{$k[0..d) \ne p$}
 				\State \Return $i = \ell$ \Comment{Divergence junction: valid terminal}
 			\EndIf
-			\State $h \gets h_R$ \textbf{if} $k[d] = 1$ \textbf{else} $h_L$ \Comment{Key-directed descent}
+			\State \textbf{if} $k[d] = 1$ \textbf{then} $h \gets h_R$ \textbf{else} $h \gets h_L$          \Comment{Key-directed descent}
 		\EndFor
 		\State \Return \FALSE \Comment{Chain ended without a terminal}
 	\EndFunction

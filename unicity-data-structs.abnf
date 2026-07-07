@@ -96,11 +96,10 @@
       ;~regions not transmitted: verifier derives $k[0..d)$ from the queried key
       ;~Wire: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
 
-  NonInclusionCertificate = *NonInclusionOpening  ;~$C^\mathsf{exc} = \langle e_1, \ldots, e_\ell \rangle$
+  NonInclusionCertificate = *OpeningJunction *1OpeningLeaf  ;~$C^\mathsf{exc} = \langle e_1, \ldots, e_\ell \rangle$
       ;~chain of one-level openings along the key-directed descent, root first
       ;~terminal: junction whose region is not a prefix of the key, or foreign leaf
       ;~empty chain: valid iff the tree is empty
-  NonInclusionOpening = OpeningLeaf | OpeningJunction
   OpeningLeaf = %x00 Key Bytes  ;~$(k_\ell, v_\ell)$: opened leaf, $33 + |v_\ell|$ bytes; last element only
   OpeningJunction = %x01 Depth Region Hash Hash  ;~$(d, p, h_L, h_R)$: opened junction, 98 bytes
 
