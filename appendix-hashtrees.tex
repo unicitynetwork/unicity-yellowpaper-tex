@@ -243,11 +243,11 @@ Indexed hash trees can be used to provide and verify both inclusion and exclusio
 
 \section{Radix Sparse Merkle Trees}\label{app:rsmt}
 
-A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. It authenticates a finite map $k \mapsto v$, where every stored key appears as exactly one leaf and every internal node records the absolute bit position at which its descendant keys bifurcate, together with the key prefix (the \emph{region}) shared by all keys below it. The implementation documented here uses byte-order-preserving LSB-in-byte bit numbering. Each leaf hash commits to the full 256-bit key, and each internal node hash commits to the explicit bifurcation depth and to the region. Depth and region are absolute properties of a node---splitting an edge above an unchanged subtree alters neither---so batch insertion rehashes only the changed search frontier and the newly created nodes. The region commitment pins every node to its position in the key space; the consistency proof (Sec.~\ref{sec:rsmt-consistency-proof}) relies on it to verify that every new leaf is placed at the position determined by its own key. The tree supports inclusion certificates, non-inclusion certificates and consistency proofs.
+A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. It authenticates a finite map $k \mapsto v$, where every stored key appears as exactly one leaf and every internal node records the absolute bit position at which its descendant keys bifurcate, together with the key prefix (the \emph{region}) shared by all keys below it. Keys are read as big-endian bit strings. Each leaf hash commits to the full 256-bit key, and each internal node hash commits to the explicit bifurcation depth and to the region. Depth and region are absolute properties of a node---splitting an edge above an unchanged subtree alters neither---so batch insertion rehashes only the changed search frontier and the newly created nodes. The region commitment pins every node to its position in the key space; the consistency proof (Sec.~\ref{sec:rsmt-consistency-proof}) relies on it to verify that every new leaf is placed at the position determined by its own key. The tree supports inclusion certificates, non-inclusion certificates and consistency proofs.
 
 \subsection{Tree Structure}
 
-Keys are elements of $\bytes{32}$ (256 bits). Write $k=k_0\|k_1\|\cdots\|k_{31}$ in wire byte order. Bit position $i$ addresses bit $i\bmod 8$ of byte $k_{\lfloor i/8\rfloor}$, where bit $0$ of a byte is its least significant bit. Thus depth $0$ reads the low bit of $k_0$, depth $7$ reads the high bit of $k_0$, depth $8$ reads the low bit of $k_1$, and depth $255$ reads the high bit of $k_{31}$. Tree traversal MUST NOT reinterpret the key as a single big-endian integer for bit addressing.
+Keys are elements of $\bytes{32}$ (256 bits), interpreted as big-endian bit strings. Write $k[i]$ for bit position $i$, where $k[0]$ is the most significant bit of the first byte and $k[255]$ is the least significant bit of the last byte. This bit-string interpretation does not change the wire byte order of keys.
 
 \subsubsection{Node Format}
 
@@ -265,7 +265,7 @@ The region both routes lookups and is part of the Merkle commitment: the commitm
 
 The hash function $H$ is SHA-256. Domain separation is achieved via a one-byte prefix: $\mathtt{0x00}$ for leaves and $\mathtt{0x01}$ for internal nodes.
 
-For hashing, a region $p \in \bits{d}$ is packed into a 32-byte string $\langle p \rangle$: the bits of $p$ are placed at bit positions $0, \ldots, d-1$ (in the bit numbering of this appendix) and all bits at positions $d, \ldots, 255$ are zero. Equivalently, $\langle p \rangle$ is obtained from any descendant key by clearing all bits at positions $\ge d$. Together with the one-byte depth, the packing is injective.
+For hashing, a region $p \in \bits{d}$ is packed into a 32-byte string $\langle p \rangle$ as a 256-bit big-endian bit string: $p$ occupies the first $d$ bits and the remaining suffix bits are zero. Together with the one-byte depth, the packing is injective.
 
 \subsubsection{Function $\textsc{rsmt\_leaf\_hash}$}\label{sec:rsmt-leaf-hash}
 
@@ -460,7 +460,7 @@ An \emph{Inclusion Certificate}\index{Inclusion Certificate!RSMT} $C^\mathsf{inc
 
 An inclusion certificate is a pair $C^\mathsf{inc} = (\mathit{bitmap}, \mathit{siblings})$ where:
 \begin{itemize}
-	\item $\mathit{bitmap} \in \bytes{32}$ -- a 256-bit vector. Bit $d$ is stored as bit $d\bmod 8$ of byte $\lfloor d/8\rfloor$ and is set if and only if a sibling hash is required at depth $d$ on the path from the leaf to the root.
+	\item $\mathit{bitmap} \in \bytes{32}$ -- a 256-bit big-endian bit vector. Bit $d$ is set if and only if a sibling hash is required at depth $d$ on the path from the leaf to the root.
 	\item $\mathit{siblings} = \langle s_1, \ldots, s_n \rangle \in \hashtype^n$ where $n = \mathsf{bitcount}(\mathit{bitmap})$ -- sibling hashes ordered root-to-leaf (ascending depth).
 \end{itemize}
 
@@ -583,7 +583,7 @@ A \emph{consistency proof}\index{consistency proof} demonstrates that a batch $B
 
 \subsubsection{Sort Order}\label{sec:rsmt-sort-order}
 
-The batch and proof use the tree traversal order defined in Section~\ref{app:rsmt}. The sort key of a 256-bit key $k=k_0\|k_1\|\cdots\|k_{31}$ is obtained by independently reversing the bits within each byte while preserving byte order. This places bit $0$ of $k_0$ first in lexicographic order, then bit $1$ of $k_0$, and so on through bit $7$ of $k_{31}$, matching the tree's branching order.
+The batch and proof use the tree traversal order defined in Section~\ref{app:rsmt}. Because keys are read as big-endian bit strings, $\textsc{rsmt\_sort\_key}(k)=k$: ordinary unsigned lexicographic byte order is the traversal order.
 
 \subsubsection{Proof Format}
 
@@ -746,7 +746,7 @@ A \emph{Radix Sparse Merkle Sum Tree}\index{Radix Sparse Merkle Sum Tree} (RSMST
 
 The use-cases (e.g., fungible token splitting) are one-shot: tree is built once and never updated.
 
-The RSMST shares with the RSMT (Appendix~\ref{app:rsmt}) the following conventions: the 256-bit key space and byte-order-preserving LSB-in-byte bit numbering, leaf anchoring by the full key, the absolute bifurcation-depth commitment, and the canonical construction rule (every junction sits at the first bit position at which its descendant keys diverge; single-child chains are compressed away). Differences: RSMST has a single version and a single, per-leaf verification pattern: node hashes commit child sums instead of regions, the inclusion proof format is different, and none of the RSMT's version-transition logic (consistency proofs, openings, non-inclusion certificates) applies. Precise properties are given in Sec.~\ref{sec:rsmst-properties}.
+The RSMST shares with the RSMT (Appendix~\ref{app:rsmt}) the following conventions: the 256-bit key space, big-endian bit-string keys, leaf anchoring by the full key, the absolute bifurcation-depth commitment, and the canonical construction rule (every junction sits at the first bit position at which its descendant keys diverge; single-child chains are compressed away). Differences: RSMST has a single version and a single, per-leaf verification pattern: node hashes commit child sums instead of regions, the inclusion proof format is different, and none of the RSMT's version-transition logic (consistency proofs, openings, non-inclusion certificates) applies. Precise properties are given in Sec.~\ref{sec:rsmst-properties}.
 
 \subsection{Tree Structure}
 

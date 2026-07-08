@@ -3,13 +3,11 @@
 # ===========================================================================
 #
 # NOTE (relation to the Yellowpaper, Appendix "Radix Sparse Merkle Trees"):
-# this prototype demonstrates the data structure and the proof rules, but is
-# NOT binary-compatible with the specification. The spec uses the SDK's
-# byte-order-preserving LSB-in-byte bit numbering; this file uses plain
-# MSB-first order (keys as big-endian integers). The node/leaf hash layouts,
-# opcode set, and every verifier rule are otherwise identical: the two
-# conventions differ only by the fixed bijection on bit positions
-# (and hence the traversal sort order and region packing).
+# this prototype demonstrates the data structure and the proof rules using the
+# same big-endian bit-string key convention as the specification.
+# Keys are represented here as big-endian integers, and proof opcodes are Python
+# tuples rather than the Yellowpaper wire encodings, so this file remains an
+# algorithmic prototype rather than a complete serialization implementation.
 #
 # Hashes
 # ------

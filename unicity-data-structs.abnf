@@ -83,15 +83,14 @@
 ; The aggregation layer uses a Radix Sparse Merkle Tree (RSMT, Appendix~\ref{app:rsmt}).
 ; Leaf-anchored: leaf hashes commit to the full 256-bit key; junction hashes
 ; commit to the bifurcation depth $d$ and the region $p$ (key prefix, packed).
-; Depth $d$ addresses bit $d \bmod 8$ of byte $\lfloor d/8 \rfloor$.
-; Byte order is preserved; bits are read least-significant first within each byte.
+; Keys are read as 256-bit big-endian bit strings; depth $d$ addresses bit $d$.
 
   StateIdentifier = Bytes32  ;~$\mathsf{sid} = H(\mathsf{CBOR}(\nu, h_{\mathsf{st}}))$ -- SMT leaf key
   LeafData = TransactionHash    ;~$h_{\mathsf{tx}}$ -- SMT leaf value
   SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, h_{\mathsf{tx}})$
 
   InclusionCertificate = Bitmap *SiblingHash  ;~$C^\mathsf{inc} = (\mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
-      ;~bitmap: 32 bytes (256 bits); byte $\lfloor d/8 \rfloor$, bit $d \bmod 8$ set iff sibling needed at depth $d$
+      ;~bitmap: 32 bytes (256-bit big-endian bit vector); bit $d$ set iff sibling needed at depth $d$
       ;~siblings: $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, root-to-leaf order
       ;~regions not transmitted: verifier derives $k[0..d)$ from the queried key
       ;~Wire: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
@@ -119,7 +118,7 @@
   OpO = %x03 Depth Region Hash Hash  ;~$O(d, p, h_L, h_R)$: preserved junction opened one level, 98 bytes
   OpOL = %x04 Key Bytes  ;~$O_L(k, v)$: preserved leaf opened, $33 + |v|$ bytes
   Depth = OCTET       ;~$d \in \{0, \ldots, 255\}$
-  Region = Bytes32    ;~$\langle p \rangle$: region packed, bits at positions $\ge d$ cleared
+  Region = Bytes32    ;~$\langle p \rangle$: region packed as a 256-bit big-endian bit string, suffix cleared
   Bitmap = Bytes32    ;~256-bit branching-depth vector
   ZKProof = Bytes     ;~Opaque ZK proof (SNARK/STARK)
 
