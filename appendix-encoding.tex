@@ -6,6 +6,20 @@ Most data structures on the Unicity platform are serialized in the Concise Binar
 
 For data to be hashed or signed, the deterministic encoding rules (as defined in Sec.~4.2 of the RFC~8949) must be used.
 
+\section{Semantic Tag Registry}\label{app:cbor-tags}
+
+\index{CBOR!semantic tags}\index{registry!semantic tags}
+Unicity data structures that are serialized standalone --- persisted, transmitted between parties, or embedded inside other structures --- are wrapped in CBOR semantic tags (RFC~8949, Sec.~3.4), so that a typed value is self-identifying and a decoder expecting one structure rejects any other. Tag numbers are drawn from the first-come-first-served tag space and recorded in a machine-readable registry maintained by the Unicity Foundation\footnote{\url{https://github.com/unicitynetwork/unicity-ids}, file \texttt{cbor-tags.json}.}.
+
+Registry rules:
+\begin{itemize}
+	\item A tag denotes exactly one structure. Structure changes requiring incompatible decoding are made under a new tag or an explicit version field inside the tagged value, never by silently redefining the tag.
+	\item An assigned tag is never reused or reassigned, including tags of retired structures.
+	\item Where a specific structure is expected, decoders MUST reject a wrong or unknown tag (cf.\ Appendix~\ref{app:split-proof-encoding}).
+\end{itemize}
+
+The registry file is the authoritative list of assignments and is not replicated here. Tags referenced by number in this document (e.g.\ \texttt{39044}, the split mint reason) refer to that registry. Mint-reason format tags (Sec.~\ref{sec:mint-justification}) are allocated from the same registry; the catalogue of standard reason formats is in Appendix~\ref{app:reason-formats}.
+
 \section{Tuples}
 
 Tuples are encoded as CBOR arrays in the natural way: a tuple $T$ consisting of $n$ elements, denoted $(T_1, T_2, \ldots, T_n)$ or $\langle T_1, T_2, \ldots, T_n \rangle$ in the specification, is encoded as $n$-element CBOR array with $T_1$ the first elment, $T_2$ the second element, and so on.

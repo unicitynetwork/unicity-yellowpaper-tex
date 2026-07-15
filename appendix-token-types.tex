@@ -1,0 +1,643 @@
+\chapter{Token Type Registry and Standard Token Types}\label{app:token-registry}
+
+This appendix specifies the registries that bind token type identifiers (Sec.~\ref{sec:token-types}) to their definitions, and catalogues the standard mint-reason formats and standard token types. The appendix is developed iteratively: items advance from outline through draft to specified across document revisions, with review feedback in between. The specification roadmap and status is in Sec.~\ref{app:staging}.
+
+\section{Registries}\label{app:registries}
+
+\index{registry!token type}\index{Unicity Foundation}
+The Unicity Foundation maintains machine-readable identifier registries in a public repository\footnote{\url{https://github.com/unicitynetwork/unicity-ids}}. Three registries are relevant to tokens:
+
+\begin{description}
+\item[Semantic tags] (\texttt{cbor-tags.json}) Global CBOR tag assignments, Appendix~\ref{app:cbor-tags}. Mint-reason formats are keyed by these tags.
+\item[Asset metadata] (\texttt{unicity-ids.\textit{network}.json}) Display metadata of deployed assets, keyed by token type identifier; schema in Sec.~\ref{app:asset-metadata}. This is the currently operational registry; it covers external metadata only.
+\item[Token type definitions] The registry of (type identifier, definition manifest) pairs specified in Sec.~\ref{app:type-registry}. It extends the asset-metadata registry with the consensus-relevant fields of $\mathcal{D}_\mathsf{ty}$ (Sec.~\ref{sec:token-type}): admissible reason formats, payload rules and issuance policy parameters.
+\end{description}
+
+Registry entries are coordination data, not trust roots. The consensus-relevant binding between a type identifier and its rules comes from the frozen definition itself --- self-authenticating when the identifier is content-addressed (Sec.~\ref{sec:token-type}) --- while the registry provides discovery, naming, and the social agreement on which definitions exist. Nevertheless, consensus-relevant registry fields MUST be append-only: an entry, once published as active, is never modified or reassigned, only marked deprecated.
+
+\section{Asset Metadata Schema}\label{app:asset-metadata}
+
+\index{registry!asset metadata}
+An asset metadata entry is a JSON object with the following fields:
+
+\begin{longtable}{llp{7.6cm}}
+\textbf{Field} & \textbf{Type} & \textbf{Description} \\
+\hline
+\endhead
+\texttt{network} & string & network name, e.g.\ \texttt{"unicity:testnet2"} \\
+\texttt{assetKind} & string & \texttt{"fungible"} or \texttt{"non-fungible"} \\
+\texttt{name} & string & human-readable asset name \\
+\texttt{symbol} & string & ticker symbol (fungible assets) \\
+\texttt{decimals} & integer & display scaling factor (fungible assets) \\
+\texttt{description} & string & free-text description \\
+\texttt{icons} & array & objects with an \texttt{url} field, pointing to icon images \\
+\texttt{id} & string & lowercase hexadecimal token type identifier $\mathsf{ty}$ \\
+\end{longtable}
+
+Example (Unicity testnet v2 native coin):
+\begin{quote}\small\ttfamily
+\{ "network": "unicity:testnet2", "assetKind": "fungible",\\
+\phantom{\{ }"name": "unicity", "symbol": "UCT", "decimals": 18,\\
+\phantom{\{ }"description": "Unicity testnet v2 native coin",\\
+\phantom{\{ }"icons": [\{"url": "https://\ldots/unicity\_logo\_32.png"\}],\\
+\phantom{\{ }"id": "f581d30f593e4b369d684a4563b5246f07b1d265f7178a2c0a82b81f39c24dc0" \}
+\end{quote}
+
+All fields are presentation-level. In particular, \texttt{decimals} affects display only: on-ledger amounts $v$ are non-negative integers in minimal units (Sec.~\ref{sec:asset-structure}), and no consensus rule depends on the scaling factor. Wallets SHOULD refuse to render assets whose registry entry is missing, rather than display raw identifiers as if they were named assets --- the display-layer analogue of the fail-shut policy (Sec.~\ref{sec:mint-authorization}).
+
+\section{Token Type Registry}\label{app:type-registry}
+
+A token type registry entry publishes the definition manifest behind a type identifier. The manifest is the canonical CBOR structure $b_\mathcal{D}$ from which a content-addressed identifier is derived (Sec.~\ref{sec:token-type}); the registry stores it together with presentation metadata:
+
+\begin{longtable}{lp{9.6cm}}
+\textbf{Field} & \textbf{Description} \\
+\hline
+\endhead
+$\mathsf{ty}$ & token type identifier (unique registry key, never reassigned) \\
+status & \texttt{draft} $\mid$ \texttt{active} $\mid$ \texttt{deprecated} \\
+standard & the standard token type this entry instantiates (e.g.\ UTS-1, Sec.~\ref{app:standard-types}), or a reference (URL and hash) to a frozen custom specification \\
+$\mathsf{RT}$ & admissible mint-reason format tags (Sec.~\ref{app:reason-formats}) \\
+payload rules & parameters of $\Call{ParseAux}{}$, e.g.\ the permitted asset identifiers of a fungible type \\
+issuance parameters & parameters of $\Call{VerifyIssuance}{}$, e.g.\ the issuer predicate hash $H(\mathsf{CBOR}(\predi_\mathsf{issue}))$, a bridge configuration hash $h_\mathsf{cfg}$ (Appendix~\ref{app:bridging-config}), or a proof-system verification key hash $h_\mathsf{vk}$ (Sec.~\ref{app:reason-proof}) \\
+metadata & the asset metadata entry of Sec.~\ref{app:asset-metadata} \\
+\end{longtable}
+
+Lifecycle rules:
+\begin{itemize}
+	\item An entry becomes \texttt{active} only with a complete, frozen definition: allocated reason tags, published parsing and verification rules, and --- for proof-based types --- the frozen verification key.
+	\item Once \texttt{active}, all fields except status and presentation metadata are immutable. Fixing or extending rules means registering a \emph{new} type (cf.\ the vault upgrade discipline, Sec.~\ref{sec:bridge-security}).
+	\item Deprecation is advisory: tokens of a deprecated type remain verifiable; whether to keep the type in the local $\mathcal{TD}$ is each application's decision.
+	\item For content-addressed identifiers, anyone can audit the registry by recomputing $\mathsf{ty} = H(\mathsf{TYPE\_DEF}, b_\mathcal{D})$; a mismatch proves the entry corrupt.
+\end{itemize}
+
+\section{Standard Mint-Reason Formats}\label{app:reason-formats}
+
+\index{mint reason!formats}
+The following reason formats are defined or planned; statuses are those of the specification text (Sec.~\ref{app:staging}).
+
+\begin{longtable}{llll}
+\textbf{Tag} & \textbf{Format} & \textbf{Status} & \textbf{Specification} \\
+\hline
+\endhead
+$\bot$ & absent reason & specified & admissible iff $\bot \in \mathsf{RT}$ (Sec.~\ref{sec:mint-authorization}) \\
+39042 & MintReasonGenesis & reserved & native-coin genesis allocation \\
+39043 & MintReasonReward & reserved & Validator reward issuance \\
+39044 & MintReasonSplit & specified & Sec.~\ref{sec:token-splitting}, Appendix~\ref{app:split-mint-reason} \\
+39048 & BridgeMintReason & specified & Sec.~\ref{sec:bridge-in}, Appendix~\ref{app:bridging-backing-reason} \\
+$\mathsf{ISSUER\_TAG}$ & MintReasonIssuer & draft & Sec.~\ref{app:reason-issuer} \\
+$\mathsf{SLOT\_TAG}$ & MintReasonSlot & draft & Sec.~\ref{app:reason-slot} \\
+$\mathsf{MERGE\_TAG}$ & MintReasonMerge & draft & Sec.~\ref{app:reason-merge} \\
+$\mathsf{CONVERT\_TAG}$ & MintReasonConvert & draft & Sec.~\ref{app:reason-convert} \\
+$\mathsf{PROOF\_TAG}$ & MintReasonProof & draft & Sec.~\ref{app:reason-proof} \\
+$\mathsf{COMPRESS\_TAG}$ & MintReasonCompressed & draft & Sec.~\ref{app:reason-compression} \\
+$\mathsf{NAME\_TAG}$ & MintReasonName & idea & n/a \\
+\end{longtable}
+
+\noindent Tag values for the draft formats (including the auxiliary manifest tags defined below) are to be allocated in the semantic tag registry (Appendix~\ref{app:cbor-tags}) when the drafts are frozen.
+
+\subsection{Genesis Commitment}\label{app:genesis-commitment}
+
+The formats below authorize one specific mint by signing or proving a commitment over all mint fields \emph{except} the reason itself (excluded to avoid a circular commitment, exactly as in the split output commitment, Appendix~\ref{app:split-output-commitment}). Define $\mathsf{MINT\_AUTH}$ as the ASCII byte string \texttt{"UNICITY\_MINT\_AUTH"}. For mint data $D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$, the \emph{genesis commitment} is
+\[
+m_\mathsf{mint} := \mathsf{SHA\text{-}256}\bigl(\mathsf{CBOR}(
+	\mathsf{MINT\_AUTH},\;
+	\alpha,\;
+	\encpred(\predi'),\;
+	\mathsf{salt},\;
+	\mathsf{id},\;
+	\mathsf{ty},\;
+	\auxd'
+)\bigr),
+\]
+with $\mathsf{id} = H(\mathsf{salt}, \alpha)$ and each term encoded as in Appendix~\ref{app:split-output-commitment}. The commitment binds an authorization to exactly one network, recipient, token identifier, token type and payload; an authorization produced for one mint cannot be replayed for any other. Re-presenting the same authorization can only re-create the same single token, whose genesis state is certified at most once (Sec.~\ref{sec:request-validation}).
+
+\subsection{Issuer-Signature Reason}\label{app:reason-issuer}
+
+\index{mint reason!issuer signature}
+Minting is gated by an issuer's authorization. Rather than fixing a signature scheme, the format reuses the predicate framework (Sec.~\ref{sec:predicates}): the type definition pins an \emph{issuance predicate} $\predi_\mathsf{issue}$, and the reason carries an unlocking argument for it. Single-key signature, multi-signature, $k$-of-$n$ threshold, P2SH indirection and time-boxed issuance windows are thereby available with no new machinery.
+
+\begin{itemize}
+	\item \textbf{Type parameters}: $\predi_\mathsf{issue}$, stored in the definition manifest as the predicate hash $H(\mathsf{CBOR}(\predi_\mathsf{issue}))$ or the full encoded predicate.
+	\item \textbf{Reason body}: CBOR array under tag $\mathsf{ISSUER\_TAG}$:
+\end{itemize}
+
+\begin{longtable}{clp{8.6cm}}
+\textbf{Index} & \textbf{Type} & \textbf{Description} \\
+\hline
+0 & unsigned integer & format version; this specification defines version $1$ \\
+1 & CBOR structure & unlocking argument $u$ for $\predi_\mathsf{issue}$, encoded as in Appendix~\ref{app:predicate-encoding} \\
+\end{longtable}
+
+\textbf{Verification} (as $V_{\mathsf{ISSUER\_TAG}}$ in Alg.~\ref{alg:mint-auth}):
+\begin{enumerate}
+	\item Decode $(\mathsf{ver}, u)$ from the reason body; ensure $\mathsf{ver} = 1$.
+	\item $\predi_\mathsf{issue} \gets$ issuance predicate pinned by $\mathcal{D}_\mathsf{ty}$; if the manifest pins only the hash, the full predicate is carried in $u$ and checked against the hash (as in P2SH, Sec.~\ref{sec:p2sh}).
+	\item $m_\mathsf{mint} \gets$ genesis commitment of $D_\mathsf{mint}$ (Sec.~\ref{app:genesis-commitment}).
+	\item Ensure $\predi_\mathsf{issue}(\mathsf{time}(\pi_0), m_\mathsf{mint}, u) = 1$, with $\mathsf{time}(\pi_0)$ extracted from the genesis inclusion proof (Sec.~\ref{sec:time-extraction}).
+\end{enumerate}
+
+\paragraph{Security notes.}
+\begin{description}
+	\item[No replay] $m_\mathsf{mint}$ binds the authorization to one token identifier, recipient and payload (Sec.~\ref{app:genesis-commitment}).
+	\item[No retroactive revocation] A distributed, offline-verifiable token cannot be invalidated after issuance; compromised issuer keys are handled by deprecating the type and registering a successor, which stops \emph{future} issuance only.
+	\item[Supply discipline] Per-token verification is stateless: each genesis verifies independently, so this format alone cannot enforce a total-supply cap --- supply rests on issuer discipline. Where a hard, trustlessly verifiable issuance limit is required, the slot-bound format (Sec.~\ref{app:reason-slot}) is used instead.
+\end{description}
+
+\subsection{Limited Issue Reason}\label{app:reason-slot}
+
+\index{mint reason!slot-bound}\index{issuance limit}
+The issuer-signature format (Sec.~\ref{app:reason-issuer}) leaves total supply unbounded. The limited issue reason format makes an issuance limit \emph{trustlessly} verifiable by every recipient by making every issuance bound to a specific slot. The type definition pre-commits a finite set of $N$ \emph{issuance slots}, each slot deterministically fixes the certification state of its genesis, and the Unicity Service's single-spend rule (Sec.~\ref{sec:request-validation}) --- the same mechanism that prevents double spending --- guarantees that each slot is minted at most once, network-wide, forever. Recipient checks are purely local; the limit holds even against a malicious issuer, without any registry query, global view, or trusted party.
+
+\subsubsection{Slot Commitment}
+
+At type creation the issuer samples independent slot salts $\mathsf{salt}_1, \ldots, \mathsf{salt}_N$, each with at least 128 bits of min-entropy (a stronger requirement than the generic salt rule of Sec.~\ref{sec:mint-tx}: here unpredictability is security-relevant, see below), and fixes per-slot payload constraints $b_1, \ldots, b_N$ with $b_j \in \bytestr \opt$: a non-$\bot$ value mandates the exact genesis payload byte string of slot $j$ (e.g.\ its denomination); $\bot$ leaves the payload to mint time. Define the ASCII domain separators $\mathsf{SLOT\_SALT} = \texttt{"UNICITY\_SLOT\_SALT"}$ and $\mathsf{SLOT\_LEAF} = \texttt{"UNICITY\_SLOT\_LEAF"}$, and derive
+\[
+h_j := \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_SALT}, \mathsf{salt}_j)),
+\qquad
+\mathsf{leaf}_j := \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_LEAF}, h_j, b_j)).
+\]
+The \emph{slot commitment} $r_\mathsf{slots}$ is the root of a Radix Sparse Merkle Tree (Appendix~\ref{app:rsmt}) mapping, for $j = 1, \ldots, N$, the key $k_j$ --- the 256-bit big-endian encoding of $j-1$ --- to the value $\mathsf{leaf}_j$. The type manifest pins $(N, r_\mathsf{slots}, \predi_\mathsf{issue})$, with $2 \le N \le 2^{32}$.
+
+The issuer SHOULD publish the \emph{audit table} $\langle(h_1, b_1), \ldots, (h_N, b_N)\rangle$ alongside the type definition: it reveals no salt, and it lets anyone recompute $r_\mathsf{slots}$, count the slots, and sum the committed denominations --- the issuance limit is thereby a public, independently checkable fact of the frozen type definition. The salts themselves remain secret until their slots are minted.
+
+\subsubsection{Slot Uniqueness}
+
+The mint of slot $j$ MUST use $D_\mathsf{mint}.\mathsf{salt} = \mathsf{salt}_j$. The genesis certification state is then a deterministic function of the slot: $\mathsf{id} = H(\mathsf{salt}_j, \alpha)$, source state hash $\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$, minting key $\mathsf{pk}_\mathsf{mint}$ derived from $\mathsf{id}$ (Appendix~\ref{app:el-constants}), and state identifier $\mathsf{sid} = H(\mathsf{pk}_\mathsf{mint}, \sthash)$. The Unicity Service certifies at most one transaction per state identifier (Sec.~\ref{sec:request-validation}); hence at most one certified genesis per slot can ever exist on network $\alpha$ --- a second mint of slot $j$, by the issuer or anyone else, is rejected exactly as a double spend would be.
+
+Consequently, for a type whose admissible set satisfies $\mathsf{RT} \subseteq \{\mathsf{SLOT\_TAG}, 39044, \mathsf{MERGE\_TAG}, \mathsf{COMPRESS\_TAG}\}$, at most $N$ geneses are ever created by direct issuance, and every other admitted format strictly conserves value (Secs.~\ref{sec:split-verification}, \ref{app:reason-merge}, \ref{app:reason-compression}). The total value ever issued is therefore bounded by $\sum_{j} \Call{Value}{b_j}$, and the token count of a count-capped series by $N$. Admitting any non-conserving format (e.g.\ $\mathsf{ISSUER\_TAG}$) alongside $\mathsf{SLOT\_TAG}$ voids the bound; the admissible set is part of the frozen manifest, so a verifier sees at type-registration time whether the limit is unconditional.
+
+\subsubsection{Reason Body}
+
+CBOR array under tag $\mathsf{SLOT\_TAG}$:
+
+\begin{longtable}{clp{8.6cm}}
+\textbf{Index} & \textbf{Type} & \textbf{Description} \\
+\hline
+0 & unsigned integer & format version; this specification defines version $1$ \\
+1 & unsigned integer & slot index $j$, $1 \le j \le N$ \\
+2 & Inclusion Certificate & RSMT inclusion certificate $C^\mathsf{inc}$; CBOR array \\
+3 & byte string or \texttt{null} & the committed payload constraint $b_j$ \\
+4 & Unlocking Argument & unlocking argument $u$ for $\predi_\mathsf{issue}$ (Appendix~\ref{app:predicate-encoding}); CBOR structure \\
+\end{longtable}
+
+\subsubsection{Verification}
+
+As $V_{\mathsf{SLOT\_TAG}}$ in Alg.~\ref{alg:mint-auth}:
+\begin{enumerate}
+	\item Decode $(\mathsf{ver}, j, \pi_\mathsf{slot}, b_j, u)$; ensure $\mathsf{ver} = 1$ and $1 \le j \le N$.
+	\item Recompute $h \gets \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_SALT}, D_\mathsf{mint}.\mathsf{salt}))$ and $\mathsf{leaf} \gets \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_LEAF}, h, b_j))$; ensure $\textsc{rsmt\_verify\_inclusion}(\pi_\mathsf{slot}, r_\mathsf{slots}, k_j, \mathsf{leaf}) = 1$ (Appendix~\ref{sec:rsmt-verify-inclusion}), with $k_j$ the 256-bit big-endian encoding of $j-1$.
+	\item If $b_j \ne \bot$: ensure $D_\mathsf{mint}.\auxd' = b_j$ byte-exactly.
+	\item $m_\mathsf{mint} \gets$ genesis commitment (Sec.~\ref{app:genesis-commitment}); ensure $\predi_\mathsf{issue}(\mathsf{time}(\pi_0), m_\mathsf{mint}, u) = 1$.
+\end{enumerate}
+The driver additionally validates the payload against $\Call{ParseAux}{}$ and the issuance policy (Alg.~\ref{alg:mint-auth}), as for every format.
+
+\paragraph{Security notes.}
+\begin{description}
+	\item[Hard limit] At most $N$ slot geneses ever, enforced by the single-spend registry; with value-committed slots, cumulative issuance never exceeds $\sum_j \Call{Value}{b_j}$, even if the issuer is malicious or its keys are compromised.
+	\item[No slot blocking] Occupying slot $j$'s certification state requires its $\mathsf{sid}$, which derives from $\mathsf{id}_j = H(\mathsf{salt}_j, \alpha)$. The audit table exposes only $h_j$ --- a domain-separated hash image unrelated to $\mathsf{id}_j$ --- and a certification request itself carries only hash images of the salt (Sec.~\ref{sec:mint-tx}), so even the certified genesis reveals $\mathsf{salt}_j$ no earlier than the token data itself does, by which time the slot is already consumed by the genuine token. Front-running therefore requires inverting SHA-256 or a leak of the issuer's salts.
+	\item[Two-factor issuance] Minting slot $j$ requires both $\mathsf{salt}_j$ (for the leaf check against $r_\mathsf{slots}$) and an unlocking of $\predi_\mathsf{issue}$. Compromise of the signing keys alone, or of the salts alone, mints nothing.
+	\item[Fail-safe availability] Lost salts strand the remaining slots: value fails to be created but is never inflated or redirected. The issuer is responsible for durable, confidential storage of unused salts.
+	\item[Denomination rigidity] Committed denominations are fixed at type creation; economic flexibility comes after minting, via split and merge, which conserve the capped total.
+\end{description}
+
+\paragraph{Open (claim-drop) variant.} Publishing the salts themselves and setting $\predi_\mathsf{issue}$ to the trivially-true predicate turns the series into a first-come-first-served public claim: whoever first certifies slot $j$ owns it, uniqueness and the limit still enforced by the platform. Deployments using this variant accept that ``blocking'' and ``claiming'' coincide by design.
+
+\subsection{Merge Reason}\label{app:reason-merge}
+
+\index{token!merging}\index{mint reason!merge}
+Merging is the dual of splitting (Sec.~\ref{sec:token-splitting}): $k \ge 2$ source tokens of the same fungible type are burned and one output token carrying the summed assets is minted. It serves consolidation of change and is the aggregation substrate for pooled assets (Sec.~\ref{app:uts-pool}). A type admits merging by including $\mathsf{MERGE\_TAG}$ in $\mathsf{RT}$.
+
+Unlike a split, a merge needs no allocation tree: all sources are presented in full within the mint reason and verified through the nested-token worklist (Sec.~\ref{sec:nested-verification}), so value conservation is direct arithmetic over verified payloads.
+
+\subsubsection{Data Structures}
+
+Define $\mathsf{MERGE\_OUTPUT}$ as the ASCII byte string \texttt{"UNICITY\_MERGE\_OUTPUT"}. Let the source tokens have pairwise distinct identifiers, listed in strictly increasing bytewise order: $\mathsf{id}_1 < \cdots < \mathsf{id}_k$, with $2 \le k \le K_\mathsf{max}$, $K_\mathsf{max} = 64$ (in any case bounded by the budget $\Lambda$). For output mint data $D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$ the \emph{merge output commitment} is
+\[
+d := \mathsf{SHA\text{-}256}\bigl(\mathsf{CBOR}(
+	\mathsf{MERGE\_OUTPUT},\;
+	\langle\mathsf{id}_1,\ldots,\mathsf{id}_k\rangle,\;
+	\alpha,\;
+	\encpred(\predi'),\;
+	\mathsf{salt},\;
+	\mathsf{id},\;
+	\mathsf{ty},\;
+	\auxd'
+)\bigr),
+\]
+with term encodings as in Appendix~\ref{app:split-output-commitment} and the source list as a CBOR array of byte strings. The commitment binds the exact source set and the complete output (except the mint reason, excluded to avoid circularity).
+
+The \emph{merge manifest} is the byte string $d$ under semantic tag $\mathsf{MERGE\_MANIFEST\_TAG}$; let $b_\mathcal{M}$ be its canonical encoding. The distinct manifest tag separates merge burns from split burns: a burn commits unambiguously to one protocol.
+
+The mint reason is a CBOR array under tag $\mathsf{MERGE\_TAG}$ containing the $k$ complete certified burned source tokens $\mathcal{L}_{\mathsf{burn},1}, \ldots, \mathcal{L}_{\mathsf{burn},k}$, ordered by their strictly increasing identifiers.
+
+\subsubsection{Merge Protocol}
+
+\begin{enumerate}
+	\item Verify every source token completely, including payloads and mint reasons. All sources MUST have byte-identical token type $\mathsf{ty}$ and network identifier $\alpha$; merging is not a type-conversion mechanism.
+	\item Compute the output collection: for every asset identifier occurring in any source, $v_\mathsf{out}(\mathsf{aid}) = \sum_i v_i(\mathsf{aid})$ (missing entries are zero), rejecting any sum $\ge 2^{256}$. The output payload $\auxd'$ is exactly this canonical summed collection --- no asset omitted, none introduced.
+	\item Prepare the output mint fields, derive $\mathsf{id} = H(\mathsf{salt}, \alpha)$, compute $d$ and $b_\mathcal{M}$. Durably store the output mint fields and manifest before proceeding.
+	\item Burn each source with auxiliary data exactly $b_\mathcal{M}$ and recipient predicate $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$ (Sec.~\ref{sec:burn-transaction}). Burns may execute in any order; an interruption strands no value permanently, since the pre-committed output can be minted whenever all burns eventually complete.
+	\item Mint the output with the reason listing the burned sources.
+\end{enumerate}
+
+\subsubsection{Merge Verification}
+
+As $V_{\mathsf{MERGE\_TAG}}$ in Alg.~\ref{alg:mint-auth}; every failed check rejects.
+\begin{enumerate}
+	\item Decode the reason under the strict rules of Appendix~\ref{app:split-proof-encoding}; require $2 \le k \le K_\mathsf{max}$.
+	\item Decode the output payload: $\mathcal{A}_\mathsf{out} \gets \Call{Assets}{D_\mathsf{mint}.\mathsf{ty}, D_\mathsf{mint}.\auxd'}$, a non-empty canonical collection of positive amounts.
+	\item For each source $\mathcal{L}_{\mathsf{burn},i}$: require genesis token type byte-identical to $D_\mathsf{mint}.\mathsf{ty}$ and network identifier $\mathcal{T}.\alpha$; require the identifiers $\mathsf{id}(\mathcal{L}_{\mathsf{burn},i})$ strictly increasing in $i$; hand the token to $\mathsf{collect}$ for worklist verification.
+	\item Recompute $d$ from $\langle\mathsf{id}(\mathcal{L}_{\mathsf{burn},1}),\ldots,\mathsf{id}(\mathcal{L}_{\mathsf{burn},k})\rangle$ and the output mint fields other than $\mathsf{reason}$; form $b_\mathcal{M}$. Require every source to end in a certified transfer whose auxiliary data is exactly $b_\mathcal{M}$ and whose recipient predicate is exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.
+	\item Conservation: compute the canonical summed collection over the source payloads, rejecting overflow; require it to equal $\mathcal{A}_\mathsf{out}$ exactly --- the same asset identifiers with the same amounts.
+\end{enumerate}
+
+\paragraph{Security notes.}
+\begin{description}
+	\item[Authenticity] Every source is verified under the same $\Gamma$, $\mathcal{T}$ and remaining budget as the output (Sec.~\ref{sec:verifier-registry}).
+	\item[No double counting] Strictly increasing identifiers exclude duplicate sources within a merge; the single-spend property (Sec.~\ref{sec:request-validation}) excludes burning a source twice at all; and $d$ binds each burn to this exact source set and output, so a burn cannot be replayed in a different merge.
+	\item[No inflation] Exact conservation with overflow rejection; byte-identical type excludes conversion (as in split verification, Sec.~\ref{sec:split-verification}, check~6).
+	\item[Fixed ownership] The output recipient, salt and payload are committed by $d$ before any irreversible burn.
+	\item[Value risk, not inflation risk] As with splits, failing to mint the pre-committed output destroys value but can never create or redirect it; the merging party is responsible for durable storage of the pre-committed data.
+\end{description}
+
+\paragraph{Provenance growth.} The merge reason embeds $k$ complete tokens, each with its own history; repeated merging therefore grows provenance multiplicatively, bounded by $\Lambda$. The intended composition is with history compression (Sec.~\ref{app:reason-compression}): once active, sources SHOULD be compressed before merging, keeping merged-token size proportional to $k$ rather than to total ancestral history.
+
+\subsection{Conversion Reason}\label{app:reason-convert}
+
+\index{mint reason!conversion}
+Split and merge conserve value \emph{within} one token type. The conversion format carries value \emph{across} a type boundary: a mint of type $\mathsf{ty}_\mathsf{out}$ is authorized by a certified transition (transfer or burn) of a \emph{source} token of a different type $\mathsf{ty}_\mathsf{in}$, whose own validation rules committed to the output and debited whatever the output credits. The canonical use is pool entry and exit --- share tokens minted against pool deposits, plain tokens minted against pool withdrawals (Appendix~\ref{app:autonomous-pools}).
+
+The pattern is the familiar one: the authorizing transition's auxiliary data contains, as mandated by $\mathsf{ty}_\mathsf{in}$'s type rules, a \emph{conversion output commitment}
+\[
+d := \mathsf{SHA\text{-}256}\bigl(\mathsf{CBOR}(
+	\mathsf{CONVERT\_OUTPUT},\;
+	\mathsf{id}_\mathsf{src},\;
+	\alpha,\;
+	\encpred(\predi'),\;
+	\mathsf{salt},\;
+	\mathsf{id},\;
+	\mathsf{ty}_\mathsf{out},\;
+	\auxd'
+)\bigr)
+\]
+over the complete output mint fields except the reason ($\mathsf{CONVERT\_OUTPUT} = \texttt{"UNICITY\_CONVERT\_OUTPUT"}$; term encodings as in Appendix~\ref{app:split-output-commitment}). One commitment authorizes exactly one mint: $d$ fixes the salt, hence the output identifier, hence a genesis state certified at most once.
+
+\begin{itemize}
+	\item \textbf{Type opt-in, both sides}: $\mathsf{ty}_\mathsf{out}$'s manifest names its admissible \emph{conversion sources} $\mathcal{CS}$ --- the set of source types (or a rule identifying them) whose transitions may mint $\mathsf{ty}_\mathsf{out}$; $\mathsf{ty}_\mathsf{in}$'s transfer rules define which of its transitions commit conversion outputs, where in the transition record the commitment sits, and what the transition debits in exchange. Verifying a conversion therefore requires \emph{both} type definitions in $\Gamma.\mathcal{TD}$; either one missing is a fail-shut rejection (Sec.~\ref{sec:mint-authorization}).
+	\item \textbf{Reason body}: CBOR array under tag $\mathsf{CONVERT\_TAG}$: $[\mathsf{ver}, i, \mathcal{L}_\mathsf{src}]$ --- format version ($1$), the index $i \ge 1$ of the committing transition, and the complete source token up to and including transition $i$.
+\end{itemize}
+
+\textbf{Verification} (as $V_{\mathsf{CONVERT\_TAG}}$ in Alg.~\ref{alg:mint-auth}):
+\begin{enumerate}
+	\item Decode $(\mathsf{ver}, i, \mathcal{L}_\mathsf{src})$; ensure $\mathsf{ver} = 1$.
+	\item Let $\mathsf{ty}_\mathsf{in}$ be the source's genesis token type; ensure $\mathsf{ty}_\mathsf{in} \in \mathcal{D}_{\mathsf{ty}_\mathsf{out}}.\mathcal{CS}$ and the source's network identifier equals $\mathcal{T}.\alpha$; hand $\mathcal{L}_\mathsf{src}$ to $\mathsf{collect}$ for worklist verification (which re-runs $\mathsf{ty}_\mathsf{in}$'s transition rules over the source's entire history).
+	\item Recompute $d$ from $\mathsf{id}(\mathcal{L}_\mathsf{src})$ and the output mint fields other than $\mathsf{reason}$; ensure transition $i$ of $\mathcal{L}_\mathsf{src}$ exists and its record contains exactly $d$ at the position mandated by $\mathsf{ty}_\mathsf{in}$'s rules.
+\end{enumerate}
+
+\paragraph{Soundness condition.} The format itself is conservation-neutral: it proves only that a certified source transition committed to this exact output. \emph{What} the output is worth, and that the source debited it, are properties of $\mathsf{ty}_\mathsf{in}$'s transition rules --- which the worklist verification of $\mathcal{L}_\mathsf{src}$ re-checks in full. A source type whose rules commit outputs without debiting them simply defines an inflationary conversion; $\mathsf{ty}_\mathsf{out}$'s registration of $\mathcal{CS}$ is precisely the statement that its verifiers accept those source rules as sound. (Split and merge are, in retrospect, same-type special cases of this pattern with burn-bound rather than transition-bound commitments; they remain separately specified.)
+
+\subsection{Proof-Carrying Reason}\label{app:reason-proof}
+
+\index{mint reason!zero-knowledge proof}
+Minting is gated by a succinct (optionally zero-knowledge) proof of an arbitrary, type-defined statement: the general form of which the bridge backing proof and the split proof are hand-rolled special cases. The token type is matched with a verification key: the type definition pins the proof system $\mathsf{PS}$, the verification key hash $h_\mathsf{vk}$, and the \emph{public-input schema} --- the deterministic derivation of the public input vector from the genesis and the reason body.
+
+\begin{itemize}
+	\item \textbf{Type parameters}: $(\mathsf{PS}, h_\mathsf{vk}, \text{public-input schema})$, all frozen in the definition manifest. Content-addressed derivation $\mathsf{ty} = H(\mathsf{TYPE\_DEF}, b_\mathcal{D})$ is RECOMMENDED, making the token type a commitment to its own verification key.
+	\item \textbf{Reason body}: CBOR array under tag $\mathsf{PROOF\_TAG}$:
+\end{itemize}
+
+\begin{longtable}{clp{8.6cm}}
+\textbf{Index} & \textbf{Type} & \textbf{Description} \\
+\hline
+0 & unsigned integer & format version; this specification defines version $1$ \\
+1 & byte string & verification key $\mathsf{vk}$ \\
+2 & CBOR structure & auxiliary public inputs $x_\mathsf{aux}$, per the type's schema \\
+3 & byte string & proof $\pi_\mathsf{zk}$ \\
+\end{longtable}
+
+\textbf{Verification} (as $V_{\mathsf{PROOF\_TAG}}$ in Alg.~\ref{alg:mint-auth}):
+\begin{enumerate}
+	\item Decode $(\mathsf{ver}, \mathsf{vk}, x_\mathsf{aux}, \pi_\mathsf{zk})$; ensure $\mathsf{ver} = 1$ and $H(\mathsf{vk}) = \mathcal{D}_\mathsf{ty}.h_\mathsf{vk}$.
+	\item $x \gets \Call{PublicInputs}{m_\mathsf{mint}(D_\mathsf{mint}), x_\mathsf{aux}}$ per the type's schema. The schema MUST include the genesis commitment $m_\mathsf{mint}$ (Sec.~\ref{app:genesis-commitment}) in $x$, so the proven statement binds this exact mint.
+	\item Ensure $\mathsf{PS}.\mathsf{Verify}(\mathsf{vk}, x, \pi_\mathsf{zk}) = 1$.
+\end{enumerate}
+
+\paragraph{Security notes.} Soundness reduces to the proof system's knowledge soundness and the immutability of $h_\mathsf{vk}$; the upgrade discipline is that of Sec.~\ref{sec:bridge-security}: a relation is never swapped in place, a new relation is a new type. The semantics of the proven statement is part of the frozen definition --- a recipient who cannot obtain and understand the statement's specification MUST NOT register the type (fail-shut). Proof verification cost is constant for SNARKs and is charged against the budget $\Lambda$.
+
+\subsection{History-Compression Reason}\label{app:reason-compression}
+
+\index{token compression}
+Compression replaces a token's transaction history with a succinct proof of its validity (lifecycle stage \emph{Compression}, Sec.~\ref{sec:token-lifecycle}), bounding token size and verification cost as history grows. The construction mirrors the split and merge protocols --- burn, then re-mint against the burn --- with the embedded source token replaced by a zero-knowledge validity proof of it: the source's transaction sequence, nested mint reasons and payload are validated inside the proving relation (e.g.\ in a zkVM), and the replacement token is \emph{equivalent} to the original: same type, same payload, fresh identifier linked to the old one.
+
+\subsubsection{Setting and Constants}
+
+The compression relation $\mathfrak{R}_\mathsf{c}$, its proof system, and its verification key $\mathsf{vk}_\mathsf{c}$ are \emph{network-level} constants: they are frozen and published in the registry (Sec.~\ref{app:type-registry}) before activation, and every verifier pins $h_{\mathsf{vk}_\mathsf{c}} = H(\mathsf{vk}_\mathsf{c})$ as part of its $\Gamma$. The upgrade discipline of Sec.~\ref{sec:bridge-security} applies: a corrected or extended relation is a new constant under a new tag, never an in-place replacement. Define $\mathsf{COMPRESS\_OUTPUT}$ as the ASCII byte string \texttt{"UNICITY\_COMPRESS\_OUTPUT"}.
+
+A token type opts in by including $\mathsf{COMPRESS\_TAG}$ in $\mathsf{RT}$. Its issuance policy $\Call{VerifyIssuance}{}$ dispatches on the reason tag: for a $\mathsf{COMPRESS\_TAG}$ genesis the original issuance authorization has already been checked inside the relation, so the policy checks only the compression binding below.
+
+\subsubsection{Protocol}
+
+\begin{enumerate}
+	\item The owner prepares the replacement mint fields $D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$ with $\mathsf{ty}$ and $\auxd'$ byte-identical to the source's genesis values, and computes the \emph{compression output commitment}
+	\[
+	d := \mathsf{SHA\text{-}256}\bigl(\mathsf{CBOR}(
+		\mathsf{COMPRESS\_OUTPUT},\;
+		\mathsf{id}_\mathsf{src},\;
+		\alpha,\;
+		\encpred(\predi'),\;
+		\mathsf{salt},\;
+		\mathsf{id},\;
+		\mathsf{ty},\;
+		\auxd'
+	)\bigr),
+	\]
+	with term encodings as in Appendix~\ref{app:split-output-commitment}. The \emph{compression manifest} is $d$ under semantic tag $\mathsf{COMPRESS\_MANIFEST\_TAG}$, with canonical encoding $b_\mathcal{C}$.
+	\item The owner burns the source token with auxiliary data exactly $b_\mathcal{C}$ and recipient predicate $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{C}))$, and produces a proof $\pi_\mathsf{zk}$ for $\mathfrak{R}_\mathsf{c}$ with the public inputs below.
+	\item The replacement is minted with reason under tag $\mathsf{COMPRESS\_TAG}$: the CBOR array $[\mathsf{ver}, x, \pi_\mathsf{zk}]$ with $\mathsf{ver} = 1$.
+\end{enumerate}
+
+\subsubsection{Public Inputs}
+
+\begin{longtable}{clp{8.2cm}}
+\textbf{Index} & \textbf{Field} & \textbf{Description} \\
+\hline
+\endhead
+0 & $\mathsf{ver}$ & relation version; this specification defines version $1$ \\
+1 & $h_\mathcal{T}$ & trust base hash $H(\mathcal{T})$ \\
+2 & $\mathsf{id}_\mathsf{src}$ & source token identifier \\
+3 & $\mathsf{ty}$ & token type \\
+4 & $h_{\auxd}$ & $\mathsf{SHA\text{-}256}(\auxd'_0)$ of the source genesis payload \\
+5 & $d$ & compression output commitment \\
+\end{longtable}
+
+\subsubsection{The Relation}
+
+$\mathfrak{R}_\mathsf{c}(x; \mathsf{w})$ holds iff all of the following, for witness $\mathsf{w}$ comprising the trust base $\mathcal{T}$, an anchor certificate $UC^*$, the source token $\mathcal{L}$ and its anchored inclusion proofs:
+\begin{enumerate}
+	\item \textbf{Anchor}: $H(\mathcal{T}) = x.h_\mathcal{T}$, and $UC^*$ verifies under $\mathcal{T}$, certifying the SMT root $h^* = UC^*.\mathcal{IR}.h$. Since the SMT is add-only (Sec.~\ref{sec:smt}), one recent root anchors the token's entire history.
+	\item \textbf{Lineage}: $\Call{VerifyToken}{\mathcal{L}, \mathcal{T}}$ in \emph{anchored} mode (Appendix~\ref{app:bridging-anchor}): each certified transaction's leaf is shown included under $h^*$ instead of verifying one Unicity Certificate per transition. Transitions whose predicate evaluation reads the reference time $\tau$ are handled by hybrid anchoring (below).
+	\item \textbf{Genesis binding}: $\mathsf{id}(\mathcal{L}) = x.\mathsf{id}_\mathsf{src}$; the genesis token type equals $x.\mathsf{ty}$; $\mathsf{SHA\text{-}256}(\auxd'_0) = x.h_{\auxd}$; and the genesis mint authorization (Alg.~\ref{alg:mint-auth}) holds for the source, evaluated with the in-relation format set $\{\bot, \mathsf{ISSUER\_TAG}, 39044, \mathsf{MERGE\_TAG}, \mathsf{COMPRESS\_TAG}\}$. In the $\mathsf{COMPRESS\_TAG}$ case the embedded proof is verified against $\mathsf{vk}_\mathsf{c}$ \emph{inside} the relation --- the recursion that makes repeated compression constant-cost. Reason formats that consult external state (bridge backing, Sec.~\ref{sec:bridge-in}) are outside version~1: such types simply do not include $\mathsf{COMPRESS\_TAG}$ in $\mathsf{RT}$.
+	\item \textbf{Termination}: the final certified transaction of $\mathcal{L}$ is a burn whose auxiliary data is exactly $b_\mathcal{C}$ for the manifest containing $x.d$ and whose recipient predicate is exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{C}))$.
+\end{enumerate}
+
+\paragraph{Hybrid anchoring.} Anchored inclusion under $h^*$ proves that a transition was certified, but does not carry the per-round certified reference time $\mathcal{IR}.t$ that time-dependent predicates ($\predi_\mathsf{tlock}$, $\predi_\mathsf{htlc}$) consume (Sec.~\ref{sec:time-extraction}). For exactly those transitions, the witness additionally contains the transition's original Unicity Certificate; the relation verifies it under $\mathcal{T}$ and evaluates the predicate with $\tau = UC.\mathcal{IR}.t$, exactly as an ordinary verifier would. All other transitions remain anchored, so proving cost grows with the number of time-dependent transitions in the history, not with its length. This lifts the anchored-mode restriction inherited from Appendix~\ref{app:bridging-anchor}.
+
+\subsubsection{Recipient Verification}
+
+As $V_{\mathsf{COMPRESS\_TAG}}$ in Alg.~\ref{alg:mint-auth}:
+\begin{enumerate}
+	\item Decode $[\mathsf{ver}, x, \pi_\mathsf{zk}]$; ensure $\mathsf{ver} = x.\mathsf{ver} = 1$.
+	\item Ensure $x.h_\mathcal{T} = H(\mathcal{T})$ --- the proof speaks about the verifier's own network.
+	\item Ensure $x.\mathsf{ty} = D_\mathsf{mint}.\mathsf{ty}$ and $\mathsf{SHA\text{-}256}(D_\mathsf{mint}.\auxd') = x.h_{\auxd}$ --- the replacement carries the source's exact type and payload.
+	\item Recompute $d$ from $x.\mathsf{id}_\mathsf{src}$ and the replacement mint fields other than $\mathsf{reason}$; ensure $d = x.d$ --- the burned source committed to exactly this replacement.
+	\item Verify $\pi_\mathsf{zk}$ against the pinned $\mathsf{vk}_\mathsf{c}$ and public inputs $x$.
+\end{enumerate}
+
+\paragraph{Security notes.}
+\begin{description}
+	\item[Authenticity] By knowledge soundness, an accepting proof implies a genuine certified source history satisfying every check of $\Call{VerifyToken}{}$, including the source's own mint authorization.
+	\item[Equivalence] Type and payload equality (recipient checks~3) exclude compression from creating, destroying or reclassifying value; the replacement is the source under a new identifier.
+	\item[No double replacement] The source burn is single-spend, and $d$ commits to one exact replacement (salt, hence identifier, recipient, payload); a second replacement would require a second burn of an already-spent state.
+	\item[Identity linkage] $x.\mathsf{id}_\mathsf{src}$ is public, so applications tracking a token across compression follow the identifier chain; the replacement identifier is necessarily fresh, as the source genesis state is already spent.
+	\item[Frozen relation] Trust in $\pi_\mathsf{zk}$ reduces to the published $\mathfrak{R}_\mathsf{c}$ and immutable $\mathsf{vk}_\mathsf{c}$; no party can substitute a weaker relation after activation.
+\end{description}
+
+\paragraph{Open items (next revision).} (i)~Proof-system profile: a recursion-friendly system for check~3's self-verification. (ii)~In-relation budget accounting mirroring $\Lambda$. (iii)~A formal statement of $\Call{VerifyToken}{}$-in-circuit, shared with the bridging relation (Appendix~\ref{app:bridging-relation}). (iv)~Inclusion of type-defined per-transfer checks in the relation, prerequisite to compressing pool tokens (Appendix~\ref{app:autonomous-pools}).
+
+\section{Standard Token Types}\label{app:standard-types}
+
+\index{token type!standard}
+Standard token types are identified as \emph{UTS-$n$} (Unicity Token Standard); numbers are assigned in the registry. A standard fixes $\mathsf{RT}$, $\Call{ParseAux}{}$ and the shape of $\Call{VerifyIssuance}{}$; a concrete deployed type is an instance of a standard with concrete parameters and its own type identifier.
+
+\subsection{UTS-0: Blank Container}\label{app:uts-blank}
+
+A type reserved for arbitrary, potentially absent payload, with unrestricted minting.
+
+\begin{itemize}
+	\item \textbf{Type identifier}: a single well-known value: the content-addressed identifier (Sec.~\ref{sec:token-type}) of the canonical UTS-0 definition manifest, recorded in the registry.
+	\item $\mathsf{RT} = \{\bot\}$ -- no mint reason; anyone may mint.
+	\item $\Call{ParseAux}{}$ -- accepts any byte string, including absent.
+	\item $\Call{VerifyIssuance}{} \equiv 1$.
+\end{itemize}
+
+A blank token still inherits the platform guarantees: a unique identifier, a certified ownership chain, and double-spend protection. What it lacks is any issuance semantics --- it proves that \emph{someone} minted it, nothing more. It suits application-defined artifacts (tickets, attestations, session tokens, testing) where the application layer assigns and validates its own $\auxd'$ semantics. Generic wallets MUST NOT present UTS-0 tokens as carrying value.
+
+\subsection{UTS-1: Issued Fungible Asset}\label{app:uts-fungible}
+
+The fungible asset standard (the ERC-20 analogue): a divisible, issuer-gated container of assets.
+
+\begin{itemize}
+	\item $\Call{ParseAux}{}$ -- the canonical asset collection decoding $\Call{Assets}{}$ (Sec.~\ref{sec:asset-structure}, canonical rules of Appendix~\ref{app:split-proof-encoding}); the payload rules pin the permitted asset identifiers.
+	\item $\mathsf{RT} = \{\mathsf{ISSUER\_TAG}, 39044\}$ -- primary issuance by issuer authorization (Sec.~\ref{app:reason-issuer}); change-making by split (Sec.~\ref{sec:token-splitting}). The set MAY additionally include $\mathsf{MERGE\_TAG}$ to permit consolidation (Sec.~\ref{app:reason-merge}) and $\mathsf{COMPRESS\_TAG}$ once compression is active (Sec.~\ref{app:reason-compression}). A \emph{bridged} fungible asset is the variant with $\mathsf{RT} = \{39048, 39044\}$ and the bridge configuration $h_\mathsf{cfg}$ as issuance parameter (Sec.~\ref{sec:bridged-assets}).
+	\item $\Call{VerifyIssuance}{}$ -- for $\mathsf{ISSUER\_TAG}$ geneses, checks the pinned issuer predicate and any per-mint payload constraints (e.g.\ permitted asset identifiers); split geneses are constrained by the split verifier itself (type and value conservation, Sec.~\ref{sec:split-verification}).
+	\item \textbf{Metadata}: a registry entry with $\texttt{assetKind} = \texttt{"fungible"}$, carrying name, symbol, decimals and icons (Sec.~\ref{app:asset-metadata}).
+\end{itemize}
+
+A variant with a trustlessly verifiable maximum supply is UTS-3 (Sec.~\ref{app:uts-capped}).
+
+\subsection{UTS-2: Non-Fungible Token}\label{app:uts-nft}
+
+The non-fungible token standard (the ERC-721 analogue): each token is one unique item, identified by its token identifier $\mathsf{id}$ (Sec.~\ref{sec:mint-tx}).
+
+\begin{itemize}
+	\item $\Call{ParseAux}{}$ -- the genesis payload is a CBOR array $[\mathsf{ver}, h_\mathsf{content}, \mathsf{uri}]$: format version ($1$); the 32-byte hash of the immutable content; and an optional locator hint ($\bot$ allowed). The content is authenticated by $h_\mathsf{content}$ alone; the URI is a non-authoritative convenience.
+	\item Not splittable: $\mathsf{RT}$ excludes 39044, and the payload is not an asset collection.
+	\item Two deployment profiles:
+	\begin{description}
+		\item[Curated collection] $\mathsf{RT} = \{\mathsf{ISSUER\_TAG}\}$; the type is the collection, and the collection issuer authorizes each mint. The issuer is responsible for not authorizing duplicate content.
+		\item[Open collection] $\mathsf{RT} = \{\bot\}$; anyone mints. Token identifiers remain unique, but nothing prevents two tokens referencing the same content --- provenance must then be established at the application layer (e.g.\ the earlier certified genesis wins, or content signed by its creator).
+	\end{description}
+	\item \textbf{Metadata}: a registry entry with $\texttt{assetKind} = \texttt{"non-fungible"}$ describes the collection; per-item metadata lives in the content addressed by $h_\mathsf{content}$.
+\end{itemize}
+
+The authoritative item data is the genesis payload; transfer-level auxiliary data is free-form transport (Sec.~\ref{sec:mint-authorization}) and never redefines the item. A collection with a trustlessly verifiable maximum size is UTS-3 (Sec.~\ref{app:uts-capped}).
+
+\subsection{UTS-3: Capped-Issuance Series}\label{app:uts-capped}
+
+\index{token type!capped issuance}
+The capped variants of UTS-1 and UTS-2: issuance is signature- or multisig-gated as before, but the issuance limit is enforced by the platform (slot-bound reason, Sec.~\ref{app:reason-slot}) rather than by issuer discipline, so every recipient validates it locally and trustlessly.
+
+\begin{itemize}
+	\item \textbf{Type parameters}: the slot commitment $(N, r_\mathsf{slots}, \predi_\mathsf{issue})$, frozen in the manifest; the published audit table makes $N$ and the committed denominations publicly checkable (Sec.~\ref{app:reason-slot}).
+	\item $\mathsf{RT} = \{\mathsf{SLOT\_TAG}\}$, optionally extended with 39044, $\mathsf{MERGE\_TAG}$ and $\mathsf{COMPRESS\_TAG}$ --- all value-conserving, so the limit remains unconditional. No other issuance format may be admitted.
+\end{itemize}
+
+\paragraph{Capped fungible asset.} Payload rules as UTS-1. Each slot commits its denomination, $b_j = $ the canonical encoding of $\{(\mathsf{aid}, v_j)\}$; the maximum supply is
+\[
+X = \sum_{j=1}^{N} v_j,
+\]
+a public constant of the type: circulating supply can only reach $X$ if all slots are minted, and only decrease thereafter (burns). Typically the schedule is uniform ($v_j = X/N$) or in mixed denominations; holders obtain arbitrary amounts post-mint by split and merge. The registry metadata SHOULD state $X$.
+
+\paragraph{Capped collection (NFT series).} Payload rules as UTS-2; the series contains at most $N$ items, and each item carries a public, verifier-checked serial number: token $j$ provably is \emph{item $j$ of a series of at most $N$}. Two sub-variants, per slot:
+\begin{description}
+	\item[Pre-committed content] $b_j$ fixes the exact payload $[\mathsf{ver}, h_{\mathsf{content},j}, \mathsf{uri}_j]$ at type creation: the entire series --- membership, order and content --- is frozen before the first mint, and no two committed items need trust to be distinct (their content hashes are in the public audit table).
+	\item[Open content] $b_j = \bot$: only the count and serial numbers are capped; content is chosen at mint time under the issuer's authorization.
+\end{description}
+
+The type identifier SHOULD be content-addressed (Sec.~\ref{sec:token-type}), making $\mathsf{ty}$ itself a commitment to $(N, r_\mathsf{slots}, \predi_\mathsf{issue})$: the cap is then bound into every token of the type by construction.
+
+\subsection{UTS-4: Pooled Assets}\label{app:uts-pool}
+
+\index{token pool}
+A \emph{pool} aggregates value of one fungible asset type into a single token under shared control. With the merge reason (Sec.~\ref{app:reason-merge}) as the aggregation primitive, two profiles are distinguished by where the pool's accounting logic runs.
+
+\paragraph{Profile A: Committee pool.} Fully expressible with the machinery already specified:
+\begin{itemize}
+	\item The \emph{pool token} is an ordinary UTS-1 token whose owner predicate is a multi-party condition: $\predi_\mathsf{msig}$, $\predi_\mathsf{tsig}$ ($k$-of-$n$), or a P2SH-wrapped governance predicate (Sec.~\ref{sec:standard-predicates}). The underlying asset type includes $\mathsf{MERGE\_TAG}$ and 39044 in $\mathsf{RT}$.
+	\item \emph{Deposit}: the depositor transfers a token of the pooled type to the pool predicate; the committee merges it into the pool token. \emph{Withdrawal}: the committee splits the pool token, sending one output to the withdrawer and the remainder back to the pool predicate.
+	\item \emph{Shares}, where needed, are a separate UTS-1 asset whose issuance predicate is the same committee: deposits are acknowledged by share issuance, withdrawals demand share burn.
+\end{itemize}
+Custody of the pooled value is protected cryptographically by the threshold predicate and by value conservation of merge and split --- the committee cannot inflate the pool. What rests on the committee's honesty is \emph{share accounting}: issuing shares consistently with deposits and honoring redemptions. This profile therefore suits treasuries, escrow and OTC pools where the committee is the counterparty anyway.
+
+\paragraph{Profile B: Autonomous pool.} Removing the committee means enforcing the pool's accounting invariant by verification instead of trust: the pool token becomes a type-governed state machine, with bearer share tokens minted and redeemed against its certified transitions. This profile is specified in Sec.~\ref{app:autonomous-pools}.
+
+\section{Autonomous Pools}\label{app:autonomous-pools}
+
+\index{token pool!autonomous}
+An \emph{autonomous pool} aggregates value of one fungible asset under no party's control: the pool's accounting invariant is enforced by type-defined validation rules that every verifier re-runs, not by a committee. This section resolves the three problems left open by the committee profile (Sec.~\ref{app:uts-pool}): cross-type value flow is handled by the conversion format (Sec.~\ref{app:reason-convert}); the share ledger is externalized into bearer share tokens, keeping the pool state constant-size; and deposit replay is excluded by a nullifier accumulator carried in the pool state, borrowing the mechanism of Sec.~\ref{sec:bridge-replay}.
+
+\subsection{Setting}
+
+Three token types cooperate; all three must be registered in a verifier's $\Gamma.\mathcal{TD}$ for pool-derived tokens to verify (fail-shut otherwise):
+\begin{description}
+	\item[Underlying asset $\mathsf{ty}_\mathsf{A}$] a fungible type (UTS-1 or UTS-3) whose manifest admits $\mathsf{CONVERT\_TAG}$ with $\mathsf{ty}_\mathsf{P} \in \mathcal{CS}$ --- the asset type opts in to the pool by its frozen definition, since its own verifiers must be able to re-check the pool's conservation.
+	\item[Pool type $\mathsf{ty}_\mathsf{P}$] the state machine defined below. One \emph{pool instance} is one token of this type; instances are distinguished by their token identifiers $\mathsf{id}_\mathsf{P}$, and anyone may open one ($\mathsf{RT} = \{\bot\}$).
+	\item[Share type $\mathsf{ty}_\mathsf{S}$] a fungible type with $\mathsf{RT} = \{\mathsf{CONVERT\_TAG}, 39044, \mathsf{MERGE\_TAG}\}$ and $\mathcal{CS} = \{\mathsf{ty}_\mathsf{P}\}$. Shares use the asset framework (Sec.~\ref{sec:asset-structure}) with \emph{asset identifier $\mathsf{aid} = \mathsf{id}_\mathsf{P}$}: shares of different pool instances are distinct assets, so split and merge conservation automatically prevents mixing them. Shares are ordinary bearer tokens --- transferable, splittable, mergeable.
+\end{description}
+
+The pool token is \emph{protocol-owned}: its genesis predicate and, by transfer rule, every subsequent owner predicate is the open predicate $\predi_\mathsf{open}$ (Sec.~\ref{sec:open-predicate}). Anyone can spend the pool state, but only along transitions valid under $\mathsf{ty}_\mathsf{P}$'s rules, and never away from $\predi_\mathsf{open}$ --- the pool cannot be taken private.
+
+\subsection{Pool State}
+
+The pool state is the tuple
+\[
+\sigma = (\mathsf{aid},\; V,\; S,\; A),
+\]
+where $\mathsf{aid}$ is the pooled asset identifier, $V$ the pooled value, $S$ the shares outstanding, and $A$ the root of the \emph{consumed-burn accumulator}: a sparse Merkle tree (Sec.~\ref{sec:smt}) over the state identifiers of every deposit and withdrawal burn the pool has absorbed. The genesis payload is $\sigma_0 = (\mathsf{aid}, 0, 0, A_\varnothing)$ with $\mathsf{reason} = \bot$; each transfer's auxiliary data carries a \emph{transition record} and the successor state $\sigma'$; the current pool state is the last certified $\sigma$. All amounts satisfy $0 \le V, S < 2^{256}$, with overflow rejected.
+
+\subsection{Transitions}
+
+A transition is a transfer of the pool token. Checks common to every transition (run as $\mathsf{ty}_\mathsf{P}$'s per-transfer check, Sec.~\ref{sec:mint-authorization}, step~6 of Sec.~\ref{sec:transfer-tx}):
+\begin{enumerate}
+	\item the successor predicate is exactly $\predi_\mathsf{open}$;
+	\item the auxiliary data decodes strictly to $(\mathsf{record}, \sigma')$, and $\sigma'$ equals the state computed from the predecessor $\sigma$ and the record per the rules below;
+	\item the record's nullifier is proven absent from $A$ and $\sigma'.A$ is the root after inserting it (the SMT provides both certificates, cf.\ Sec.~\ref{sec:bridge-replay}).
+\end{enumerate}
+
+\paragraph{Deposit.} The depositor burns a token of type $\mathsf{ty}_\mathsf{A}$ carrying $(\mathsf{aid}, v)$, with burn manifest (under tag $\mathsf{POOL\_DEPOSIT\_TAG}$) committing $(\mathsf{id}_\mathsf{P},\; h_\mathsf{claim})$, where $h_\mathsf{claim} = (H(\mathsf{CBOR}(\predi'_\mathsf{s})), \mathsf{salt}_\mathsf{s})$ fixes the future share token's recipient and salt. The deposit record embeds the burned token (verified via the collector, Sec.~\ref{sec:nested-verification}) and the transition check requires:
+\begin{enumerate}
+	\item the embedded token is of type $\mathsf{ty}_\mathsf{A}$, network $\mathcal{T}.\alpha$, its final transfer is a burn binding the manifest above with this pool's $\mathsf{id}_\mathsf{P}$, and its value for $\mathsf{aid}$ is $v \ge 1$;
+	\item the share amount is
+	\[
+	\Delta s =
+	\begin{cases}
+		v & \text{if } S = 0\\
+		\lfloor v \cdot S / V \rfloor & \text{otherwise,}
+	\end{cases}
+	\qquad \Delta s \ge 1 \text{ (dust deposits rejected)};
+	\]
+	\item $V' = V + v$, $S' = S + \Delta s$;
+	\item the record contains the conversion output commitment $d_\mathsf{s}$ (Sec.~\ref{app:reason-convert}) for a $\mathsf{ty}_\mathsf{S}$ mint with payload $\{(\mathsf{id}_\mathsf{P}, \Delta s)\}$, recipient predicate and salt as fixed by $h_\mathsf{claim}$;
+	\item the nullifier is the burned token's final state identifier.
+\end{enumerate}
+Since the burn commits $h_\mathsf{claim}$, a third party who includes someone else's burn in a transition can only execute that deposit as intended --- the shares are creditable solely to the committed recipient. Share amounts depend on $(V, S)$ at execution time, which is why $\Delta s$ and $d_\mathsf{s}$ are computed in the transition record, not in the burn.
+
+\paragraph{Withdrawal.} The holder burns share tokens carrying $(\mathsf{id}_\mathsf{P}, s)$, $1 \le s \le S$, with burn manifest (under tag $\mathsf{POOL\_WITHDRAW\_TAG}$) committing $(\mathsf{id}_\mathsf{P},\; h_\mathsf{rcpt})$ for the withdrawn token's recipient and salt. The withdrawal record embeds the share burn, and the transition check requires:
+\begin{enumerate}
+	\item the embedded token is of type $\mathsf{ty}_\mathsf{S}$ with asset identifier exactly $\mathsf{id}_\mathsf{P}$, burned as above;
+	\item the withdrawn value is $w = \lfloor s \cdot V / S \rfloor$ with $w \ge 1$;
+	\item $V' = V - w$, $S' = S - s$;
+	\item the record contains the conversion output commitment $d_\mathsf{w}$ for a $\mathsf{ty}_\mathsf{A}$ mint with payload $\{(\mathsf{aid}, w)\}$, recipient and salt per $h_\mathsf{rcpt}$;
+	\item the nullifier is the share burn's final state identifier.
+\end{enumerate}
+Rounding is always downward: dust remains in the pool, to the benefit of remaining share holders. The floor arithmetic preserves the invariant $S > 0 \Rightarrow V > 0$: a partial withdrawal ($s < S$) leaves $w \le \lfloor (S-1)V/S \rfloor < V$, and only a full withdrawal ($s = S$) can zero the pool.
+
+\subsection{Claiming Outputs}
+
+Shares and withdrawn tokens are minted with the conversion reason (Sec.~\ref{app:reason-convert}): the reason embeds the pool token up to and including the committing transition, and the verifier matches the recomputed output commitment against the record. Each commitment authorizes exactly one mint (the committed salt fixes the output's genesis state, certified at most once). An output left unclaimed is its claimant's loss alone --- the pool state already accounts for it, and no other party's value is affected, consistent with the platform's uniform failure direction: value can be destroyed by negligence, never created.
+
+\subsection{Security}
+
+\begin{description}
+	\item[Solvency] Every unit of $V$ entered through a certified $\mathsf{ty}_\mathsf{A}$ burn counted exactly once (the accumulator rejects replayed burns); every exit is a $V$-decrement with $w \le V$ by construction. The pool can never commit to releasing more than was deposited.
+	\item[Cross-type conservation] The total supply of $\mathsf{ty}_\mathsf{A}$ --- plain tokens plus $\sum_\mathsf{pools} V$ --- is invariant under pool operations: deposits burn plain value (single-spend), withdrawals mint plain value only against a $V$-decrement, and $V$ increments only against burns. Every verifier of a withdrawal-minted token re-verifies the entire pool history through the worklist, so this is not an assumption but a checked property.
+	\item[Pro-rata fairness] Share value $V/S$ is non-decreasing under deposits and withdrawals (floor rounding); no transition dilutes existing holders in favor of a newcomer.
+	\item[No capture] Transitions force $\predi' = \predi_\mathsf{open}$ and the state equations; there is no code path by which any party, including the pool's creator, spends pool value except via a withdrawal backed by share burn.
+	\item[Race safety] Two parties spending the same pool state race; single-spend lets exactly one transition certify. The loser's burn remains valid --- it binds $\mathsf{id}_\mathsf{P}$, not a specific pool state --- and is simply resubmitted in a subsequent transition.
+\end{description}
+
+\subsection{Two-Asset Pools and Swaps}\label{app:pool-swaps}
+
+\index{token pool!swap}\index{automated market maker}
+A \emph{two-asset pool} extends the machinery above to an automated market maker: liquidity providers deposit two assets, swappers exchange one for the other against the pooled reserves, and the price is set by the reserve ratio. The state generalizes to
+\[
+\sigma = (\mathsf{aid}_1,\; V_1,\; \mathsf{aid}_2,\; V_2,\; S,\; A),
+\qquad \mathsf{aid}_1 < \mathsf{aid}_2 \text{ (canonical order)},
+\]
+with both assets carried by the same underlying type $\mathsf{ty}_\mathsf{A}$ (a fungible payload holds multiple assets, Sec.~\ref{sec:asset-structure}). The manifest of $\mathsf{ty}_\mathsf{P}$ additionally pins a \emph{fee} $\varphi$ in per-mille, $0 \le \varphi < 1000$. The common transition checks (open successor predicate, state derivation, nullifier accumulator) are unchanged; the transitions are:
+
+\paragraph{Liquidity deposit.} The provider burns a $\mathsf{ty}_\mathsf{A}$ token carrying $\{(\mathsf{aid}_1, v_1), (\mathsf{aid}_2, v_2)\}$, $v_1, v_2 \ge 1$, with a deposit manifest as before, optionally extended with a minimum share amount $\Delta s_\mathsf{min}$. The transition requires
+\[
+\Delta s =
+\begin{cases}
+	\lfloor\sqrt{v_1 \cdot v_2}\rfloor & \text{if } S = 0\\
+	\min\!\left(\lfloor v_1 S / V_1 \rfloor,\; \lfloor v_2 S / V_2 \rfloor\right) & \text{otherwise,}
+\end{cases}
+\qquad \Delta s \ge \max(1, \Delta s_\mathsf{min}),
+\]
+and $V_i' = V_i + v_i$, $S' = S + \Delta s$. The $\min$ rule donates any contribution in excess of the current reserve ratio to the pool, so providers match the ratio in their own interest; $\Delta s_\mathsf{min}$ bounds the loss if reserves move between burn and execution.
+
+\paragraph{Liquidity withdrawal.} As in the single-asset pool, per asset: $w_i = \lfloor s \cdot V_i / S \rfloor$, $V_i' = V_i - w_i$, $S' = S - s$; the committed output payload is $\{(\mathsf{aid}_1, w_1), (\mathsf{aid}_2, w_2)\}$ with zero-valued entries omitted and at least one entry positive.
+
+\paragraph{Swap.} The swapper burns a $\mathsf{ty}_\mathsf{A}$ token carrying $\{(\mathsf{aid}_\mathsf{in}, v_\mathsf{in})\}$, with a swap manifest (tag $\mathsf{POOL\_SWAP\_TAG}$) committing $(\mathsf{id}_\mathsf{P}, \mathsf{aid}_\mathsf{in}, h_\mathsf{rcpt}, v_\mathsf{min}, h_\mathsf{refund})$: the pool instance, the input asset, the output's recipient commitment, a minimum acceptable output, and a refund recipient commitment. The transition requires $S > 0$,
+\[
+v_\mathsf{out} \;=\; \left\lfloor
+\frac{v_\mathsf{in} \, (1000 - \varphi) \, V_\mathsf{out}}
+     {1000 \, V_\mathsf{in} + (1000 - \varphi) \, v_\mathsf{in}}
+\right\rfloor,
+\qquad
+v_\mathsf{out} \ge \max(1, v_\mathsf{min}),
+\]
+$V_\mathsf{in}' = V_\mathsf{in} + v_\mathsf{in}$, $V_\mathsf{out}' = V_\mathsf{out} - v_\mathsf{out}$, and the record commits a $\mathsf{ty}_\mathsf{A}$ output $\{(\mathsf{aid}_\mathsf{out}, v_\mathsf{out})\}$ per $h_\mathsf{rcpt}$. The formula is the constant-product rule with fee: it implies $V_1' \cdot V_2' \ge V_1 \cdot V_2$, with strict growth for $\varphi > 0$ --- the reserve product never decreases, so swaps can only add value per share.
+
+\paragraph{Refund.} Any pool-bound burn of this profile (deposit or swap) may instead be consumed by a \emph{refund} transition: the pool state is unchanged except for the nullifier insertion, and the record commits a $\mathsf{ty}_\mathsf{A}$ output returning the burn's exact asset content to the manifest's $h_\mathsf{refund}$. This guarantees that a burn whose bound ($\Delta s_\mathsf{min}$, $v_\mathsf{min}$) has become unsatisfiable is never stranded: its value is always recoverable. Whoever executes the transition chooses between execution and refund; a hostile executor can therefore deny a trade but never confiscate --- the refund pays only the committed refund recipient.
+
+\paragraph{Security notes.} Solvency, cross-type conservation, no-capture and race safety carry over unchanged; the accumulator prevents replaying any burn across transitions. Two properties are specific to swaps:
+\begin{description}
+	\item[Provider protection] The reserve-product invariant is checked by every verifier per transition; no sequence of swaps, at any prices, dilutes the value backing a share below the constant-product curve.
+	\item[Ordering exposure] Whoever wins the race for the pool state orders the pending trades; sandwich-style reordering is possible as in any automated market maker. The swapper's $v_\mathsf{min}$ caps the damage per trade, and the refund path bounds the downside to a cancelled trade.
+\end{description}
+
+\subsection{Limitations and Open Items}
+
+\begin{itemize}
+	\item \emph{Throughput}: one spendable state serializes all operations on a pool instance; contention is inherent. Sharded or tree-structured pools are a candidate extension.
+	\item \emph{Verification cost and compression}: pool verification cost grows with transition count, and each deposit/withdrawal embeds a burned token. Practical pools depend on history compression of $\mathsf{ty}_\mathsf{P}$ tokens, which requires extending the compression relation $\mathfrak{R}_\mathsf{c}$ (Sec.~\ref{app:reason-compression}) with the pool transition checks --- tracked in the roadmap.
+	\item \emph{Privacy}: the pool state and every transition are visible to all verifiers of pool-derived tokens; deposits, swaps and withdrawals are linkable to their claim commitments.
+	\item \emph{Encodings}: transition record and manifest encodings, and the accumulator's tree parameters, are fixed when this draft freezes.
+\end{itemize}
+
+\section{Specification Roadmap}\label{app:staging}
+
+This appendix is written iteratively, with review feedback between revisions. Each item carries a document status: \emph{specified} --- normative and stable; \emph{draft} --- complete but subject to change until reviewed and frozen; \emph{outline} --- design direction with open questions, to be elaborated in a later revision. The roadmap concerns this document only; implementation and deployment planning are tracked separately.
+
+\begin{longtable}{p{7.2cm}lp{4.6cm}}
+\textbf{Item} & \textbf{Status} & \textbf{Next revision step} \\
+\hline
+\endhead
+Mint authorization flow, verifier registry, fail-shut policy (Sec.~\ref{sec:token-types}) & specified & --- \\
+Split reason, bridge backing reason (Appendices~\ref{app:split-proof-encoding}, \ref{app:bridging}) & specified & --- \\
+Registries and record schemas (Sec.~\ref{app:registries}--\ref{app:type-registry}) & draft & freeze record schema after review \\
+Genesis commitment, issuer-signature reason (Sec.~\ref{app:genesis-commitment}, \ref{app:reason-issuer}) & draft & review; allocate tags \\
+Slot-bound issuance reason (Sec.~\ref{app:reason-slot}) & draft & review; allocate tags \\
+Merge reason (Sec.~\ref{app:reason-merge}) & draft & review; allocate tags \\
+Conversion reason (Sec.~\ref{app:reason-convert}) & draft & review; allocate tags \\
+Proof-carrying reason (Sec.~\ref{app:reason-proof}) & draft & select proof-system profile \\
+History compression (Sec.~\ref{app:reason-compression}) & draft & resolve open items; formalize $\mathfrak{R}_\mathsf{c}$; extend to pool transitions \\
+UTS-0, UTS-1, UTS-2 (Sec.~\ref{app:uts-blank}--\ref{app:uts-nft}) & draft & review \\
+UTS-3 capped-issuance series (Sec.~\ref{app:uts-capped}) & draft & review \\
+UTS-4 pooled assets: committee profile (Sec.~\ref{app:uts-pool}) & draft & review \\
+Autonomous pools, incl.\ two-asset swaps (Sec.~\ref{app:autonomous-pools}) & draft & review; freeze record encodings \\
+\end{longtable}
+
+Later revisions extend this appendix; a revision MUST NOT alter the verification semantics of any item already frozen as specified.

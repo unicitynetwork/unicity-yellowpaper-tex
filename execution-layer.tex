@@ -99,7 +99,7 @@ $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant
 	\item derive $\mathsf{id} \gets H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha)$;\; require $T_0.\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
 	\item $\txhash \gets H(D_\mathsf{mint})$;\; require $\txhash = \pi_0.\txhash$
 	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), \txhash, \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
-	\item Token type-specific checks on $\mathsf{reason}$ and $\auxd'$ (e.g. mint reason validity and auxiliary payload format and semantics check)
+	\item Mint authorization check on $\mathsf{ty}$, $\mathsf{reason}$ and $\auxd'$: mint reason validity and auxiliary payload format and semantics, dispatched by token type (Sec.~\ref{sec:mint-authorization}, Alg.~\ref{alg:mint-auth})
 \end{enumerate}
 
 Correctness of the token id derivation is enforced implicitly by step~2: $\sthash$ is bound to $\mathsf{id}$ by the source-state-hash check, and $\mathsf{id}$ is recomputed from $(\mathsf{salt}, \alpha)$.
@@ -136,7 +136,7 @@ A \emph{certified transfer transaction} is a tuple $(T, u, \pi)$, where $T = (\s
 	\item $\txhash \gets H(T.D)$;\; require $\txhash = \pi.\txhash$ \quad (transaction data binds to the certified SMT leaf)
 	\item $\predi(\mathsf{time}(\pi), H(\sthash, \txhash), u) = 1$ \quad (predicate satisfied)
 	\item $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pi, \mathcal{CD}_\beta, \mathcal{T}) = 1$ \quad (inclusion proof valid and certified by the correct shard)
-	\item Additional token type-specific checks
+	\item Additional token type-specific checks (Sec.~\ref{sec:token-types})
 \end{enumerate}
 
 \subsection{Token Verification}\label{sec:token-verification}
@@ -169,6 +169,8 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 \end{algorithmic}
 
 $\Call{VerifyMintTransaction}{}$ and $\Call{VerifyTransferTransaction}{}$ are defined by verification steps in chapters \ref{sec:mint-tx}, \ref{sec:transfer-tx}.
+
+Some mint reasons embed complete source tokens. These are verified iteratively under the same trust base, verifier registry and cumulative resource limits as the outer token (Sec.~\ref{sec:nested-verification}).
 
 \section{Programmable Spending Conditions}\label{sec:predicates}
 
@@ -295,6 +297,20 @@ The \emph{burn predicate} $\predi_\mathsf{burn}(h_\mathsf{reason})$ cannot be un
 \end{itemize}
 
 The burn predicate is used in token splitting (Sec.~\ref{sec:token-splitting}), where the reason hash is $\mathsf{SHA\text{-}256}(b_\mathcal{M})$ for the complete canonical split-manifest encoding $b_\mathcal{M}$.
+
+
+\subsubsection{Open Predicate}\label{sec:open-predicate}
+
+\index{predicate!open ($\predi_\mathsf{open}$)}
+The \emph{open predicate} $\predi_\mathsf{open}$ is satisfied by any argument --- the dual of the burn predicate.
+
+\begin{itemize}
+	\item \textbf{Parameters}: none
+	\item \textbf{Unlocking argument}: ignored
+	\item \textbf{Definition}: $\predi_\mathsf{open}(\tau, m, u) = 1$ for all arguments
+\end{itemize}
+
+On its own, an open-owned state is spendable by anyone and holds no value. Its purpose is \emph{protocol-owned} tokens: combined with type-defined per-transfer checks (Sec.~\ref{sec:mint-authorization}), spending is constrained by validation rules instead of keys --- any party may advance the token's state, but only along transitions its type permits (e.g.\ autonomous pools, Appendix~\ref{app:autonomous-pools}).
 
 
 \subsubsection{Timelock Predicate}
@@ -430,6 +446,113 @@ Figure~\ref{fi:exec-transaction-flow} illustrates one complete token transfer, f
 \end{figure}
 
 
+\section{Token Types and Mint Authorization}\label{sec:token-types}
+
+\index{token!type}\index{mint reason}\index{mint authorization}
+Minting on the Unicity platform is technically permissionless: the minting key pair is a public constant (Sec.~\ref{sec:mint-tx}, Appendix~\ref{app:el-constants}), so a certified mint transaction proves only that the token identifier is fresh --- it conveys no issuance authority by itself. All authority to mint is carried by data inside the genesis and is re-verified by every subsequent recipient of the token. Two genesis fields implement this:
+\begin{itemize}
+	\item $\mathsf{ty}$ -- the \emph{token type}, classifying the token and selecting the validation rules that govern it for its entire lifetime;
+	\item $\mathsf{reason}$ -- the \emph{mint reason}, an abstract payload that justifies the act of minting under the rules of type $\mathsf{ty}$: an issuer's authorization signature, a value-conservation proof of a split, a proof of external backing, or a zero-knowledge proof of an arbitrary type-defined statement.
+\end{itemize}
+
+This section specifies the generic verification flow that checks mint authorization --- the expansion of step~5 of mint-transaction verification (Sec.~\ref{sec:mint-tx}) and of step~6 of transfer verification (Sec.~\ref{sec:transfer-tx}). Concrete reason formats and standard token types are provided in Appendix~\ref{app:token-registry}.
+
+\subsection{Token Type}\label{sec:token-type}
+
+\index{token type}
+A token type is an opaque byte string $\mathsf{ty} \in \bytestr$ with $1 \le \len{\mathsf{ty}} \le 64$ (typically 32 bytes), compared by byte equality. The type is fixed by the mint transaction and is immutable: no transfer, split (Sec.~\ref{sec:split-verification}, check~6), or any other operation may change it.
+
+The identifier itself carries no meaning; it binds the token to a \emph{token type definition}
+\[
+\mathcal{D}_\mathsf{ty} = (\mathsf{ty},\; \mathsf{RT},\; \Call{ParseAux}{},\; \Call{VerifyIssuance}{},\; \mathsf{meta}),
+\]
+where
+\begin{itemize}
+	\item $\mathsf{RT}$ -- the set of admissible mint-reason formats, given as CBOR semantic tags (Appendix~\ref{app:cbor-tags}); the set MAY include $\bot$, admitting an absent reason;
+	\item $\Call{ParseAux}{\mathsf{ty}, \auxd'}$ -- the deterministic decoder and validator of the token's genesis payload; for fungible types this is the function $\Call{Assets}{}$ of Sec.~\ref{sec:token-splitting};
+	\item $\Call{VerifyIssuance}{}$ -- the type's issuance policy: a boolean function over the certified genesis, run in addition to the format-level reason verifier (e.g.\ pinning the expected issuer key, a bridge configuration, or a proof-system verification key);
+	\item $\mathsf{meta}$ -- external, non-consensus metadata (display name, symbol, decimals, icons; Appendix~\ref{app:asset-metadata}).
+\end{itemize}
+
+A published definition MUST be frozen: every verifier of every recipient must apply byte-identical parsing and verification rules indefinitely, or tokens of that type would verify for some recipients and fail for others.
+
+\paragraph{Type identifier derivation.} A type identifier MAY be an arbitrary (e.g.\ random) value, bound to its definition by the token type registry (Appendix~\ref{app:type-registry}). For new types it is RECOMMENDED to derive the identifier from the definition itself,
+\[
+\mathsf{ty} := H(\mathsf{TYPE\_DEF},\; b_\mathcal{D}),
+\]
+where $b_\mathcal{D}$ is the canonical CBOR encoding of the frozen definition manifest (Appendix~\ref{app:type-registry}) and $\mathsf{TYPE\_DEF}$ a fixed domain separator. This makes the binding between identifier and rules self-authenticating.
+
+\subsection{Mint Reason}\label{sec:mint-justification}
+
+\index{mint justification}\index{mint reason}
+The mint reason is either absent ($\bot$) or a byte string containing a single tagged deterministic CBOR item. The semantic tag $t$ identifies the \emph{reason format}: the parsing rules and the verification algorithm of the reason body. Reason formats are format-level building blocks, decoupled from token types: one format (e.g.\ the split reason, Sec.~\ref{sec:token-splitting}) serves many token types, and one type may admit several formats for its issuance events. The type definition's admissible set $\mathsf{RT}$ makes the coupling explicit.
+
+The fields should be interpreted as follows:
+
+\begin{description}
+	\item[reason] authorizes the mint
+	\item[aux'] describes the minted token, a message to the next (') verifier or a transaction meta-data field in general.
+\end{description}
+
+A reason verifier receives the complete mint-transaction data and validates the binding between the two --- e.g.\ that the value declared in $\auxd'$ equals the value the reason actually authorizes.
+
+\subsection{Verifier Registry}\label{sec:verifier-registry}
+
+\index{verifier registry}
+A relying party's verification capability is described by a \emph{verifier registry}
+\[
+\Gamma = (\mathcal{RV},\; \mathcal{TD},\; \Lambda),
+\]
+where
+\begin{itemize}
+	\item $\mathcal{RV}$ -- a partial map from reason-format tags to \emph{reason verifiers}; $\mathcal{RV}[t]$ is the verification function of format $t$, of the form $V_t(T_0, \pi_0, \Gamma, \mathsf{collect}) \in \{0,1\}$;
+	\item $\mathcal{TD}$ -- a partial map from token type identifiers to token type definitions $\mathcal{D}_\mathsf{ty}$;
+	\item $\Lambda$ -- cumulative resource budgets (bytes, items, nesting depth, proof steps, embedded tokens; cf.\ Appendix~\ref{app:split-proof-encoding}) shared by an entire verification run; when this budget is exhausted, verification fails deterministically with a resource-limit error.
+\end{itemize}
+
+The contents of $\mathcal{RV}$ and $\mathcal{TD}$ are an application-level trust decision (e.g., a wallet is designed to handle a specific set of token types, sufficient for its business goals). An implementation ships built-in verifiers for the standard formats and types (Appendix~\ref{app:token-registry}) and accepts application-supplied plug-ins for others. The registry is shared by the whole verification of a token: e.g., tokens embedded in mint reasons (Sec.~\ref{sec:nested-verification}) are verified under the same $\Gamma$, the same trust base $\mathcal{T}$, and the remaining budget $\Lambda$ as the outer token (cf.\ Sec.~\ref{sec:split-verification}, check~3).
+
+\subsection{Mint Authorization Check}\label{sec:mint-authorization}
+
+Algorithm~\ref{alg:mint-auth} defines the mint authorization check, run as step~5 of mint-transaction verification (Sec.~\ref{sec:mint-tx}) after the generic certification checks (steps~1--4) have passed. Every $\mathsf{ensure}$ failure, decoding error or exhausted budget rejects the transaction. $\mathsf{collect}$ is the nested-token collector of Sec.~\ref{sec:nested-verification}.
+
+\begin{algorithm}[!htb]
+\caption{Mint Authorization Verification}\label{alg:mint-auth}
+\begin{algorithmic}[]
+\Function{VerifyMintAuthorization}{$T_0, \pi_0, \Gamma, \mathsf{collect}$}
+	\State $D \gets T_0.D_\mathsf{mint}$
+	\State $\mathcal{D}_\mathsf{ty} \gets \Gamma.\mathcal{TD}[D.\mathsf{ty}]$
+	\If{$\mathcal{D}_\mathsf{ty} = \bot$} \Return \FALSE \Comment{fail-shut: unsupported token type} \EndIf
+	\If{$D.\mathsf{reason} = \bot$}
+		\State ensure($\bot \in \mathcal{D}_\mathsf{ty}.\mathsf{RT}$) \Comment{type admits absent reason}
+	\Else
+		\State $t \gets$ CBOR semantic tag of $D.\mathsf{reason}$ \Comment{malformed CBOR rejects}
+		\State ensure($t \in \mathcal{D}_\mathsf{ty}.\mathsf{RT}$) \Comment{type admits this reason format}
+		\State $V \gets \Gamma.\mathcal{RV}[t]$
+		\If{$V = \bot$} \Return \FALSE \Comment{fail-shut: unsupported reason format} \EndIf
+		\State ensure($V(T_0, \pi_0, \Gamma, \mathsf{collect}) = 1$) \Comment{format-specific verification}
+	\EndIf
+	\State ensure($\mathcal{D}_\mathsf{ty}.\Call{ParseAux}{D.\mathsf{ty}, D.\auxd'} \ne \bot$) \Comment{payload well-formed for this type}
+	\State ensure($\mathcal{D}_\mathsf{ty}.\Call{VerifyIssuance}{T_0, \pi_0} = 1$) \Comment{type-specific issuance policy}
+	\State \Return \TRUE
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+Reason bodies and payloads are decoded under the strict deterministic-CBOR discipline of Appendix~\ref{app:split-proof-encoding}: wrong or unknown tags, non-minimal encodings, wrong field counts or types, trailing bytes, and exhausted budgets are all rejected.
+
+Type-specific validation is not limited to the genesis: step~6 of transfer verification (Sec.~\ref{sec:transfer-tx}) runs the per-transfer checks of $\mathcal{D}_\mathsf{ty}$, where the type defines any. For most types there are none --- the authoritative type-governed payload is the genesis payload $\auxd'_0$, and transfer-level auxiliary data is free-form transport (e.g.\ ephemeral keys of Sec.~\ref{sec:private-transactions}) unless the type states otherwise.
+
+\paragraph{Fail-shut policy.}\index{fail-shut policy}
+On the Unicity Mainnet ($\alpha = 1$), token acceptance MUST be \emph{fail-shut}: a relying party accepting a token MUST reject any token whose type has no entry in $\mathcal{TD}$, whose reason format has no entry in $\mathcal{RV}$, or whose reason tag lies outside the type's admissible set --- each with a distinct diagnostic error. A permissive mode that skips authorization checks for unregistered types MAY exist in testnet for diagnostic, archival or explorer tooling, but MUST NOT gate acceptance of value.
+
+\subsection{Nested Tokens and Resource Limits}\label{sec:nested-verification}
+
+\index{nested token verification}
+Several reason formats embed complete tokens: the burned source token of a split, and in general any format whose authorization derives from the prior existence of another certified token. A reason verifier MUST NOT verify embedded tokens by recursive invocation of $\mathsf{VerifyToken}$; instead it validates the reason's own structure and bindings, and emits each embedded token to the collector $\mathsf{collect}$. The driver maintains a worklist seeded with the outer token: it pops a token, verifies it (which may collect further ancestors), and repeats until the worklist is empty or the budget $\Lambda$ is exhausted.
+
+All components of $\Lambda$ are cumulative across the entire worklist. A maliciously deep or wide provenance graph (e.g.\ repeated splits of splits) therefore exhausts the budget and is rejected as invalid, rather than exhausting the verifier's memory or time. Budget limits are part of the network's validation policy: two verifiers with the same $\Gamma$ accept exactly the same tokens, making the validation deterministic.
+
 \section{Fungible Token Payload}\label{sec:fungible-tokens}
 
 For fungible tokens (e.g. digital currency), the execution layer defines additional structure within the token's auxiliary data to support money-like operations: value tracking, splitting, and value conservation proofs.
@@ -448,17 +571,6 @@ A token may carry multiple assets, represented as a collection:
 \mathcal{A} = \{(\mathsf{aid}_1, v_1), \ldots, (\mathsf{aid}_m, v_m)\}
 \]
 where all asset identifiers $\mathsf{aid}_i$ are distinct.
-
-\subsection{Mint Reason and Initial Payload}\label{sec:mint-justification}
-
-\index{mint justification}\index{mint reason}
-The following fields provide additional meta-data necessary for token validation:
-\begin{itemize}
-	\item $\mathsf{reason}$ -- mint justification, such as backing proof, authorization data, or a split reason proof
-	\item $\auxd'$ -- initial auxiliary payload, e.g., encapsulated asset metadata
-\end{itemize}
-
-The token type identifier $\mathsf{ty}$ in the mint transaction classifies the token (e.g. a specific currency or asset class) and defines the validation rules which both $\mathsf{reason}$ and $\auxd'$ must satisfy and provide all sufficient data.
 
 \subsection{Token Splitting}\label{sec:token-splitting}
 

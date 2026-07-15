@@ -61,6 +61,7 @@ The encoding $\encpred$ is implemented as encoding to a CBOR array with three to
 \texttt{0x06} & $\predi_\mathsf{msig}$ (Multi-signature) & CBOR array of $n$ entries of $\mathsf{pk}_i$. \\
 \texttt{0x07} & $\predi_\mathsf{tsig}$ (Threshold-signature) & CBOR array[2]: $[k\ (\text{uint}),\ [\mathsf{pk}_1,\ldots,\mathsf{pk}_n]]$; $1 \le k \le n$. \\
 \texttt{0x08} & $\predi_\mathsf{htlc}$ (Hashed Timelock) & CBOR array[4]: $[\mathsf{pk},\ \mathsf{pk}',\ y\ (32\text{-byte bstr}),\ \tau_\mathsf{max}\ (\text{uint})]$. \\
+\texttt{0x09} & $\predi_\mathsf{open}$ (Open) & None (empty byte string). \\
 \end{longtable}
 
 \subsection{Unlocking Argument Encoding}
@@ -79,6 +80,7 @@ $\predi_\mathsf{p2sh}$   & CBOR array[2]: $[\mathsf{CBOR}(\predi')\ (\text{bstr}
 $\predi_\mathsf{msig}$   & CBOR array of $n$ signatures $[s_1, \ldots, s_n]$, in the same order as the parameter public keys. \\
 $\predi_\mathsf{tsig}$   & CBOR array of $k$ entries, each a CBOR array[2]: $[s_i,\ j_i\ (\text{uint})]$, where $j_i \in \{1,\ldots,n\}$ is the index of the parameter public key used to produce $s_i$. Indices must be pairwise distinct. \\
 $\predi_\mathsf{htlc}$   & CBOR array[2]: $[x\ (\text{bstr}),\ s\ (65\text{-byte bstr})]$. For the claim path $x$ is the preimage with $H(x) = y$; for the refund path $x$ may be empty ($\mathtt{h'}$). \\
+$\predi_\mathsf{open}$   & Empty byte string; the argument is ignored. \\
 \end{longtable}
 
 
