@@ -10,7 +10,7 @@ This document designs the transition of Unicity's BFT Core (root chain) from Pro
 Authority to **delegated Proof of Stake (DPoS)**, using the enshrined EVM partition
 (standard partition type `st = 8`, `platform.tex`) as the programmable substrate for the
 validator registry, staking, delegation, rewards, slashing, and tokenomics of the native
-currency **ALPHA**.
+currency **UCT**.
 
 ### 1.1 The key architectural insight
 
@@ -33,7 +33,7 @@ problems:
 
 ### 1.2 In scope / out of scope
 
-**In scope:** DPoS for the **BFT Core root validator set** only; ALPHA genesis +
+**In scope:** DPoS for the **BFT Core root validator set** only; UCT genesis +
 emission on the EVM partition; a Polygon-PoS-derived contract suite; the native bridge
 between the EVM partition and the token (execution) layer; required changes to
 `bft-core`, `uni-evm`, `state-transition-sdk-js`, and the yellowpaper; an availability
@@ -42,7 +42,7 @@ roadmap for the EVM partition; security analysis.
 **Out of scope (this iteration):** partition/shard validator assignment (stays
 PoA/manual; the extension path is noted in §9.5 — the Governance chapter's Validator
 Assignment Record has the same `{ν, b_ν}, k_e` shape, so `EpochManager` generalizes
-naturally); migration of the existing PoW ALPHA chain; BLS accountable-subgroup
+naturally); migration of the existing PoW UCT chain; BLS accountable-subgroup
 multisignatures (roadmap note only, §11.12); liquid staking.
 
 ---
@@ -143,7 +143,7 @@ Facts below are verified against the repositories checked out beside this docume
 
 The control loop, one epoch `e → e+1`:
 
-1. Anyone stakes or delegates ALPHA in the contracts; every EVM block is certified by
+1. Anyone stakes or delegates UCT in the contracts; every EVM block is certified by
    BFT Core under the epoch-`e` trust base.
 2. At **snapshot round `S_e`** (BFT round numbers, read from imported seals, are the
    canonical clock — §4.3), `EpochManager.finalizeEpoch()` selects the epoch-`e+1`
@@ -214,7 +214,7 @@ set at the next snapshot), `claimUnstaked()` (after the unbonding period, §7.4)
 `updateSigner(newPubkey)` (key rotation, effective next epoch), `updateCommission`
 (rate-limited), `updateNetworkAddress`.
 
-**Deltas vs Polygon:** staking is **native ALPHA (`payable`)**, not ERC-20
+**Deltas vs Polygon:** staking is **native UCT (`payable`)**, not ERC-20
 `transferFrom`; `nodeId`/`networkAddress` added because `NodeInfo` in the trust base
 needs them; all Ethereum-checkpoint logic removed; owner key ≠ consensus key is
 enforced (the consensus key never controls funds — §11.11).
@@ -224,7 +224,7 @@ enforced (the consensus key never controls funds — §11.11).
 Reused nearly verbatim from Polygon: per-validator delegation vault with
 exchange-rate share accounting (`buyVoucher`/`sellVoucher`), commission skimmed to the
 validator owner, delegator unbonding queue with the same unbonding period as
-self-stake. Delta: native ALPHA transfers; reward inflow comes from
+self-stake. Delta: native UCT transfers; reward inflow comes from
 `RewardsDistributor` (§4.5) instead of Polygon's checkpoint reward path.
 
 ### 4.3 EpochManager
@@ -436,14 +436,14 @@ evidence** live even if the sequencer misbehaves; combined with forced inclusion
 
 ### 7.1 Principles
 
-ALPHA is the **native gas token of the EVM partition**, and the EVM partition holds the
-**single canonical supply**. Every other representation — including token-layer ALPHA —
-is a bridged claim on vault-locked native ALPHA (§8). Total supply is fixed at genesis;
+UCT is the **native gas token of the EVM partition**, and the EVM partition holds the
+**single canonical supply**. Every other representation — including token-layer UCT —
+is a bridged claim on vault-locked native UCT (§8). Total supply is fixed at genesis;
 "emission" is scheduled release from a genesis-allocated pool, not minting (§4.5).
 
 ### 7.2 Genesis allocation (placeholder — explicit governance decision)
 
-Total supply **1,000,000,000 ALPHA** (placeholder):
+Total supply **1,000,000,000 UCT** (placeholder):
 
 | Bucket | Share | Notes |
 |---|---|---|
@@ -465,7 +465,7 @@ tunable via governance within Appendix D bounds.
 
 ### 7.4 Parameters (defaults; full table in Appendix D)
 
-- `minSelfStake` 100,000 ALPHA; `minDelegation` 100 ALPHA.
+- `minSelfStake` 100,000 UCT; `minDelegation` 100 UCT.
 - `maxValidators`: 25 at launch → 100 (governance-raised).
 - Commission 0–100%, change rate-limited (≤ 1 pp/epoch, Polygon-style).
 - **Unbonding period 21 days**, with the hard constraint
@@ -508,7 +508,7 @@ Body (canonical CBOR, full definition in Appendix C):
 A UTS-1 specialization (mirroring the bridged-asset variant at
 `appendix-token-types.tex:431`): `RT = {39049, 39044}` (native-bridge issuance +
 split), issuance parameter `h_cfg = H_cfg(chainId = 3, partitionId, vaultAddr,
-assetId = NATIVE_ALPHA, ty, aid, domain separators)`; `ty` content-addressed over the
+assetId = NATIVE_UCT, ty, aid, domain separators)`; `ty` content-addressed over the
 frozen definition. The same pattern instantiates for any ERC-20 on the EVM partition
 (per-asset `h_cfg`).
 
@@ -516,7 +516,7 @@ frozen definition. The same pattern instantiates for any ERC-20 on the EVM parti
 
 1. User picks recipient predicate `pred′₀` and salt off-chain (token id
    `id = H(salt, α)`, `h_rcpt = H(CBOR(pred′₀))` — same as 39048 flow).
-2. `NativeVault.lockForBridge(id, h_rcpt) payable` escrows native ALPHA (or, for
+2. `NativeVault.lockForBridge(id, h_rcpt) payable` escrows native UCT (or, for
    ERC-20s, `transferFrom`) and emits `Locked(id, h_rcpt, amount, nonce)` with a
    strictly monotone nonce; the vault records `lockDigest[id]`.
 3. User mints on the token layer with reason 39049. The verifier (new, in the SDK):
@@ -558,7 +558,7 @@ and (b) gas limits on our own partition are controllable, so the bounded
      double-release (simplification of `app:bridging-nullifier`'s accumulator — a
      plain mapping suffices on our own chain where storage is cheap and the vault is
      the only writer);
-   - vault pays out native ALPHA.
+   - vault pays out native UCT.
 3. **SNARK path as optimization only:** for histories exceeding `maxHistoryLen`, the
    holder first compresses history on the token layer (history-compression reason) or
    uses the batch SNARK relation of `app:bridging-relation`. Not required at launch.
@@ -581,7 +581,7 @@ bridge deployment** with a new token type, per `app:bridging-upgrades`).
 
 ### 8.6 Disposition of tags 39042 / 39043
 
-Supply policy is **bridge-only**: token-layer ALPHA exists solely via 39049 mints.
+Supply policy is **bridge-only**: token-layer UCT exists solely via 39049 mints.
 Tags 39042 (genesis allocation) and 39043 (validator reward) get **specified bodies**
 (Appendix C.3: 39042 references the EVM genesis-allocation entry; 39043 carries
 `(epoch, validatorId, amount, UC+MPT proof of the RewardsDistributor payout event)`)
@@ -622,7 +622,7 @@ second issuance root competing with the vault's solvency invariant.
 
 - New `NativeBridgeMintJustification` (tag 39049) + verifier registered in
   `MintJustificationVerifierService`; EVM header/receipt-proof verification helpers;
-  the native-bridged ALPHA token type definition; burn-reason format for bridge-out.
+  the native-bridged UCT token type definition; burn-reason format for bridge-out.
 
 ### 9.4 Yellowpaper
 
@@ -749,14 +749,14 @@ a censoring sequencer could otherwise control validator-set changes.
 | `EpochStart` | candidate `epochStartRound` (`A_e`) |
 | `RootNodes[i].NodeID` | candidate `entries[i].nodeId` |
 | `RootNodes[i].SigKey` | candidate `entries[i].consensusPubKey` |
-| `RootNodes[i].Stake` | candidate `entries[i].stake` (unit: whole ALPHA; u64) |
+| `RootNodes[i].Stake` | candidate `entries[i].stake` (unit: whole UCT; u64) |
 | `QuorumThreshold` | candidate `quorum` |
 | `PreviousEntryHash` | `H(TB_e)` (agent-computed; candidate `prevHash` cross-check) |
 | `Signatures` | collected from epoch-`e` agents (≥ 2/3 stake) |
 
 Entries sorted by `nodeId` (bytewise); canonical CBOR per the yellowpaper's encoding
 appendix; `keccak256(canonicalCbor(candidate))` is what `finalizeEpoch()` writes to
-`TRUST_BASE_CANDIDATE_SLOT`. Stake denominated in whole ALPHA (floor), keeping u64
+`TRUST_BASE_CANDIDATE_SLOT`. Stake denominated in whole UCT (floor), keeping u64
 range.
 
 ## Appendix B — Double-sign evidence format

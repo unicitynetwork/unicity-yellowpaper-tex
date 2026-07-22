@@ -94,10 +94,10 @@ validity proof); at each epoch boundary, per-validator agents extract the electe
 (event + Merkle storage proof against the certified state root), deterministically
 build the next Unicity Trust Base record, co-sign to ≥⅔ of current stake, and submit
 through the existing REST intake. Seals flow back into the contracts (sequencer system
-tx, validity-enforced) for reward/participation accounting. ALPHA's canonical supply
-is EVM-native; token-layer ALPHA is a bridged claim on a vault.
+tx, validity-enforced) for reward/participation accounting. UCT's canonical supply
+is EVM-native; token-layer UCT is a bridged claim on a vault.
 
-**B**: stake truth lives in BFT Core's own replicated state. Bonding burns an ALPHA
+**B**: stake truth lives in BFT Core's own replicated state. Bonding burns an UCT
 token on the execution layer against a bond declaration; root validators verify the
 burn evidence and credit the registry. The next committee is `elect(𝒢, e)` — a pure
 function every validator recomputes; a proposal whose epoch-change record differs from
@@ -105,7 +105,7 @@ the recomputation is invalid, so the trust base entry is *computed, not negotiat
 Withdrawals and rewards are execution-layer mints whose reasons are inclusion
 certificates against the certified registry commitment `H(𝒢)` (bound into the trust
 base entry's state-summary field). Slashing evidence (conflicting seals E1 /
-conflicting votes E2) is mechanically verifiable in-payload. ALPHA's canonical supply
+conflicting votes E2) is mechanically verifiable in-payload. UCT's canonical supply
 is execution-layer-native.
 
 A relevant asymmetry of provenance: branch B forked **before** the token-type /
@@ -145,7 +145,7 @@ Three observations keep the comparison fair:
 2. **The bridge is needed in both.** Since the EVM partition ships regardless, the
    native EVM↔token-layer bridge (lock/mint with UC-anchored proofs, burn/release)
    is common-baseline work. A entangles it with consensus security (the vault holds
-   the canonical supply backing all token-layer ALPHA); B leaves it as an ordinary
+   the canonical supply backing all token-layer UCT); B leaves it as an ordinary
    asset bridge whose failure does not touch the staking system.
 3. **B's DoS surface must be engineered, A's comes free.** Registry transactions in
    the BFT Core payload have no gas market; spam control needs explicit design
@@ -255,9 +255,9 @@ corruption case).
 
 ### 3.4 Supply integrity
 
-- **A**: canonical ALPHA supply is EVM-native; conservation is enforced by zk-proved
+- **A**: canonical UCT supply is EVM-native; conservation is enforced by zk-proved
   EVM semantics (strong) *plus* vault solvency for everything token-layer-side
-  (`Σ token-layer ALPHA = vault balance`, invariant of the bridge). Supply security
+  (`Σ token-layer UCT = vault balance`, invariant of the bridge). Supply security
   inherits the contract/upgrade/zk vector set. A vault compromise is a loss event for
   the *currency*, not just for stakers.
 - **B**: canonical supply is execution-layer-native; conservation =

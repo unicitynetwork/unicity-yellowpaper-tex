@@ -58,16 +58,13 @@ In the Proof of Authority mechanism, a permissioned, \emph{authorized} entity pr
 
 Proof of Stake mechanisms provide decentralization, permissionlessness and \emph{Sybil attack}\footnote{An entity generates an arbitrary number of identities in order to obtain unfair representation strength in a distributed algorithm}\index{Sybil attack} protection.
 
-Proof of Stake mechanism\index{PoS (Proof of Stake)} is based on the fact that there is a finite amount of certain backing asset, in Unicity's case it is the native currency, ALPHA. When each validator presents a proof of locking a certain amount of ALPHA, it is guaranteed, that there is a real capital cost involved and hard economical limits of potential power grab.
+Proof of Stake mechanism\index{PoS (Proof of Stake)} is based on the fact that there is a finite amount of certain backing asset, in Unicity's case it is the native currency, UCT. When each validator presents a proof of locking a certain amount of UCT, it is guaranteed, that there is a real capital cost involved and hard economical limits of potential power grab.
 
 Also, the staking mechanism provides a commitment and shared ownership structure for the Unicity Community.
 
 Validator's voting power in consensus correlates to its staked amount. That is, votes have weights, and the quorum size is defined as the arithmetic sum of stakes of agreeing validators which is necessary to reach a consensus.
 
 The leader election algorithm may use stake amounts as an input, so that the probability of becoming a leader correlates to the stake amount (assuming PoS).
-
-\section{Proof of Work}
-% TODO write me
 
 \section{Tokenomics Toolbox}
 
@@ -76,7 +73,7 @@ Tokenomics is the economic security layer of the Unicity Platform. It extends th
 Governance implements the tokenomics layer. In order to do so, there are certain tools and levers.
 
 \begin{description}
-	\item[Incentives] are payouts in ALPHA currency to incentivize validator participation in the Unicity System. There are incentives for staking (reward for capital cost) and incentives for providing secure and highly available validation service (reward for computation effort).
+	\item[Incentives] are payouts in UCT currency to incentivize validator participation in the Unicity System. There are incentives for staking (reward for capital cost) and incentives for providing secure and highly available validation service (reward for computation effort).
 	\item[Reputation] system improves the stability of the system, by incentivizing long-term identities and stable and high-quality behavior of validators.
 	\item[Slashing] is a mechanism enabled by staking: to disincentivize malicious behavior, it is possible to forfeit part or all of the stake as a punitive measure.
 	\item[Stake Limits] per validator allow the system to influence the number of participating physical validator machines; e.g., when there is an upper limit of staking rewards per machine, the stakers are incentivized to bring in more machine instances.
