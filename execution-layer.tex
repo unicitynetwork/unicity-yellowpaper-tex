@@ -19,7 +19,7 @@ A token progresses through the following stages:
 \begin{description}
 \item[Minting]\index{mint transaction} Creates a new token with an initial state. Minting uses a publicly known minting key pair $(\mathsf{sk}_\mathsf{mint}, \mathsf{pk}_\mathsf{mint})$ which MAY be network specific.
 \item[Transfer]\index{transfer transaction} Changes ownership by spending the current state and creating a new state with a new owner predicate.
-\item[Compression]\index{token compression} Compacts the token by replacing a set of transactions with a cryptographic proof of validity of these transactions.
+\item[Compression]\index{token compression} Compacts the token by replacing a prefix of its transfer history with a succinct proof of validity of those transactions. Unlike the other stages, compression is a change of \emph{representation} rather than a transaction: no state is spent, no state is created, the token identifier is unchanged and the Unicity Service is not involved. See Sec.~\ref{sec:history-compression}.
 \item[Split]\index{split transaction} (Fungible tokens only.) Burns the original token and mints new tokens, with a cryptographic value conservation proof ensuring no value is created or destroyed. See Sec.~\ref{sec:token-splitting}.
 \item[Burn]\index{burn transaction} Permanently locks a token by transferring it to a burn predicate that cannot be unlocked. See Sec.~\ref{sec:burn-transaction}.
 \end{description}
@@ -54,6 +54,8 @@ A \emph{token}\index{token!structure} is a self-contained data structure carryin
 \mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})
 \]
 where $T_0^\mathsf{cert}$ is a certified mint transaction and $T_i^\mathsf{cert}$ for $i > 0$ are certified transfer transactions.
+
+The holder MAY replace a prefix $T_1^\mathsf{cert}, \ldots, T_m^\mathsf{cert}$ of the transfer sequence by a \emph{compressed history} object attesting to its validity (Sec.~\ref{sec:history-compression}). The result denotes the same token in the same state, is verified by the same function $\Call{VerifyToken}{}$, and is spent by an ordinary transfer; the mint transaction is never compressed.
 
 \subsubsection{Mint Transaction}\label{sec:mint-tx}
 
@@ -146,7 +148,7 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$ -- token
+	\item $\mathcal{L} = (T_0^\mathsf{cert}, [\mathcal{H}], T_{m+1}^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$ -- token, where the optional compressed history $\mathcal{H}$ stands for transfers $1 \ldots m$ (Sec.~\ref{sec:history-compression}); an uncompressed token omits $\mathcal{H}$ and has $m = 0$. The watermark $m$ is implicit in the representation, not a stored field
 	\item $\mathcal{T}$ -- trust base
 \end{enumerate}
 
@@ -159,7 +161,11 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 	\If {$\neg \Call{VerifyMintTransaction}{T_0, \pi_0, \mathcal{T}}$} \Return \FALSE \EndIf
 	\State $\predi^0 \gets T_0.D_\mathsf{mint}.\predi'$
 	\State $h^0 \gets H(H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha), \mathsf{MINT\_SUFFIX})$
-	\For {$i \gets 1 \ldots n$}
+	\If {$\mathcal{H}$ present}
+		\If {$\neg \Call{VerifyCompressedHistory}{\mathcal{H}, \predi^0, h^0, \mathcal{T}}$} \Return \FALSE \EndIf
+		\State $\predi^{m} \gets \decpred(\mathcal{H}.e)$;\quad $h^{m} \gets \mathcal{H}.h$ \Comment{carry restored from the proof}
+	\EndIf
+	\For {$i \gets m+1 \ldots n$}
 		\State \Parse $T_i^\mathsf{cert}$ \textbf{as} $(T_i, u_i, \pi_i)$
 		\If {$\neg \Call{VerifyTransferTransaction}{T_i, u_i, \pi_i, \predi^{i-1}, h^{i-1}, \mathcal{T}}$} \Return \FALSE \EndIf
 		\State $\predi^{i} \gets T_i.D.\predi'$
@@ -168,7 +174,7 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 	\State \Return \TRUE
 \end{algorithmic}
 
-$\Call{VerifyMintTransaction}{}$ and $\Call{VerifyTransferTransaction}{}$ are defined by verification steps in chapters \ref{sec:mint-tx}, \ref{sec:transfer-tx}.
+$\Call{VerifyMintTransaction}{}$ and $\Call{VerifyTransferTransaction}{}$ are defined by verification steps in chapters \ref{sec:mint-tx}, \ref{sec:transfer-tx}; $\Call{VerifyCompressedHistory}{}$ in Sec.~\ref{sec:compressed-verification}.
 
 Some mint reasons embed complete source tokens. These are verified iteratively under the same trust base, verifier registry and cumulative resource limits as the outer token (Sec.~\ref{sec:nested-verification}).
 
@@ -639,6 +645,148 @@ These checks establish that the source was authentic and irreversibly spent, the
 A \emph{burn transaction} is a transfer transaction where the recipient predicate is $\predi_\mathsf{burn}(h_\mathsf{reason})$ (Sec.~\ref{sec:burn-predicate}). Since the burn predicate cannot be unlocked, the token is permanently spent and cannot be transferred further.
 
 The reason hash $h_\mathsf{reason}$ links the burn to its purpose. In a split operation, it is the hash of the complete canonical split-manifest encoding $b_\mathcal{M}$, enabling verifiers of the resulting tokens to bind the source burn to the exact ordered vector of per-asset allocation roots.
+
+
+\section{Token History Compression}\label{sec:history-compression}
+
+\index{token compression}
+A token accumulates one certified transaction per transfer, so verification cost and token size grow with its history (Sec.~\ref{sec:token-verification}). \emph{Compression} replaces a prefix of the transfer sequence with a succinct proof that the prefix was a valid, certified chain of transitions.
+
+Compression is a change of representation, not a transaction. No state is spent and none is created; the token identifier, the genesis and the current state are unchanged; the Unicity Service is not involved and observes nothing. A compressed token and the uncompressed token it was derived from denote the same token in the same state: whichever representation a holder presents, spending it consumes the same state identifier, which the Unicity Service admits at most once (Sec.~\ref{sec:request-validation}). Compression therefore requires no token-type opt-in and creates no double-representation risk.
+
+Two consequences shape the rest of this section. First, compression is \emph{discretionary} and outside the critical path of transacting: a holder compresses when it chooses --- typically as a background job --- and never as part of preparing a transfer. Second, compression is \emph{lossy and irreversible}: the proof does not yield the transfer records back. A holder that compresses and discards its records can no longer produce the uncompressed form, and can therefore no longer pay a relying party whose verifier lacks the compression verification keys. Wallets SHOULD retain the raw history independently and treat the compressed form as a transport representation rather than as storage.
+
+\subsection{Design Constraints}
+
+Two properties are imposed on the construction, both for the same reason --- keeping the proving relation small and the trust decisions in ordinary, auditable code:
+
+\begin{description}
+	\item[No certificate verification inside the relation] Every Unicity Certificate a compressed token depends on is verified by the relying party's normal $\mathsf{VerifyUnicityCert}$ path against its own trust base $\mathcal{T}$, exactly as for an uncompressed token, and enters the proof only as a certified scalar. The relation never contains BFT signature verification, validator sets or trust base evolution.
+	\item[The genesis is never compressed] The mint transaction, its mint reason and its genesis payload remain present in full. Mint authorization (Sec.~\ref{sec:mint-authorization}) is thus checked by the ordinary verifier for every token, compressed or not, and no issuance format needs an in-relation counterpart.
+\end{description}
+
+\subsection{Anchored Inclusion and Anchor Accumulation}\label{sec:compression-anchors}
+
+\index{anchor certificate}
+Because the SMT is add-only (Sec.~\ref{sec:smt}), one recent certificate suffices to establish inclusion of many older leaves. Fix an \emph{anchor certificate} $UC^*$ and its root $h^* = UC^*.\mathcal{IR}.h$; a leaf $L = (\mathsf{sid}, \txhash)$ is anchored by an SMT inclusion certificate of $L$ against $h^*$ (Appendix~\ref{app:bridging-anchor}). This replaces one certificate verification per transition by one certificate plus a hash-path check per transition.
+
+A proof produced today is anchored at today's root. When the holder later extends it with newer transitions, those are anchored at a newer root, and the older anchor cannot be re-derived: collapsing two anchors into one would require a consistency proof between two arbitrary certified roots, which the aggregation layer does not currently publish (consistency proofs are verified by the BFT Core when issuing a certificate, Sec.~\ref{sec:request-validation}, and not retained). A compressed history therefore carries an ordered list of anchors $\langle UC^*_1, \ldots, UC^*_F\rangle$, one per compression event, accumulated into a single public value
+\[
+A_0 := H(\mathsf{ANCHOR\_INIT}), \qquad A_f := H(A_{f-1},\; UC^*_f.\mathcal{IR}.h),
+\]
+so that the proof's public input stays constant-size while the verifier recomputes $A_F$ from the certificates it has just verified itself.
+
+Section~\ref{sec:compression-folding} shows how a holder collapses the list back to $F = 1$ without retaining the history, so $F$ grows only for holders that choose not to.
+
+\subsection{Two Relations}\label{sec:compression-relations}
+
+The statement is split along the line separating \emph{validity} of the transfer chain from its \emph{certification}. The two halves have very different cost profiles and very different re-proving requirements, and separating them is what makes anchors collapsible.
+
+Both relations, their proof system and their verification keys $\mathsf{vk}_\mathsf{ch}, \mathsf{vk}_\mathsf{in}$ are network-level constants, frozen and published in the registry (Appendix~\ref{app:type-registry}) before activation; every verifier pins $H(\mathsf{vk}_\mathsf{ch})$ and $H(\mathsf{vk}_\mathsf{in})$ alongside its trust base. The upgrade discipline of Sec.~\ref{sec:bridge-security} applies: a corrected or extended relation is a new constant under a new version, never an in-place replacement.
+
+Three ASCII domain separators are fixed: $\mathsf{ANCHOR\_INIT} = \texttt{"UNICITY\_ANCHOR\_INIT"}$, $\mathsf{STEP\_INIT} = \texttt{"UNICITY\_STEP\_INIT"}$ and $\mathsf{TREF\_INIT} = \texttt{"UNICITY\_TREF\_INIT"}$. Define the \emph{step chain} $C$ and the \emph{time-reference chain} $R$ as hash chains --- chosen over vector commitments so that extension is $O(1)$ and folding needs no rebuilding:
+\[
+C_0 := H(\mathsf{STEP\_INIT}), \quad C_i := H(C_{i-1},\, \mathsf{sid}_i,\, \txhash_i), \qquad
+R_0 := H(\mathsf{TREF\_INIT}), \quad R_j := H(R_{j-1},\, \mathsf{sid},\, \txhash,\, \tau).
+\]
+
+\subsubsection{Chain Relation $\mathfrak{R}_\mathsf{ch}$}
+
+Proves that a well-formed, predicate-satisfying transfer chain runs from the genesis carry to the watermark carry, and commits the leaves it would have to have produced. No anchor and no certificate appear.
+
+\begin{longtable}{clp{8.4cm}}
+\textbf{Index} & \textbf{Field} & \textbf{Description} \\
+\hline
+\endhead
+0 & $\mathsf{ver}$ & relation version; this specification defines version $1$ \\
+1 & $h^0$ & genesis state hash, $H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$ \\
+2 & $\hat{e}^0$ & $H(\encpred(\predi^0))$ of the genesis owner predicate \\
+3 & $h^m$ & state hash at the watermark \\
+4 & $\hat{e}^m$ & $H(\encpred(\predi^m))$ of the owner predicate at the watermark \\
+5 & $C$ & step chain over the transitions $1 \ldots m$ \\
+6 & $R$ & time-reference chain over the time-dependent transitions \\
+\end{longtable}
+
+\noindent Witness: the transfer transactions $T_i$, the unlocking arguments $u_i$ for $i = 1 \ldots m$, the genesis owner predicate, and the time-reference list. Starting from $(h, e) \gets (h^0, \encpred(\predi^0))$ --- with $H(e) = x.\hat{e}^0$ --- and $C \gets C_0$, $R \gets R_0$, for each $i$ the relation checks, writing $\predi^{i-1} = \decpred(e)$ for the carried predicate,
+
+\begin{enumerate}
+	\item $T_i.\sthash = h$ \quad (the chain is contiguous);
+	\item $\txhash_i \gets H(T_i.D)$;\; $\mathsf{sid}_i \gets H(e, T_i.\sthash)$;
+	\item $\predi^{i-1}(\tau_i, H(T_i.\sthash, \txhash_i), u_i) = 1$. Whether $\predi^{i-1}$ reads the reference time is a static property of its type (Appendix~\ref{app:predicate-encoding}). If it does, the relation consumes the next entry $(\mathsf{sid}, \txhash, \tau)$ of the witness time-reference list, requires $(\mathsf{sid}, \txhash) = (\mathsf{sid}_i, \txhash_i)$, folds the entry into $R \gets H(R, \mathsf{sid}, \txhash, \tau)$, and evaluates the predicate with $\tau_i \gets \tau$; if it does not, $\tau_i$ is unconstrained and no entry is consumed;
+	\item $C \gets H(C, \mathsf{sid}_i, \txhash_i)$;\; $e \gets \encpred(T_i.D.\predi')$;\; $h \gets H(h, T_i.D.x)$;
+\end{enumerate}
+and finally $h = x.h^m$, $H(e) = x.\hat{e}^m$, $C = x.C$, $R = x.R$, and the witness time-reference list is fully consumed --- so the public $R$ accounts for exactly the transitions that read a reference time, no more and no fewer.
+
+Steps 1--4 are precisely checks 1, 3 and 4 of transfer verification (Sec.~\ref{sec:transfer-tx}) together with the carry update of $\Call{VerifyToken}{}$. Check 2 of transfer verification (network identifier) and the certificate half of check 5 are discharged outside the relation; the inclusion half is discharged by $\mathfrak{R}_\mathsf{in}$.
+
+\paragraph{Time-dependent transitions.} Anchored inclusion carries no reference time (Appendix~\ref{app:bridging-anchor}), while $\predi_\mathsf{tlock}$ and $\predi_\mathsf{htlc}$ consume one (Sec.~\ref{sec:time-extraction}). Rather than verifying those transitions' certificates inside the relation, the compressed history carries their original inclusion proofs on the wire: the verifier validates each in the ordinary way, extracts $(\mathsf{sid}, \txhash, \tau = UC.\mathcal{IR}.t)$, and reconstructs $R$. Binding $\tau$ to $(\mathsf{sid}, \txhash)$ is what prevents a prover from presenting an unrelated certificate with a more convenient timestamp. Cost is one certificate per time-dependent transition, which is also what such a transition costs uncompressed.
+
+\subsubsection{Inclusion Relation $\mathfrak{R}_\mathsf{in}$}
+
+Proves that every leaf committed by $C$ was certified, under one or more anchors.
+
+\begin{longtable}{clp{8.4cm}}
+\textbf{Index} & \textbf{Field} & \textbf{Description} \\
+\hline
+\endhead
+0 & $\mathsf{ver}$ & relation version; this specification defines version $1$ \\
+1 & $C$ & step chain, identical to $\mathfrak{R}_\mathsf{ch}$'s field 5 \\
+2 & $A$ & anchor accumulator $A_F$ (Sec.~\ref{sec:compression-anchors}) \\
+\end{longtable}
+
+\noindent Witness: the leaf list $\langle(\mathsf{sid}_i, \txhash_i)\rangle_{i=1}^{m}$, an inclusion certificate per leaf, the anchor roots $\langle h^*_f \rangle$ and the segment boundaries assigning leaves to anchors. The relation recomputes the hash chain $C$ from the leaf list in order, recomputes $A$ from the anchor roots in order, and requires every leaf to be included under the root of its segment. Segment boundaries are witness data: publishing them would publish the fold history for no verification benefit.
+
+Note the asymmetry the split buys. $\mathfrak{R}_\mathsf{ch}$ contains signature verification --- the expensive part --- but is extended incrementally and never re-proven. $\mathfrak{R}_\mathsf{in}$ is pure hashing, and can be re-proven from scratch cheaply.
+
+\subsection{Verification}\label{sec:compressed-verification}
+
+A \emph{compressed history} is
+\[
+\mathcal{H} = (\mathsf{ver},\; h,\; e,\; C,\; \pi_\mathsf{ch},\; \pi_\mathsf{in},\; \langle UC^*_1, \ldots, UC^*_F\rangle,\; \langle \pinc_1, \ldots, \pinc_k \rangle),
+\]
+with $(h, e)$ the carry it restores, $C$ the step chain shared by the two proofs, $\pi_\mathsf{ch}, \pi_\mathsf{in}$ the proofs themselves, $UC^*_f$ the anchors in fold order, and $\pinc_j$ the inclusion proofs of the time-dependent transitions in transition order. The watermark $m$ is not carried: it is implicit in how many transfers remain in $\mathcal{L}$, it is not security-relevant --- the carry $(h, e)$ is what the tail is verified against --- and omitting it keeps the number of compressed transitions undisclosed.
+
+$\Call{VerifyCompressedHistory}{\mathcal{H}, \predi^0, h^0, \mathcal{T}}$, invoked from $\Call{VerifyToken}{}$:
+
+\begin{enumerate}
+	\item Ensure $\mathsf{ver} = 1$; decode $e$ to $\predi^m$ under the canonical rules of Appendix~\ref{app:predicate-encoding}, rejecting a non-canonical encoding.
+	\item $A \gets H(\mathsf{ANCHOR\_INIT})$; for $f = 1 \ldots F$: ensure $UC^*_f.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$ and $\mathsf{VerifyUnicityCert}(UC^*_f, \mathcal{T}) = 1$; accumulate $A \gets H(A, UC^*_f.\mathcal{IR}.h)$ in the given order.
+	\item $R \gets H(\mathsf{TREF\_INIT})$; for $j = 1 \ldots k$: verify $\pinc_j$ in full against $\mathcal{T}$, exactly as an ordinary transfer's inclusion proof is verified (Sec.~\ref{sec:transfer-tx}, check 5); accumulate $R \gets H(R, \pinc_j.\mathsf{sid}, \pinc_j.\txhash, \mathsf{time}(\pinc_j))$.
+	\item Ensure $\mathfrak{R}_\mathsf{ch}$ verifies under $\mathsf{vk}_\mathsf{ch}$ with public input $(1,\; h^0,\; H(\encpred(\predi^0)),\; h,\; H(e),\; C,\; R)$.
+	\item Ensure $\mathfrak{R}_\mathsf{in}$ verifies under $\mathsf{vk}_\mathsf{in}$ with public input $(1,\; C,\; A)$ --- the same $C$, byte-identical.
+\end{enumerate}
+
+Every failure rejects. A verifier that does not pin $\mathsf{vk}_\mathsf{ch}$ and $\mathsf{vk}_\mathsf{in}$ MUST reject any compressed token with a distinct diagnostic error, as with an unregistered reason format (Sec.~\ref{sec:mint-authorization}); it MUST NOT fall back to accepting the token unverified.
+
+Resource accounting (Sec.~\ref{sec:nested-verification}) charges $\Lambda$ a fixed cost for each proof verification plus the $F + k$ certificate verifications. The verification cost of a compressed history is independent of the number of transitions it stands for.
+
+\subsection{Folding and Re-Anchoring}\label{sec:compression-folding}
+
+Advancing the watermark from $m$ to $m'$ (a \emph{fold}) extends $\mathfrak{R}_\mathsf{ch}$ recursively: the relation verifies $\pi_\mathsf{ch}$ for $(h^0, \hat{e}^0) \to (h^m, \hat{e}^m)$ with step chain $C$, then continues the loop over transitions $m+1 \ldots m'$, emitting $(h^{m'}, \hat{e}^{m'})$ and the extended chains $C', R'$. Because $C$ and $R$ are hash chains, extension costs one hash per step and nothing is rebuilt.
+
+$\mathfrak{R}_\mathsf{in}$ is then re-proven. Two options:
+\begin{description}
+	\item[Append] Prove inclusion of the new leaves under a fresh anchor $UC^*_{F+1}$ and append it, leaving the earlier segments as they are. Requires only the new leaves. $F$ grows by one.
+	\item[Re-anchor] Re-prove $\mathfrak{R}_\mathsf{in}$ over the \emph{entire} leaf list under a single fresh anchor, and replace the anchor list by that one certificate. $F$ returns to $1$.
+\end{description}
+
+Re-anchoring needs the full leaf list $\langle(\mathsf{sid}_i, \txhash_i)\rangle$ and fresh inclusion certificates, but nothing else: not the transfer data, not the predicates, not the unlocking arguments. A holder that wishes to re-anchor indefinitely therefore retains 64 bytes per compressed transition and re-fetches the certificates from an aggregator on demand. That data is already public --- it is what the Unicity Service holds --- so retaining it carries no confidentiality obligation, and it does not grow with the size of the transactions themselves.
+
+Holders SHOULD re-anchor rather than append whenever the leaf list is retained. A holder that has discarded the leaf list can still fold, by appending; a holder that has discarded the transfer data as well can still fold newly received transitions, since folding consumes only the previous proof and the new transitions.
+
+\paragraph{Fold policy.} A fold replaces raw transitions by proofs and certificates, so it pays only above a break-even point: compressing a short history yields a \emph{larger} token than leaving it uncompressed. With succinct proofs of size $|\pi|$ and certificates of size $|UC|$, a compressed history costs approximately $|\pi_\mathsf{ch}| + |\pi_\mathsf{in}| + F\cdot|UC| + k\cdot|\pinc|$ regardless of $m$, and a holder SHOULD fold only once the raw prefix it would replace exceeds that. For the same reason a fold policy that appends should fold rarely and in large increments: with a threshold of $c$ times the anchor size, the anchor list contributes about $1/c$ of the replaced history, so appending yields a constant-factor reduction where re-anchoring yields a constant size.
+
+\subsection{Rules and Scope}
+
+\begin{description}
+	\item[Terminal burns are never folded] A token that is subsequently embedded as a burned source --- of a split (Sec.~\ref{sec:split-verification}) or of any reason format that consumes a burn --- MUST retain its final transfer uncompressed, i.e.\ $m \le n-1$. The consuming verifier checks that transfer's auxiliary data and recipient predicate byte-exactly, and a proof of validity does not supply them. Everything before the burn compresses normally.
+	\item[Per-transfer type checks are out of scope in version 1] $\mathfrak{R}_\mathsf{ch}$ omits check 6 of transfer verification (Sec.~\ref{sec:transfer-tx}), which is a no-op for types that define no per-transfer rules --- the common case (Sec.~\ref{sec:mint-authorization}). A type that defines per-transfer rules, such as a pool type (Appendix~\ref{app:autonomous-pools}), requires those rules inside the relation; its definition manifest MUST then pin the verification keys of the relation variant that implements them, and a verifier MUST NOT compress or accept compressed tokens of such a type under the generic keys.
+	\item[Ancestry is not compressed by this section] For a token minted by a split or merge, the genesis mint reason embeds its source tokens (Sec.~\ref{sec:token-splitting}), and those remain. Compression shrinks each ancestor's transfer history to constant size, so a $k$-deep lineage costs $k$ compressed tokens rather than $k$ full histories, but $k$ itself is unaffected. Compression is accordingly most effective for long-lived tokens with deep transfer histories, and least effective for fungible fragments with many ancestors and few transfers each; for those, shallow provenance is obtained by issuing in fixed denominations and consolidating by merge rather than by repeated splitting.
+\end{description}
+
+\paragraph{Data minimization, not privacy.} A recipient of a compressed token does not receive the predicates, unlocking arguments or auxiliary data of the folded transitions --- including any ephemeral keys those transitions carried (Sec.~\ref{sec:private-transactions}). This is a reduction in what is disclosed, not a privacy guarantee: unless the proof system is zero-knowledge, no hiding property is claimed for $\pi_\mathsf{ch}$, the inclusion proofs of time-dependent transitions expose those transitions' state identifiers, and every party that held the token earlier retains the raw history regardless. Applications MUST NOT rely on compression as a privacy mechanism; unlinkability is provided by the protocols of Sec.~\ref{sec:private-transactions}.
+
+\paragraph{Open items (next revision).} (i)~Proof-system profile and concrete sizes for $\mathfrak{R}_\mathsf{ch}$ (recursion-friendly, secp256k1 verification in-circuit) and $\mathfrak{R}_\mathsf{in}$; the break-even point above cannot be stated numerically until these are fixed. (ii)~CBOR encoding and semantic tag of $\mathcal{H}$. (iii)~In-relation budget accounting mirroring $\Lambda$. (iv)~A formal statement of the transfer-verification step in-circuit, shared with the bridging relation (Appendix~\ref{app:bridging-relation}). (v)~The relation variant carrying per-transfer type checks, prerequisite to compressing pool tokens. (vi)~Should the aggregation layer later publish consistency proofs between arbitrary certified roots, anchors could be collapsed inside $\mathfrak{R}_\mathsf{in}$ and the anchor list would reduce to a single root unconditionally.
 
 
 \section{Bridged Assets}\label{sec:bridged-assets}
