@@ -89,24 +89,18 @@
   LeafData = TransactionHash    ;~$h_{\mathsf{tx}}$ -- SMT leaf value
   SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, h_{\mathsf{tx}})$
 
-  InclusionCertificate = Bitmap *SiblingHash  ;~$C^\mathsf{inc} = (\mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
-      ;~bitmap: 32 bytes (256-bit big-endian bit vector); bit $d$ set iff sibling needed at depth $d$
-      ;~siblings: $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, root-to-leaf order
-      ;~regions not transmitted: verifier derives $k[0..d)$ from the queried key
-      ;~Wire: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
+  InclusionCertificate = [CertificatePath]  ;~$C^\mathsf{inc}_\emptyset$ or $C^\mathsf{inc}=(\mathit{bitmap},\mathit{siblings};k',v')$
+  NonInclusionCertificate = InclusionCertificate
+  CertificatePath = Bitmap *SiblingHash SMTLeaf
+      ;~bitmap: bit $d$ set exactly when the terminal path has a junction at depth $d$
+      ;~siblings: exactly $\mathsf{bitcount}(\mathit{bitmap})$ hashes, root-to-leaf order
+      ;~terminal: $SMTLeaf=(k',v')$; verifier derives regions from $k'$ and requires $k[d]=k'[d]$
+      ;~Wire: empty for an empty tree, otherwise $\mathit{bitmap}\,\|\,s_1\,\|\cdots\|\,s_n\,\|\,k'\,\|\,v'$
 
-  NonInclusionCertificate = *OpeningJunction *1OpeningLeaf  ;~$C^\mathsf{exc} = \langle e_1, \ldots, e_\ell \rangle$
-      ;~chain of one-level openings along the key-directed descent, root first
-      ;~terminal: junction whose region is not a prefix of the key, or foreign leaf
-      ;~empty chain: valid iff the tree is empty
-  OpeningLeaf = %x00 Key Bytes  ;~$(k_\ell, v_\ell)$: opened leaf, $33 + |v_\ell|$ bytes; last element only
-  OpeningJunction = %x01 Depth Region Hash Hash  ;~$(d, p, h_L, h_R)$: opened junction, 98 bytes
-
-  InclusionProof = StateIdentifier LeafData InclusionCertificate UC  ;~$\pi^\mathsf{inc} = (\mathsf{sid}, h_{\mathsf{tx}}, C^\mathsf{inc}, UC)$
-      ;~Proves that $\mathsf{sid}$ EXISTS in the SMT with value $h_{\mathsf{tx}}$
-
-  NonInclusionProof = NonInclusionCertificate UC  ;~$\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$
-      ;~Proves that a queried $\mathsf{sid}$ does NOT exist in the SMT
+  InclusionProof = InclusionCertificate UC  ;~$\pi^\mathsf{inc}=(C^\mathsf{inc},UC)$; target key supplied by verifier
+  NonInclusionProof = InclusionProof
+      ;~terminal equality proves inclusion;
+      ;~a different terminal key, or an empty certificate, proves non-inclusion
 
   ConsistencyProof = *ConsistencyProofOp | ZKProof
       ;~$\pi_{\mathsf{CP}}$ -- proves append-only consistency of the SMT round update;

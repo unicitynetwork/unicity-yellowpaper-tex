@@ -208,7 +208,7 @@ where $UC_-$ is the last valid Unicity Certificate of that shard (which the Aggr
 The BFT Core verifies the Aggregator's choice of reference time as part of request admission (Sec.~\ref{certification-request}, check $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta,\sigma].UC_-.C^\mathsf{r}.t_r$).
 
 \paragraph{Extraction from inclusion proofs.}
-Given an inclusion proof $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, the \emph{system time} used for predicate evaluation is extracted as
+Given an inclusion proof $\pi^\mathsf{inc}=(C^\mathsf{inc},UC)$ whose authenticated terminal is $(\mathsf{sid},\txhash)$, the \emph{system time} used for predicate evaluation is extracted as
 \[
 	\mathsf{time}(\pi^\mathsf{inc}) \;=\; UC.\mathcal{IR}.t
 \]
@@ -568,7 +568,7 @@ To return value, the holder forms a \emph{return reason} $\mathcal{R}$ and its c
 
 \subsection{Replay Prevention}\label{sec:bridge-replay}
 
-Replay prevention is implemented via a \emph{nullifier accumulator}, whose root $A$ is stored on-chain by the vault: an authenticated set (implemented by the sparse Merkle tree of Sec.~\ref{sec:smt}, which already provides inclusion and non-inclusion certificates) of the burns already released. The \emph{nullifier} of a burn is derived from its certified leaf, whose state identifier the Unicity Service records at most once (Sec.~\ref{sec:request-validation}); it is therefore globally unique by the same mechanism that prevents double-spending. A release proves the nullifier is \emph{absent} from $A$ and inserts it, and the vault advances $A$. Consequently, the on-chain state necessary for replay prevention is \emph{constant} --- one root.
+Replay prevention is implemented via a \emph{nullifier accumulator}, whose root $A$ is stored on-chain by the vault: an authenticated set (implemented by the sparse Merkle tree of Sec.~\ref{sec:smt}, whose certificate proves either inclusion or non-inclusion) of the burns already released. The \emph{nullifier} of a burn is derived from its certified leaf, whose state identifier the Unicity Service records at most once (Sec.~\ref{sec:request-validation}); it is therefore globally unique by the same mechanism that prevents double-spending. A release proves the nullifier is \emph{absent} from $A$ and inserts it, and the vault advances $A$. Consequently, the on-chain state necessary for replay prevention is \emph{constant} --- one root.
 
 The nullifier accumulator can be deterministically rebuilt by anybody based on transaction history of the source blockchain.
 
