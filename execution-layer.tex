@@ -55,7 +55,7 @@ A \emph{token}\index{token!structure} is a self-contained data structure carryin
 \]
 where $T_0^\mathsf{cert}$ is a certified mint transaction and $T_i^\mathsf{cert}$ for $i > 0$ are certified transfer transactions.
 
-The holder MAY replace a prefix $T_1^\mathsf{cert}, \ldots, T_m^\mathsf{cert}$ of the transfer sequence by a \emph{compressed history} object attesting to its validity (Sec.~\ref{sec:history-compression}). The result denotes the same token in the same state, is verified by the same function $\Call{VerifyToken}{}$, and is spent by an ordinary transfer; the mint transaction is never compressed.
+A token has two compressible dimensions, both treated in Sec.~\ref{sec:history-compression} and neither of which alters a certified transaction: its own transfer sequence, a prefix of which MAY be replaced by a \emph{compressed history} object; and its \emph{provenance}, the ancestor tokens its genesis reason depends on, which MAY be supplied as \emph{token certificates} instead of in full. Either result denotes the same token in the same state, is verified by the same function $\Call{VerifyToken}{}$, and is spent by an ordinary transfer.
 
 \subsubsection{Mint Transaction}\label{sec:mint-tx}
 
@@ -77,6 +77,8 @@ D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason},
 	\end{itemize}
 	\item $\pi_0$ -- inclusion proof from the Unicity Service
 \end{itemize}
+
+The reason is part of the certified transaction data and therefore fixed forever by $\txhash$. A reason format that must remain compressible states its dependencies on other tokens \emph{by identifier} rather than by embedding them, so that the evidence for those tokens travels beside the token and may be re-encoded; this is the \emph{reference form} of Sec.~\ref{sec:token-evidence}.
 
 The \emph{token identifier}\index{token!identifier} is derived as
 \[
@@ -545,6 +547,8 @@ Algorithm~\ref{alg:mint-auth} defines the mint authorization check, run as step~
 \end{algorithmic}
 \end{algorithm}
 
+A reason verifier $V_t$ obtains the tokens a reason depends on from the \emph{evidence set} accompanying the token (Sec.~\ref{sec:token-evidence}) when the format is in reference form, and from the reason body itself when the format embeds them.
+
 Reason bodies and payloads are decoded under the strict deterministic-CBOR discipline of Appendix~\ref{app:split-proof-encoding}: wrong or unknown tags, non-minimal encodings, wrong field counts or types, trailing bytes, and exhausted budgets are all rejected.
 
 Type-specific validation is not limited to the genesis: step~6 of transfer verification (Sec.~\ref{sec:transfer-tx}) runs the per-transfer checks of $\mathcal{D}_\mathsf{ty}$, where the type defines any. For most types there are none --- the authoritative type-governed payload is the genesis payload $\auxd'_0$, and transfer-level auxiliary data is free-form transport (e.g.\ ephemeral keys of Sec.~\ref{sec:private-transactions}) unless the type states otherwise.
@@ -650,11 +654,11 @@ The reason hash $h_\mathsf{reason}$ links the burn to its purpose. In a split op
 \section{Token History Compression}\label{sec:history-compression}
 
 \index{token compression}
-A token accumulates one certified transaction per transfer, so verification cost and token size grow with its history (Sec.~\ref{sec:token-verification}). \emph{Compression} replaces a prefix of the transfer sequence with a succinct proof that the prefix was a valid, certified chain of transitions.
+A token accumulates one certified transaction per transfer, so verification cost and token size grow with its history (Sec.~\ref{sec:token-verification}). \emph{Compression} replaces a prefix of the transfer sequence with a succinct proof that the prefix was a valid, certified chain of transitions. The second dimension --- the ancestor tokens a split or merge genesis depends on --- is treated in Sec.~\ref{sec:provenance-compression}, on the machinery this section establishes.
 
 Compression is a change of representation, not a transaction. No state is spent and none is created; the token identifier, the genesis and the current state are unchanged; the Unicity Service is not involved and observes nothing. A compressed token and the uncompressed token it was derived from denote the same token in the same state: whichever representation a holder presents, spending it consumes the same state identifier, which the Unicity Service admits at most once (Sec.~\ref{sec:request-validation}). Compression therefore requires no token-type opt-in and creates no double-representation risk.
 
-Two consequences shape the rest of this section. First, compression is \emph{discretionary} and outside the critical path of transacting: a holder compresses when it chooses --- typically as a background job --- and never as part of preparing a transfer. Second, compression is \emph{lossy and irreversible}: the proof does not yield the transfer records back. A holder that compresses and discards its records can no longer produce the uncompressed form, and can therefore no longer pay a relying party whose verifier lacks the compression verification keys. Wallets SHOULD retain the raw history independently and treat the compressed form as a transport representation rather than as storage.
+Two consequences shape both sections. First, compression is \emph{discretionary} and outside the critical path of transacting: a holder compresses when it chooses --- typically as a background job --- and never as part of preparing a transaction. Second, compression is \emph{lossy and irreversible}: the proof does not yield the transfer records back. A holder that compresses and discards its records can no longer produce the uncompressed form, and can therefore no longer pay a relying party whose verifier lacks the compression verification keys. Wallets SHOULD retain the raw history independently and treat the compressed form as a transport representation rather than as storage.
 
 \subsection{Design Constraints}
 
@@ -662,7 +666,7 @@ Two properties are imposed on the construction, both for the same reason --- kee
 
 \begin{description}
 	\item[No certificate verification inside the relation] Every Unicity Certificate a compressed token depends on is verified by the relying party's normal $\mathsf{VerifyUnicityCert}$ path against its own trust base $\mathcal{T}$, exactly as for an uncompressed token, and enters the proof only as a certified scalar. The relation never contains BFT signature verification, validator sets or trust base evolution.
-	\item[The genesis is never compressed] The mint transaction, its mint reason and its genesis payload remain present in full. Mint authorization (Sec.~\ref{sec:mint-authorization}) is thus checked by the ordinary verifier for every token, compressed or not, and no issuance format needs an in-relation counterpart.
+	\item[Issuance is never proven, only checked] The mint transaction, its reason and its payload remain present in full, for this token and --- through the issuance roots of Sec.~\ref{sec:token-certificate} --- for every ancestor whose genesis was an act of issuance. Mint authorization (Sec.~\ref{sec:mint-authorization}) is thus checked by the ordinary verifier under its own $\Gamma$, and no issuance format ever needs an in-relation counterpart.
 \end{description}
 
 \subsection{Anchored Inclusion and Anchor Accumulation}\label{sec:compression-anchors}
@@ -686,8 +690,12 @@ Both relations, their proof system and their verification keys $\mathsf{vk}_\mat
 
 Three ASCII domain separators are fixed: $\mathsf{ANCHOR\_INIT} = \texttt{"UNICITY\_ANCHOR\_INIT"}$, $\mathsf{STEP\_INIT} = \texttt{"UNICITY\_STEP\_INIT"}$ and $\mathsf{TREF\_INIT} = \texttt{"UNICITY\_TREF\_INIT"}$. Define the \emph{step chain} $C$ and the \emph{time-reference chain} $R$ as hash chains --- chosen over vector commitments so that extension is $O(1)$ and folding needs no rebuilding:
 \[
-C_0 := H(\mathsf{STEP\_INIT}), \quad C_i := H(C_{i-1},\, \mathsf{sid}_i,\, \txhash_i), \qquad
-R_0 := H(\mathsf{TREF\_INIT}), \quad R_j := H(R_{j-1},\, \mathsf{sid},\, \txhash,\, \tau).
+	\begin{aligned}
+		C_0 &:= H(\mathsf{STEP\_INIT}), &
+		C_i &:= H(C_{i-1},\, \mathsf{sid}_i,\, \txhash_i), \\
+		R_0 &:= H(\mathsf{TREF\_INIT}), &
+		R_j &:= H(R_{j-1},\, \mathsf{sid}_j,\, \txhash_j,\, \tau).
+	\end{aligned}
 \]
 
 \subsubsection{Chain Relation $\mathfrak{R}_\mathsf{ch}$}
@@ -719,11 +727,11 @@ and finally $h = x.h^m$, $H(e) = x.\hat{e}^m$, $C = x.C$, $R = x.R$, and the wit
 
 Steps 1--4 are precisely checks 1, 3 and 4 of transfer verification (Sec.~\ref{sec:transfer-tx}) together with the carry update of $\Call{VerifyToken}{}$. Check 2 of transfer verification (network identifier) and the certificate half of check 5 are discharged outside the relation; the inclusion half is discharged by $\mathfrak{R}_\mathsf{in}$.
 
-\paragraph{Time-dependent transitions.} Anchored inclusion carries no reference time (Appendix~\ref{app:bridging-anchor}), while $\predi_\mathsf{tlock}$ and $\predi_\mathsf{htlc}$ consume one (Sec.~\ref{sec:time-extraction}). Rather than verifying those transitions' certificates inside the relation, the compressed history carries their original inclusion proofs on the wire: the verifier validates each in the ordinary way, extracts $(\mathsf{sid}, \txhash, \tau = UC.\mathcal{IR}.t)$, and reconstructs $R$. Binding $\tau$ to $(\mathsf{sid}, \txhash)$ is what prevents a prover from presenting an unrelated certificate with a more convenient timestamp. Cost is one certificate per time-dependent transition, which is also what such a transition costs uncompressed.
+\paragraph{Time-dependent transitions.} Anchored inclusion does not provide reference time (Appendix~\ref{app:bridging-anchor}), while $\predi_\mathsf{tlock}$ and $\predi_\mathsf{htlc}$ need it (Sec.~\ref{sec:time-extraction}). Rather than verifying those transitions' certificates inside the relation, the compressed history carries their original inclusion proofs on the wire: the verifier validates each in the ordinary way, extracts $(\mathsf{sid}, \txhash, \tau = UC.\mathcal{IR}.t)$, and reconstructs $R$. Binding $\tau$ to $(\mathsf{sid}, \txhash)$ prevents a prover from presenting an unrelated certificate with a fake timestamp. Cost is one certificate per time-dependent transition.
 
 \subsubsection{Inclusion Relation $\mathfrak{R}_\mathsf{in}$}
 
-Proves that every leaf committed by $C$ was certified, under one or more anchors.
+Proves that every leaf committed by $C$ was certified, under at least one anchor.
 
 \begin{longtable}{clp{8.4cm}}
 \textbf{Index} & \textbf{Field} & \textbf{Description} \\
@@ -736,7 +744,7 @@ Proves that every leaf committed by $C$ was certified, under one or more anchors
 
 \noindent Witness: the leaf list $\langle(\mathsf{sid}_i, \txhash_i)\rangle_{i=1}^{m}$, an inclusion certificate per leaf, the anchor roots $\langle h^*_f \rangle$ and the segment boundaries assigning leaves to anchors. The relation recomputes the hash chain $C$ from the leaf list in order, recomputes $A$ from the anchor roots in order, and requires every leaf to be included under the root of its segment. Segment boundaries are witness data: publishing them would publish the fold history for no verification benefit.
 
-Note the asymmetry the split buys. $\mathfrak{R}_\mathsf{ch}$ contains signature verification --- the expensive part --- but is extended incrementally and never re-proven. $\mathfrak{R}_\mathsf{in}$ is pure hashing, and can be re-proven from scratch cheaply.
+Note the asymmetry. $\mathfrak{R}_\mathsf{ch}$ contains signature verification, but is extended incrementally and not re-proven. $\mathfrak{R}_\mathsf{in}$ is hash-based, and can be re-proven from scratch cheaply.
 
 \subsection{Verification}\label{sec:compressed-verification}
 
@@ -776,17 +784,112 @@ Holders SHOULD re-anchor rather than append whenever the leaf list is retained. 
 
 \paragraph{Fold policy.} A fold replaces raw transitions by proofs and certificates, so it pays only above a break-even point: compressing a short history yields a \emph{larger} token than leaving it uncompressed. With succinct proofs of size $|\pi|$ and certificates of size $|UC|$, a compressed history costs approximately $|\pi_\mathsf{ch}| + |\pi_\mathsf{in}| + F\cdot|UC| + k\cdot|\pinc|$ regardless of $m$, and a holder SHOULD fold only once the raw prefix it would replace exceeds that. For the same reason a fold policy that appends should fold rarely and in large increments: with a threshold of $c$ times the anchor size, the anchor list contributes about $1/c$ of the replaced history, so appending yields a constant-factor reduction where re-anchoring yields a constant size.
 
-\subsection{Rules and Scope}
+\section{Provenance Compression}\label{sec:provenance-compression}
+
+\index{token compression!provenance}
+Section~\ref{sec:history-compression} bounds a token's own transfer history. It leaves the second dimension untouched: a token minted by a split or merge depends on its source tokens, each of which depends on \emph{its} sources, back to issuance. Compressing every ancestor's transfer history makes each link constant-size, but the number of links --- the depth of a chain of splits, the breadth of a tree of merges --- is unaffected. For fungible fragments that is the dominant term, and it is what this section removes.
+
+\subsection{Token Evidence and Reference Form}\label{sec:token-evidence}
+
+\index{evidence set}\index{reference form}
+A reason format that \emph{embeds} its source tokens seals them into $\mathsf{reason}$, hence into $\txhash$, hence into the certified genesis: those bytes can never be re-encoded. The split reason of Sec.~\ref{sec:token-splitting} is of this kind, and this is why it is not compressible.
+
+A format in \emph{reference form} names its sources by token identifier instead. The identifier is sufficient: $\mathsf{id} = H(\mathsf{salt}, \alpha)$ is unique network-wide and at most one certified genesis exists per identifier (Sec.~\ref{sec:request-validation}), so an identifier determines its token as tightly as the token bytes do. Everything the reason must fix --- which source, which allocation, which manifest --- stays committed; only the \emph{evidence} for the named token moves outside.
+
+Accordingly, a token in reference form travels with an \emph{evidence set}
+\[
+\mathcal{E} = \{\, \mathsf{id} \mapsto \mathsf{ev}(\mathsf{id}) \,\},
+\]
+supplying, for every identifier its reason formats name, one of:
+\begin{description}
+	\item[a complete token] $\mathcal{L}$ with $\mathsf{id}(\mathcal{L}) = \mathsf{id}$, itself possibly carrying a compressed history --- the recursive, uncompressed case;
+	\item[a token certificate] $\mathcal{K}$, a succinct attestation of that token's validity, defined below.
+\end{description}
+$\mathcal{E}$ is one flat map carried with the outermost token and resolved transitively: an entry supplied as a complete token may name further identifiers, whose entries must be present in the same $\mathcal{E}$. A missing entry rejects.
+
+The evidence set is not certified data and is not committed by anything: it is checked, not trusted. A verifier resolving identifier $\mathsf{id}$ either verifies the supplied token by $\Call{VerifyToken}{}$ or verifies the supplied certificate, and in both cases obtains the same facts about the same token. Substituting one form for the other is therefore invisible to every check that consumes it, which is exactly what makes provenance compression a re-encoding rather than a protocol change.
+
+\subsection{Token Certificate}\label{sec:token-certificate}
+
+\index{token certificate}
+A token certificate attests to everything a consuming reason verifier needs about a source token, in constant size. The facts are those the split and merge verifiers read from an embedded source (Sec.~\ref{sec:split-verification}, checks 3, 5, 6, 10): its identifier, its type, the assets its genesis payload carries, and the state it had reached.
+
+\begin{longtable}{clp{8.4cm}}
+\textbf{Index} & \textbf{Field} & \textbf{Description} \\
+\hline
+\endhead
+0 & $\mathsf{ver}$ & relation version; this specification defines version $1$ \\
+1 & $A$ & anchor accumulator (Sec.~\ref{sec:compression-anchors}) \\
+2 & $R$ & time-reference chain (Sec.~\ref{sec:compression-relations}) \\
+3 & $\mathsf{id}$ & identifier of the attested token \\
+4 & $\mathsf{ty}$ & its token type \\
+5 & $\mathcal{A}$ & its genesis asset collection, as values \\
+6 & $(h, e)$ & the state carry it had reached \\
+7 & $\mathcal{I}$ & issuance-root chain: a hash chain over the $\txhash$ of every genesis in the attested provenance whose reason format is not conserving \\
+\end{longtable}
+
+\noindent The certificate object carried in $\mathcal{E}$ is
+\[
+\mathcal{K} = (\mathsf{ver},\; \mathsf{id},\; \mathsf{ty},\; \mathcal{A},\; h,\; e,\; \pi_\mathsf{lin},\; \langle UC^*_f\rangle,\; \langle \pinc_j \rangle,\; \langle T_{0,r}^\mathsf{cert}\rangle),
+\]
+with $T_{0,r}^\mathsf{cert}$ the certified mint transactions of the issuance roots, carried in the clear.
+
+\paragraph{Issuance stays outside the relation.} The design constraint of Sec.~\ref{sec:history-compression} extends one level up: just as certificates are verified by the relying party rather than in-circuit, so is \emph{mint authorization}. The lineage relation expands only the value-conserving formats --- the split reason and the merge reason, whose verification rules are network-wide and type-independent. On reaching an ancestor genesis with any other reason format, it stops, emits that genesis's $\txhash$ into $\mathcal{I}$, and assumes nothing further about it. The verifier discharges each emitted root by ordinary means: $\Call{VerifyMintTransaction}{}$ including Alg.~\ref{alg:mint-auth}, with its own $\Gamma$ and its own registered verifiers.
+
+The relation therefore contains no issuer signatures, no slot commitments, no bridge configuration and no proof-system verification keys --- nothing type-specific at all. New issuance formats can be registered without touching it, and a capped type's slot geneses (Appendix~\ref{app:reason-slot}) are checked exactly as they are for an uncompressed token. What the relation does contain is the transfer step of Sec.~\ref{sec:compression-relations}, the anchored inclusion mechanism, and the conservation arithmetic of split and merge.
+
+Asset decoding inside the relation is the generic canonical asset-collection decoding (Sec.~\ref{sec:asset-structure}, canonical rules of Appendix~\ref{app:split-proof-encoding}), not $\mathcal{D}_\mathsf{ty}.\Call{ParseAux}{}$: the type-specific part of payload validation --- permitted asset identifiers and the like --- is applied by the verifier to the public $\mathcal{A}$ and to each root genesis it verifies in the clear.
+
+\subsection{Lineage Relation $\mathfrak{R}_\mathsf{lin}$}\label{sec:lineage-relation}
+
+$\mathfrak{R}_\mathsf{lin}(x; \mathsf{w})$ holds iff, for the token identified by $x.\mathsf{id}$:
+\begin{enumerate}
+	\item \textbf{Genesis}: the witness contains a certified mint transaction $T_0$ with $H(D_\mathsf{mint}.\mathsf{salt}, D_\mathsf{mint}.\alpha) = x.\mathsf{id}$, $D_\mathsf{mint}.\mathsf{ty} = x.\mathsf{ty}$, whose payload decodes canonically to $x.\mathcal{A}$, and whose leaf is anchored under $A$.
+	\item \textbf{Reason}: if $D_\mathsf{mint}.\mathsf{reason}$ is a conserving format (split or merge, in reference form), its verification rules are re-run inside the relation: each named source is resolved to a sub-derivation of this same relation, and the format's conservation checks are applied to the sub-derivations' asset collections. Otherwise, $H(D_\mathsf{mint})$ is folded into $\mathcal{I}$ and the genesis is accepted unexamined.
+	\item \textbf{Transfers}: the transfer chain from the genesis carry to $x.(h, e)$ satisfies the step checks of $\mathfrak{R}_\mathsf{ch}$ (Sec.~\ref{sec:compression-relations}), with the same anchoring and the same treatment of time-dependent transitions.
+	\item \textbf{Recursion}: a sub-derivation whose evidence is itself a certificate is discharged by verifying that certificate's $\pi_\mathsf{lin}$ in-circuit, folding its $A$, $R$ and $\mathcal{I}$ into this one. This is what makes depth constant: a certificate over a certificate is one proof, not two.
+	\item \textbf{Terminal state}: for a source consumed by a burn, the chain stops immediately before that burn, and $x.(h,e)$ is the state the burn spends. The burn transfer itself is never inside the certificate (Sec.~\ref{sec:compression-scope}).
+\end{enumerate}
+
+\subsection{Verifying a Certificate}\label{sec:certificate-verification}
+
+$\Call{VerifyTokenCertificate}{\mathcal{K}, \mathcal{T}, \Gamma}$, invoked wherever a reason verifier resolves an identifier to evidence:
+\begin{enumerate}
+	\item Ensure $\mathcal{K}.\mathsf{ver} = 1$; decode $e$ canonically (Appendix~\ref{app:predicate-encoding}).
+	\item Verify the anchors and accumulate $A$; verify the time-reference inclusion proofs and accumulate $R$ --- both exactly as in Sec.~\ref{sec:compressed-verification}, steps 2 and 3.
+	\item For each carried root $T_{0,r}^\mathsf{cert}$: ensure $\Call{VerifyMintTransaction}{T_{0,r}, \pi_{0,r}, \mathcal{T}} = 1$, which runs Alg.~\ref{alg:mint-auth} under the verifier's own $\Gamma$; accumulate $\mathcal{I} \gets H(\mathcal{I}, \pi_{0,r}.\txhash)$ in the given order. Every root consumes budget from $\Lambda$, so a provenance with more issuance roots than the budget admits is rejected exactly as a too-deep provenance graph is today (Sec.~\ref{sec:nested-verification}).
+	\item Ensure $\mathfrak{R}_\mathsf{lin}$ verifies under $\mathsf{vk}_\mathsf{lin}$ with public input $(1, A, R, \mathcal{K}.\mathsf{id}, \mathcal{K}.\mathsf{ty}, \mathcal{K}.\mathcal{A}, (\mathcal{K}.h, \mathcal{K}.e), \mathcal{I})$.
+	\item Return $(\mathsf{id}, \mathsf{ty}, \mathcal{A}, h, e)$ to the calling reason verifier; any failed check returns $\bot$ instead.
+\end{enumerate}
+
+A consuming verifier then proceeds exactly as it would with an embedded token: for a split, it verifies the source's terminal burn as an ordinary certified transfer out of $(\decpred(e), h)$, takes $b_\mathcal{M}$ from its auxiliary data, and applies checks 4--10 of Sec.~\ref{sec:split-verification} with $\mathcal{A}$ in place of the decoded source payload and $\mathsf{id}$ in place of the decoded source identifier.
+
+\paragraph{Why the asset values are public.} $\mathcal{A}$ appears in the clear because conservation is checked in the clear: the RSMST root sum must equal the source amount (Sec.~\ref{sec:split-verification}, check 10), and that arithmetic is the verifier's, not the prover's. This discloses nothing new --- every holder of every split output already learns the source amount from that same check --- and it is what allows one certificate to serve all $k$ outputs of a split, since the certificate speaks about the source alone and is independent of any particular output.
+
+\subsection{Preparation}\label{sec:certificate-preparation}
+
+A certificate is about a token, not about a transaction that consumes it, so it can be produced before the consuming transaction exists. The intended discipline follows from that:
+
+\begin{itemize}
+	\item The holder of a token that will be split or merged prepares its certificate in advance --- by the same background job that folds transfer history (Sec.~\ref{sec:compression-folding}), and off the critical path of the split.
+	\item At split time no proving occurs. The splitter burns and mints as usual, and hands each of the $k$ outputs the \emph{same} certificate as evidence for their common source. One proving job serves all $k$ recipients and, through them, the entire descendant subtree.
+	\item Merge composes the same way: each of the $k$ sources contributes one certificate, and the merged token's own certificate --- prepared later --- folds all of them into one.
+\end{itemize}
+
+Where §\ref{sec:history-compression} has a break-even point, this does not: a certificate replaces an entire ancestor token, which is never smaller than a proof once the ancestor has any history of its own. The trade-off is proving time, not size.
+
+\subsection{Rules and Scope}\label{sec:compression-scope}
 
 \begin{description}
-	\item[Terminal burns are never folded] A token that is subsequently embedded as a burned source --- of a split (Sec.~\ref{sec:split-verification}) or of any reason format that consumes a burn --- MUST retain its final transfer uncompressed, i.e.\ $m \le n-1$. The consuming verifier checks that transfer's auxiliary data and recipient predicate byte-exactly, and a proof of validity does not supply them. Everything before the burn compresses normally.
-	\item[Per-transfer type checks are out of scope in version 1] $\mathfrak{R}_\mathsf{ch}$ omits check 6 of transfer verification (Sec.~\ref{sec:transfer-tx}), which is a no-op for types that define no per-transfer rules --- the common case (Sec.~\ref{sec:mint-authorization}). A type that defines per-transfer rules, such as a pool type (Appendix~\ref{app:autonomous-pools}), requires those rules inside the relation; its definition manifest MUST then pin the verification keys of the relation variant that implements them, and a verifier MUST NOT compress or accept compressed tokens of such a type under the generic keys.
-	\item[Ancestry is not compressed by this section] For a token minted by a split or merge, the genesis mint reason embeds its source tokens (Sec.~\ref{sec:token-splitting}), and those remain. Compression shrinks each ancestor's transfer history to constant size, so a $k$-deep lineage costs $k$ compressed tokens rather than $k$ full histories, but $k$ itself is unaffected. Compression is accordingly most effective for long-lived tokens with deep transfer histories, and least effective for fungible fragments with many ancestors and few transfers each; for those, shallow provenance is obtained by issuing in fixed denominations and consolidating by merge rather than by repeated splitting.
+	\item[Terminal burns are never folded] A token consumed by a burn --- as the source of a split (Sec.~\ref{sec:split-verification}) or of any reason format that consumes a burn --- MUST have that final transfer presented in the clear, whether the rest of it is a compressed history ($m \le n-1$) or a certificate (the chain stops before the burn). The consuming verifier checks the burn's auxiliary data and recipient predicate byte-exactly, and neither a proof nor a certificate supplies them.
+	\item[Per-transfer type checks are out of scope in version 1] $\mathfrak{R}_\mathsf{ch}$ and $\mathfrak{R}_\mathsf{lin}$ omit check 6 of transfer verification (Sec.~\ref{sec:transfer-tx}), which is a no-op for types that define no per-transfer rules --- the common case (Sec.~\ref{sec:mint-authorization}). A type that defines per-transfer rules, such as a pool type (Appendix~\ref{app:autonomous-pools}), requires those rules inside the relation; its definition manifest MUST then pin the verification keys of the relation variant that implements them, and a verifier MUST NOT accept compressed tokens of such a type under the generic keys.
+	\item[Only reference-form reasons compress] A genesis whose reason embeds its sources by value seals them permanently. Provenance compression is therefore available to a token exactly when every genesis in its ancestry used a reference-form format. The embedding split reason (tag 39044) and its reference-form counterpart are separate registry entries with separate tags (Appendix~\ref{app:reason-formats}); a type admits whichever it intends its holders to be able to compress, and a token already minted under the embedding form cannot be converted.
+	\item[Merges keep their roots] Folding collapses provenance \emph{depth} to a single proof, but each independent lineage flowing into a merge contributes its own issuance root, and every root is verified in the clear. Breadth is therefore still paid for, in proportion to the number of distinct issuance events behind a token --- one for a token that has only ever been split, more for a heavily merged one. Shallow, narrow provenance remains preferable: issuing in fixed denominations and consolidating deliberately beats repeated splitting and merging.
 \end{description}
 
-\paragraph{Data minimization, not privacy.} A recipient of a compressed token does not receive the predicates, unlocking arguments or auxiliary data of the folded transitions --- including any ephemeral keys those transitions carried (Sec.~\ref{sec:private-transactions}). This is a reduction in what is disclosed, not a privacy guarantee: unless the proof system is zero-knowledge, no hiding property is claimed for $\pi_\mathsf{ch}$, the inclusion proofs of time-dependent transitions expose those transitions' state identifiers, and every party that held the token earlier retains the raw history regardless. Applications MUST NOT rely on compression as a privacy mechanism; unlinkability is provided by the protocols of Sec.~\ref{sec:private-transactions}.
+\paragraph{Data minimization, not privacy.} A recipient of a compressed token does not receive the predicates, unlocking arguments or auxiliary data of the folded transitions --- including any ephemeral keys those transitions carried (Sec.~\ref{sec:private-transactions}) --- and, with certificates, does not receive the ancestor tokens at all. This is a reduction in what is disclosed, not a privacy guarantee: unless the proof system is zero-knowledge, no hiding property is claimed for $\pi_\mathsf{ch}$ or $\pi_\mathsf{lin}$; the inclusion proofs of time-dependent transitions expose those transitions' state identifiers; the issuance roots of a certificate are disclosed in full by construction; and every party that held the token earlier retains the raw history regardless. Applications MUST NOT rely on compression as a privacy mechanism; unlinkability is provided by the protocols of Sec.~\ref{sec:private-transactions}.
 
-\paragraph{Open items (next revision).} (i)~Proof-system profile and concrete sizes for $\mathfrak{R}_\mathsf{ch}$ (recursion-friendly, secp256k1 verification in-circuit) and $\mathfrak{R}_\mathsf{in}$; the break-even point above cannot be stated numerically until these are fixed. (ii)~CBOR encoding and semantic tag of $\mathcal{H}$. (iii)~In-relation budget accounting mirroring $\Lambda$. (iv)~A formal statement of the transfer-verification step in-circuit, shared with the bridging relation (Appendix~\ref{app:bridging-relation}). (v)~The relation variant carrying per-transfer type checks, prerequisite to compressing pool tokens. (vi)~Should the aggregation layer later publish consistency proofs between arbitrary certified roots, anchors could be collapsed inside $\mathfrak{R}_\mathsf{in}$ and the anchor list would reduce to a single root unconditionally.
+\paragraph{Open items (next revision).} (i)~Proof-system profile and concrete sizes for $\mathfrak{R}_\mathsf{ch}$, $\mathfrak{R}_\mathsf{in}$ and $\mathfrak{R}_\mathsf{lin}$ (recursion-friendly, with secp256k1 verification in-circuit); the break-even point of Sec.~\ref{sec:compression-folding} cannot be stated numerically until these are fixed. (ii)~CBOR encodings and semantic tags of $\mathcal{H}$, $\mathcal{K}$ and the evidence set. (iii)~In-relation budget accounting mirroring $\Lambda$, including the cost of nested certificate verification. (iv)~A formal statement of the transfer-verification step in-circuit, shared with the bridging relation (Appendix~\ref{app:bridging-relation}). (v)~The relation variant carrying per-transfer type checks, prerequisite to compressing pool tokens. (vi)~Should the aggregation layer later publish consistency proofs between arbitrary certified roots, anchors could be collapsed inside $\mathfrak{R}_\mathsf{in}$ and the anchor list would reduce to a single root unconditionally. (vii)~Reference form for the conversion reason (Appendix~\ref{app:reason-convert}) and the pool transition records (Appendix~\ref{app:autonomous-pools}), which embed tokens by value today. (viii)~Whether committing the mint reason in $D_\mathsf{mint}$ by hash, so that the reason bytes themselves become detachable, is worth the wire-format change: it would let tokens already minted under an embedding format be compressed retroactively, which reference form alone cannot do.
 
 
 \section{Bridged Assets}\label{sec:bridged-assets}
