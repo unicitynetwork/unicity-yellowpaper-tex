@@ -202,13 +202,13 @@ After processing a batch of requests, the aggregation layer nodes compute the ne
 	\end{minipage}
 \end{figure}
 
-See Fig.~\ref{fi:inc-proof} for an Inclusion Proof and Fig.~\ref{fi:uc} for the Unicity Certificate. The certificate $C^\mathsf{inc}$ authenticates the terminal SMT leaf $L=(\mathsf{sid},\txhash)$ against root $h$ in the Input Record. Despite its encoded type name, \texttt{InclusionCertificate}, the same format also proves non-inclusion when its key-directed path terminates at a different leaf. The Unicity Certificate then chains through the shard tree, unicity tree, and unicity seal to the global root of trust: Unicity Trust Base $\mathcal{T}$.
+See Fig.~\ref{fi:inc-proof} for the Inclusion Proof structure and Fig.~\ref{fi:uc} for the Unicity Certificate. The Inclusion Proof contains an SMT leaf $L = (\mathsf{sid}, \txhash)$ where $\mathsf{sid} = H(\predi, \sthash)$ is a state identifier and $\txhash$ is a transaction hash. The Inclusion Certificate $C^\mathsf{inc}$ connects the leaf to the SMT root hash $h$ in the Input Record. The Unicity Certificate then chains through the shard tree, unicity tree, and unicity seal to the global root of trust: Unicity Trust Base $\mathcal{T}$. A Non-Inclusion Proof has the same shape, except that its certificate carries the leaf its key-directed path actually reaches instead of the queried one.
 
 
 \subsection{Sparse Merkle Tree}\label{sec:smt}
 
 \index{sparse merkle tree}\index{SMT}\index{RSMT}
-The aggregation layer maintains a \emph{(Radix) Sparse Merkle Tree} (SMT), a path-compressed authenticated map from 256-bit state identifiers to transaction hashes. Leaves are anchored by full keys, and internal nodes commit to their absolute branching depth and to the key prefix (\emph{region}) addressing them, which pins every node to its position in the key space. The SMT supports batch insertion, (non-)inclusion certificates and consistency proofs. Exact formats and algorithms are given in Appendix~\ref{app:rsmt}.
+The aggregation layer maintains a \emph{(Radix) Sparse Merkle Tree} (SMT), a path-compressed authenticated map from 256-bit state identifiers to transaction hashes. Leaves are anchored by full keys, and internal nodes commit to their absolute branching depth and to the key prefix (\emph{region}) addressing them, which pins every node to its position in the key space. The SMT supports batch insertion, inclusion certificates, non-inclusion certificates and consistency proofs. Exact formats and algorithms are given in Appendix~\ref{app:rsmt}.
 
 
 \subsubsection{SMT Leaf Structure}
@@ -227,13 +227,16 @@ The SMT effectively maintains a mapping $\mathsf{sid} \mapsto \txhash$ that prov
 
 \subsubsection{SMT Certificates and Updates}\label{InclusionCert}
 
-\index{$C^\mathsf{inc}$ (inclusion certificate)}\index{Inclusion Certificate}\index{Non-Inclusion Certificate}
+\index{$C^\mathsf{inc}$ (inclusion certificate)}\index{Inclusion Certificate}\index{$C^\mathsf{exc}$ (non-inclusion certificate)}\index{Non-Inclusion Certificate}
 The SMT exposes the following functionalities and authenticated objects:
 \begin{itemize}
 	\item \textbf{Batch insertion}: inserts a batch of new leaves into the tree and updates the root hash.
-	\item \textbf{Certificate} $C^\mathsf{inc}$: authenticates the leaf reached by key-directed descent for a target state identifier. A terminal key equal to the target proves inclusion (and authenticates its value); a different terminal key proves non-inclusion. The encoded type \texttt{InclusionCertificate} covers both cases.
+	\item \textbf{Inclusion Certificate} $C^\mathsf{inc}$: authenticates that a leaf $(\mathsf{sid}, \txhash)$ is present under a given SMT root.
+	\item \textbf{Non-Inclusion Certificate} $C^\mathsf{exc}$: authenticates that a state identifier $\mathsf{sid}$ is absent from the tree, by authenticating the different leaf that key-directed descent for $\mathsf{sid}$ reaches.
 	\item \textbf{Consistency proof} $\pi_{CP}$: authenticates that a new SMT root extends a previous root by a batch insertion.
 \end{itemize}
+
+Both certificates share one path encoding and differ only in whether the certified leaf travels with the certificate (Sec.~\ref{sec:rsmt-cert-path}). They are nonetheless distinct objects with distinct verification functions: each states one relation, and neither is interpreted by inspecting how the other failed.
 
 Appendix~\ref{app:rsmt} defines the corresponding wire formats and verification procedures.
 
@@ -398,24 +401,23 @@ This function authenticates the certificate chain itself. It does not, by itself
 
 \section{Proofs}\label{se:proofs}
 
-\subsection{Inclusion and Non-Inclusion Proofs}
+\subsection{Inclusion Proof}
 
-The encoded data structure is named \texttt{InclusionProof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof}\index{non-inclusion proof}\index{exclusion proof} and is the tuple
-\[
-	\pi^\mathsf{inc}=(C^\mathsf{inc},UC),
-\]
-where $C^\mathsf{inc}$ has encoded type \texttt{InclusionCertificate} (Appendix~\ref{sec:rsmt-inclusion-cert}) and $UC$ is the Unicity Certificate authenticating its root. These type names denote the shared encodings, not the relation asserted: both structures also cover non-inclusion. The target state identifier $\mathsf{sid}$ is supplied by the verifier and is not duplicated in the proof. Define $\pi^\mathsf{inc}.\mathsf{terminal}=\bot$ and $\pi^\mathsf{inc}.\mathsf{terminalKey}=\bot$ for the empty certificate; for a non-empty certificate ending at $(k',v')$, they are $(k',v')$ and $k'$, respectively. In an inclusion context, $\pi^\mathsf{inc}.\txhash$ denotes the terminal value $v'$.
+\emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state identifier has been recorded in the SMT as a proof of the spend being unique, and that the resulting shard state was certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, where:
+\begin{enumerate}
+	\item $\mathsf{sid} \in \bytes{32}$ -- state identifier (SMT leaf key)
+	\item $\txhash \in \hashtype$ -- transaction data hash (SMT leaf value)
+	\item $C^\mathsf{inc}$ -- Inclusion Certificate (Sec.~\ref{InclusionCert})
+	\item $UC$ -- unicity certificate (Sec.~\ref{se:unicity-certificate})
+\end{enumerate}
 
-An instance is an \emph{inclusion proof} for $(\mathsf{sid},\txhash)$ when its authenticated terminal equals $(\mathsf{sid},\txhash)$. It is a \emph{non-inclusion proof} for $\mathsf{sid}$ when its terminal key differs from $\mathsf{sid}$; this includes the empty-certificate case because $\bot\ne\mathsf{sid}$.
+\subsubsection{Verification: $\mathsf{VerifyInclusionProof}$}\label{VerifyInclusionProof}\index{functions!VerifyInclusionProof}
 
-\subsubsection{Shared authentication: $\mathsf{AuthenticateSMTProof}$}\label{AuthenticateSMTProof}\index{functions!AuthenticateSMTProof}
-
-$\mathsf{AuthenticateSMTProof}$ authenticates the certificate path, its certified root, and the shard to which the target key routes. It does not by itself select inclusion or non-inclusion; the caller MUST apply one of the terminal checks below.
+$\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type $\mathbb{IP} \times \mathbb{CD} \times \mathbb{UB} \to \bool$
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $\pi^\mathsf{inc}=(C^\mathsf{inc},UC)$ -- \texttt{InclusionProof} encoding (also used for non-inclusion)
-	\item $\mathsf{sid}\in\bytes{32}$ -- target state identifier
+	\item $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$ -- inclusion proof
 	\item $\mathcal{CD}_\beta$ -- partition description of the partition identified by $UC.C^\mathsf{uni}.\beta$
 	\item $\mathcal{T}$ -- trust base
 \end{enumerate}
@@ -428,32 +430,56 @@ $\mathsf{AuthenticateSMTProof}$ authenticates the certificate path, its certifie
 	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
 	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
 	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
-	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Target is certified by the right shard}
-	\If{$\neg\Call{rsmt\_verify\_certificate}{C^\mathsf{inc},UC.IR.h,\mathsf{sid}}$} \Return \FALSE \EndIf
-	\State \Return $\mathsf{VerifyUnicityCert}(UC,\mathcal{T})$
+	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Proof comes from the right shard}
+	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
+	\If {$\neg \Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, h, \mathsf{sid}, \txhash}$} \Return \FALSE \EndIf
+	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
+	\State \Return \TRUE
 \end{algorithmic}
 
-\subsubsection{Inclusion relation: $\mathsf{VerifyInclusionProof}$}\label{VerifyInclusionProof}\index{functions!VerifyInclusionProof}
-
-\[
-\begin{split}
-\mathsf{VerifyInclusionProof}(\pi^\mathsf{inc},\mathsf{sid},\txhash,\mathcal{CD}_\beta,\mathcal{T})
-\;:=\;&\mathsf{AuthenticateSMTProof}(\pi^\mathsf{inc},\mathsf{sid},\mathcal{CD}_\beta,\mathcal{T})\\
-&{}\land \pi^\mathsf{inc}.\mathsf{terminal}=(\mathsf{sid},\txhash).
-\end{split}
-\]
 This is the inclusion verifier denoted by $\mathcal{V}(\mathsf{sid},\txhash,\pi,\mathcal{CD}_\beta,\mathcal{T})$ in the execution layer.
 
-\subsubsection{Non-inclusion relation: $\mathsf{VerifyNonInclusionProof}$}\label{VerifyNonInclusionProof}\index{functions!VerifyNonInclusionProof}
+\subsection{Non-Inclusion Proof}
 
-\[
-\begin{split}
-\mathsf{VerifyNonInclusionProof}(\pi^\mathsf{inc},\mathsf{sid},\mathcal{CD}_\beta,\mathcal{T})
-\;:=\;&\mathsf{AuthenticateSMTProof}(\pi^\mathsf{inc},\mathsf{sid},\mathcal{CD}_\beta,\mathcal{T})\\
-&{}\land \pi^\mathsf{inc}.\mathsf{terminalKey}\ne\mathsf{sid}.
-\end{split}
-\]
-The explicit terminal relation is security-critical: accepting only $\mathsf{AuthenticateSMTProof}$ would authenticate a terminal leaf but would not say whether the target key is present.
+\emph{Non-Inclusion Proof}\index{$\pi^\mathsf{exc}$ (non-inclusion proof)}\index{non-inclusion proof}\index{exclusion proof} proves that a state identifier does NOT exist in the SMT. It is a tuple $\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$, where:
+\begin{enumerate}
+	\item $C^\mathsf{exc}$ -- Non-Inclusion Certificate (Appendix~\ref{sec:rsmt-non-inclusion-cert})
+	\item $UC$ -- unicity certificate (Sec.~\ref{se:unicity-certificate})
+\end{enumerate}
+
+The queried $\mathsf{sid}$ is not part of the proof: it is supplied by the verifier, which is the party that cares which key is absent. A non-inclusion proof is a statement about one certified root, not a promise about later ones; a verifier with freshness requirements MUST additionally bound $UC.\mathcal{IR}$ by its own policy on certified round or time.
+
+\subsubsection{Verification: $\mathsf{VerifyNonInclusionProof}$}\label{VerifyNonInclusionProof}\index{functions!VerifyNonInclusionProof}
+
+$\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function of type $\mathbb{EP} \times \mathbb{CD} \times \mathbb{UB} \to \bool$
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$ -- non-inclusion proof
+	\item $\mathcal{CD}_\beta$ -- authenticated partition description of the partition identified by $UC.C^\mathsf{uni}.\beta$
+	\item $\mathcal{T}$ -- trust base
+	\item $\mathsf{sid} \in \bytes{32}$ -- queried state identifier
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}[0]
+	\State ensure($UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$) \Comment{Certificate belongs to the same network as the trust base}
+	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
+	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
+	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
+	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Queried key routes to the certified shard}
+	\If{$C^\mathsf{exc} \ne C^\mathsf{exc}_\emptyset$}
+		\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(C^\mathsf{exc}.k') = \sigma$) \Comment{So must the authenticated terminal}
+	\EndIf
+	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
+	\If {$\neg \Call{rsmt\_verify\_non\_inclusion}{C^\mathsf{exc}, h, \mathsf{sid}}$} \Return \FALSE \EndIf
+	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
+	\State \Return \TRUE
+\end{algorithmic}
+
+Two cautions. First, the terminal check inside $\textsc{rsmt\_verify\_non\_inclusion}$ is what carries the relation: a verifier that authenticated the path but skipped it would establish that some leaf is committed, not that $\mathsf{sid}$ is absent. Second, $h = \bot$ (empty tree) is the one case in which the empty certificate is accepted, and it is accepted for every key; the encoding MUST therefore distinguish an empty tree unambiguously from a certified 256-bit root, and a verifier MUST NOT infer an empty tree from a missing or malformed root field.
 
 
 \subsection{Consistency Proof}\label{sec:consistency-proof}

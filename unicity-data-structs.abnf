@@ -89,18 +89,29 @@
   LeafData = TransactionHash    ;~$h_{\mathsf{tx}}$ -- SMT leaf value
   SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, h_{\mathsf{tx}})$
 
-  InclusionCertificate = [CertificatePath]  ;~$C^\mathsf{inc}_\emptyset$ or $C^\mathsf{inc}=(\mathit{bitmap},\mathit{siblings};k',v')$
-  NonInclusionCertificate = InclusionCertificate
-  CertificatePath = Bitmap *SiblingHash SMTLeaf
-      ;~bitmap: bit $d$ set exactly when the terminal path has a junction at depth $d$
-      ;~siblings: exactly $\mathsf{bitcount}(\mathit{bitmap})$ hashes, root-to-leaf order
-      ;~terminal: $SMTLeaf=(k',v')$; verifier derives regions from $k'$ and requires $k[d]=k'[d]$
-      ;~Wire: empty for an empty tree, otherwise $\mathit{bitmap}\,\|\,s_1\,\|\cdots\|\,s_n\,\|\,k'\,\|\,v'$
+  CertificatePath = Bitmap *SiblingHash  ;~$(\mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$ -- shared by both certificate types
+      ;~bitmap: 32 bytes; bit $d$ is the $(d \bmod 8)$-th most significant bit of byte $\lfloor d/8 \rfloor$
+      ;~bit $d$ set iff the certified path has a junction at bifurcation depth $d$
+      ;~siblings: exactly $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, root-to-leaf order
+      ;~depths come from the bitmap; regions are derived by the verifier, never transmitted
 
-  InclusionProof = InclusionCertificate UC  ;~$\pi^\mathsf{inc}=(C^\mathsf{inc},UC)$; target key supplied by verifier
-  NonInclusionProof = InclusionProof
-      ;~terminal equality proves inclusion;
-      ;~a different terminal key, or an empty certificate, proves non-inclusion
+  InclusionCertificate = CertificatePath  ;~$C^\mathsf{inc} = (\mathit{bitmap}, \mathit{siblings})$
+      ;~certified leaf is the queried $(k,v)$: supplied by the verifier, not carried here
+      ;~verifier derives each region as $k[0..d)$ from the queried key
+      ;~Wire: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
+
+  NonInclusionCertificate = [CertificatePath SMTLeaf]  ;~$C^\mathsf{exc}_\emptyset$ or $(\mathit{bitmap},\mathit{siblings};k',v')$
+      ;~terminal: $SMTLeaf = (k',v')$, the leaf reached by key-directed descent for the queried key
+      ;~verifier derives regions from $k'$, requires $k[d]=k'[d]$ at every junction, and requires $k' \ne k$
+      ;~empty (zero-length): admissible only for an empty tree
+      ;~Wire: $\mathit{bitmap}[32]\,\|\,s_1[32]\,\|\cdots\|\,s_n[32]\,\|\,k'[32]\,\|\,v'$
+
+  InclusionProof = StateIdentifier LeafData InclusionCertificate UC  ;~$\pi^\mathsf{inc} = (\mathsf{sid}, h_{\mathsf{tx}}, C^\mathsf{inc}, UC)$
+      ;~Proves that $\mathsf{sid}$ EXISTS in the SMT with value $h_{\mathsf{tx}}$
+
+  NonInclusionProof = NonInclusionCertificate UC  ;~$\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$
+      ;~Proves that a queried $\mathsf{sid}$ does NOT exist in the SMT; the queried
+      ;~$\mathsf{sid}$ is supplied by the verifier and is not carried in the proof
 
   ConsistencyProof = *ConsistencyProofOp | ZKProof
       ;~$\pi_{\mathsf{CP}}$ -- proves append-only consistency of the SMT round update;

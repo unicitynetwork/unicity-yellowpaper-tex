@@ -243,13 +243,13 @@ Indexed hash trees can be used to provide and verify both inclusion and exclusio
 
 \section{Radix Sparse Merkle Trees}\label{app:rsmt}
 
-A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. It authenticates a finite map $k \mapsto v$, where every stored key appears as exactly one leaf and every internal node records the absolute bit position at which its descendant keys bifurcate, together with the key prefix (the \emph{region}) shared by all keys below it. Keys are read as big-endian bit strings. Each leaf hash commits to the full 256-bit key, and each internal node hash commits to the explicit bifurcation depth and to the region. Depth and region are absolute properties of a node---splitting an edge above an unchanged subtree alters neither---so batch insertion rehashes only the changed search frontier and the newly created nodes. The region commitment pins every node to its position in the key space; the consistency proof (Sec.~\ref{sec:rsmt-consistency-proof}) relies on it to verify that every new leaf is placed at the position determined by its own key. One certificate format serves inclusion and non-inclusion, alongside consistency proofs.
+A \emph{Radix Sparse Merkle Tree}\index{Radix Sparse Merkle Tree} (RSMT) is a leaf-anchored, path-compressed binary Merkle tree over a 256-bit key space. It authenticates a finite map $k \mapsto v$, where every stored key appears as exactly one leaf and every internal node records the absolute bit position at which its descendant keys bifurcate, together with the key prefix (the \emph{region}) shared by all keys below it. Keys are read as big-endian bit strings. Each leaf hash commits to the full 256-bit key, and each internal node hash commits to the explicit bifurcation depth and to the region. Depth and region are absolute properties of a node---splitting an edge above an unchanged subtree alters neither---so batch insertion rehashes only the changed search frontier and the newly created nodes. The region commitment pins every node to its position in the key space; the consistency proof (Sec.~\ref{sec:rsmt-consistency-proof}) relies on it to verify that every new leaf is placed at the position determined by its own key. The tree supports inclusion certificates, non-inclusion certificates and consistency proofs. The two certificate types share one path encoding---a bitmap of junction depths and the sibling digests along a root-to-leaf path---and differ only in whether the terminal leaf is transmitted.
 
 \subsection{Tree Structure}
 
 Keys are elements of $\bytes{32}$ (256 bits), interpreted as big-endian bit strings. Write $k[i]$ for bit position $i$, where $k[0]$ is the most significant bit of the first byte and $k[255]$ is the least significant bit of the last byte. This bit-string interpretation does not change the wire byte order of keys.
 
-\subsubsection{Node Format}
+\subsubsection{Node Format}\label{sec:rsmt-node-format}
 
 For a key $k$ and a depth $d$, we write $k[d]$ for the bit of $k$ at position $d$ and $k[0..d)$ for the bit string formed by the bits of $k$ at positions $0, \ldots, d-1$, all in the bit numbering above.
 
@@ -260,6 +260,8 @@ For a key $k$ and a depth $d$, we write $k[d]$ for the bit of $k$ at position $d
 \end{itemize}
 
 The region identifies the node's absolute position and is part of the Merkle commitment: the commitment is determined by the leaf contents, the child hashes, the absolute bifurcation depths and the regions.
+
+The RSMT format itself permits every $v\in\bytestr$.  The Unicity aggregation profile defines the named restriction $\ell_{\mathsf{agg}}:=32$ bytes because its leaf values are raw SHA-256 transaction hashes.  This is an application-profile constraint, not a certificate-format rule.
 
 \subsection{Hash Computation}
 
@@ -307,7 +309,7 @@ Computes the hash of an RSMT internal node.
 	\EndFunction
 \end{algorithmic}
 
-Every leaf hash commits to the full key, and every internal-node hash commits to the absolute branching depth $d$ and the absolute region $p$. Splitting an edge above a node changes neither its depth nor its region, so an insertion never recomputes any pre-existing node hash. Certificates do not transmit regions: the verifier derives each expected region from the authenticated terminal leaf key and separately binds every branch choice to the target key (Sec.~\ref{sec:rsmt-inclusion-cert}).
+Every leaf hash commits to the full key, and every internal-node hash commits to the absolute branching depth $d$ and the absolute region $p$. Splitting an edge above a node changes neither its depth nor its region, so an insertion does not recompute pre-existing node hashes.
 
 \subsection{Batch Insertion}\label{sec:rsmt-batch-insert}
 
@@ -448,56 +450,106 @@ The helper $\textsc{rsmt\_split\_node}(r, s, b)$ descends the subtree rooted at 
 \textbf{Properties}.
 \begin{itemize}
 	\item \emph{No rehashing}: Because internal-node hashes commit to the absolute bifurcation depth $d$ and region $p$ (Sec.~\ref{sec:rsmt-node-hash}) and leaf hashes commit to the full key (Sec.~\ref{sec:rsmt-leaf-hash}), every retained node keeps its pre-split hash. In particular, the regions of retained nodes keep their full absolute prefixes, including the bits fixed by the shard identifier. The post-split root hash equals the hash of whichever existing node the procedure returns.
-	\item \emph{Certificate change}: A certificate (Sec.~\ref{sec:rsmt-inclusion-cert}) issued against the post-split root differs from a pre-split one only in that the entry at depth $s$, if any, is dropped from both the bitmap and the sibling list. This is compensated by the Unicity Certificates being larger, due to the extra entry in the Shard Tree.
+	\item \emph{Certificate change}: A certificate path (Sec.~\ref{sec:rsmt-cert-path}) issued against the post-split root differs from a pre-split one only in that the entry at depth $s$, if any, is dropped from both the bitmap and the sibling list. This is compensated by the Unicity Certificates being larger, due to the extra entry in the Shard Tree.
 	\item The procedure may be executed as many times as necessary to obtain the necessary number of shards.
 \end{itemize}
 
-\subsection{Inclusion and Non-Inclusion Certificates}\label{sec:rsmt-inclusion-cert}
+\subsection{Certificate Path}\label{sec:rsmt-cert-path}
 
-The encoded data structure is named \texttt{InclusionCertificate}\index{$C^\mathsf{inc}$ (inclusion certificate)}\index{Inclusion Certificate!RSMT}\index{Non-Inclusion Certificate!RSMT}, but the name denotes the format rather than the certified relation: the same certificate $C^\mathsf{inc}$ serves both inclusion and non-inclusion. It authenticates the leaf reached by key-directed descent for a target key $k$ under root $\rho$. A certificate is either the distinguished empty certificate $C^\mathsf{inc}_\emptyset$, or
-\[
-	C^\mathsf{inc}=(\mathit{bitmap},\mathit{siblings};k',v'),
-\]
-where:
+Both certificate types encode a root-to-leaf path as a \emph{certificate path} $(\mathit{bitmap},\mathit{siblings})$, where:
 \begin{itemize}
-	\item $\mathit{bitmap} \in \bytes{32}$ is a 256-bit big-endian vector; bit $d$ is set exactly when the terminal leaf's path contains a junction at depth $d$;
-	\item $\mathit{siblings}=\langle s_1,\ldots,s_n\rangle\in\hashtype^n$, where $n=\mathsf{bitcount}(\mathit{bitmap})$, contains one sibling digest per junction, ordered root-to-leaf (ascending depth); and
-	\item $(k',v')\in\bytes{32}\times\bytestr$ is the terminal leaf.
+	\item $\mathit{bitmap} \in \bytes{32}$ is a 256-bit vector indexed by the key bit numbering of Sec.~\ref{app:rsmt}: bit $d$ is the $(d \bmod 8)$-th most significant bit of byte $\lfloor d/8 \rfloor$. Bit $d$ is set if and only if the path contains a junction at bifurcation depth $d$.
+	\item $\mathit{siblings}=\langle s_1,\ldots,s_n\rangle\in\hashtype^n$, where $n=\mathsf{bitcount}(\mathit{bitmap})$, holds one sibling digest per junction, ordered root-to-leaf (ascending depth).
 \end{itemize}
 
-Junction regions are omitted. At depth $d$, the verifier reconstructs the region as $k'[0..d)$ from the terminal key, not from the target key. It binds the certificate to the target by requiring $k[d]=k'[d]$ at every such depth.
+Path compression keeps the bitmap sparse: only depths at which the path actually bifurcates are set, so a certificate costs one 32-byte digest per real junction rather than one per key bit. Neither junction depths nor regions are transmitted---the depths are recovered from the bitmap, and each region is recovered from the key anchoring the certified leaf. The following sections specify the cases how the key is interpreted.
 
-\noindent\textbf{Wire format}: $C^\mathsf{inc}_\emptyset$ is the empty byte string. A non-empty certificate is
-\[
-	\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \cdots \,\|\, s_n[32] \,\|\, k'[32] \,\|\, v',
-\]
-for a total of $64+32n+\len{v'}$ bytes. The bitmap determines the sibling count, and the remainder after the fixed-size terminal key is the value. Unicity SMT values are 32-byte transaction hashes, giving $96+32n$ bytes. Thus either result costs one 32-byte digest per actual junction; regions and full junction openings are not transmitted.
+\subsection{Inclusion Certificate}\label{sec:rsmt-inclusion-cert}
 
-To generate $C^\mathsf{inc}$ for $k$, return $C^\mathsf{inc}_\emptyset$ if the tree is empty. Otherwise walk from the root to a leaf. At each junction $(d,p,c_0,c_1)$, record $d$ and the digest of $c_{1-k[d]}$, then descend to $c_{k[d]}$; do not stop if $p$ is not a prefix of $k$. The reached leaf is $(k',v')$. Encoding the recorded depths in the bitmap and the siblings in traversal order yields the certificate. The same walk establishes either relation: $k'=k$ indicates inclusion, while $k'\ne k$ indicates non-inclusion.
+An \emph{Inclusion Certificate}\index{$C^\mathsf{inc}$ (inclusion certificate)}\index{Inclusion Certificate!RSMT} $C^\mathsf{inc}=(\mathit{bitmap},\mathit{siblings})$ demonstrates that a specific $(k,v)$ pair exists in a tree with root hash $\rho$. It is a bare certificate path: the certified leaf is the queried pair, which the verifier already holds. The verifier accordingly derives the expected region at each depth $d$ as $k[0..d)$ from the queried key itself. No inclusion certificate exists for an absent key or for the empty tree.
 
-\subsubsection{Function $\textsc{rsmt\_verify\_certificate}$}\label{sec:rsmt-verify-certificate}
+\noindent\textbf{Wire format}: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$, for a total of $32+32n$ bytes.
+
+\noindent\textbf{Generation}: walk from the root to the leaf matching $k$. At each junction with bifurcation depth $d$ on the path, set bit $d$ in the bitmap and append the sibling subtree's hash to the siblings list.
+
+\subsubsection{Function $\textsc{rsmt\_verify\_inclusion}$}\label{sec:rsmt-verify-inclusion}
+
+Verifies an inclusion certificate by reconstructing the root hash from the leaf upward.
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $C^\mathsf{inc}$ -- certificate (encoded as \texttt{InclusionCertificate})
-	\item $\rho \in \hashtype \opt$ -- expected root hash ($\bot$ if the tree is empty)
-	\item $k \in \bytes{32}$ -- target key
+	\item $C^\mathsf{inc} = (\mathit{bitmap}, \mathit{siblings})$ -- inclusion certificate
+	\item $\rho \in \hashtype$ -- expected (authentic) root hash
+	\item $k \in \bytes{32}$ -- key
+	\item $v \in \bytestr$ -- value
 \end{enumerate}
 
 \textbf{Output}: \TRUE or \FALSE
 
 \textbf{Computation}:
 \begin{algorithmic}
-	\Function{rsmt\_verify\_certificate}{$C^\mathsf{inc},\rho,k$}
-		\If{$C^\mathsf{inc}=C^\mathsf{inc}_\emptyset$} \Return $\rho=\bot$ \EndIf
-		\State ensure($\rho\ne\bot$)
-		\State $(\mathit{bitmap},\mathit{siblings};k',v') \gets C^\mathsf{inc}$
+	\Function{rsmt\_verify\_inclusion}{$C^\mathsf{inc}, \rho, k, v$}
 		\State ensure($\len{\mathit{siblings}}=\mathsf{bitcount}(\mathit{bitmap})$)
+		\State $h \gets \Call{rsmt\_leaf\_hash}{k, v}$
+		\State $j \gets \len{\mathit{siblings}}$
+		\For{each set bit $d$ of $\mathit{bitmap}$, from $255$ down to $0$}
+			\State $j \gets j-1$;\quad $s \gets \mathit{siblings}[j]$
+			\State $p \gets k[0..d)$ \Comment{Expected region, derived from the queried key}
+			\State $(h_L,h_R)\gets(s,h)$ if $k[d]=1$; otherwise $(h_L,h_R)\gets(h,s)$
+			\State $h\gets\Call{rsmt\_node\_hash}{h_L,h_R,d,p}$
+		\EndFor
+		\State \Return $(j=0)\land(h=\rho)$
+	\EndFunction
+\end{algorithmic}
+
+\subsection{Non-Inclusion Certificate}\label{sec:rsmt-non-inclusion-cert}
+
+A \emph{Non-Inclusion Certificate}\index{$C^\mathsf{exc}$ (non-inclusion certificate)}\index{Non-Inclusion Certificate!RSMT} $C^\mathsf{exc}$ demonstrates that a key $k$ does \emph{not} appear in a tree with root hash $\rho$. It authenticates the \emph{terminal leaf} reached by key-directed descent for $k$ (Sec.~\ref{sec:rsmt-node-format}). Because that descent is deterministic and every stored key occupies a unique leaf, an authenticated terminal whose key differs from $k$ establishes that $k$ is absent: had $k$ been stored, the same descent would have ended at its own leaf.
+
+\subsubsection{Format}
+
+A non-inclusion certificate is either the distinguished empty certificate $C^\mathsf{exc}_\emptyset$, admissible only for the empty tree, or
+\[
+	C^\mathsf{exc}=(\mathit{bitmap},\mathit{siblings};k',v'),
+\]
+where $(\mathit{bitmap},\mathit{siblings})$ is the certificate path (Sec.~\ref{sec:rsmt-cert-path}) to the terminal leaf and $(k',v')\in\bytes{32}\times\bytestr$ is that leaf.
+
+Two things differ from the inclusion case. First, the terminal leaf is transmitted: unlike a queried pair, it is not known to the verifier in advance. Second, the target key $k$ and the terminal key $k'$ are distinct, so their roles must be kept apart. The verifier reconstructs the region at depth $d$ as $k'[0..d)$, from the \emph{authenticated terminal} key, and binds the path to the \emph{target} by requiring $k[d]=k'[d]$ at every junction depth $d$ of the bitmap. That equality is what proves the certified path is the one key-directed descent for $k$ takes; without it, a certificate for an unrelated leaf would still reconstruct the root, while saying nothing about $k$.
+
+\noindent\textbf{Wire format}: $C^\mathsf{exc}_\emptyset$ is the empty byte string. A non-empty certificate is
+\[
+	\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \cdots \,\|\, s_n[32] \,\|\, k'[32] \,\|\, v',
+\]
+for a total of $64+32n+\len{v'}$ bytes: the bitmap determines the sibling count, and the remainder after the fixed-size terminal key is the value. Under the Unicity aggregation profile, $\len{v'}=\ell_{\mathsf{agg}}$, giving $96+32n$ bytes, and an implementation of that profile MAY require exactly that length. Absence therefore costs one 32-byte digest per real junction plus the terminal leaf; no junction is opened in full.
+
+\noindent\textbf{Generation}: if the tree is empty, return $C^\mathsf{exc}_\emptyset$. Otherwise walk from the root. At each junction $(d,p,c_0,c_1)$, set bit $d$ in the bitmap, append the digest of $c_{1-k[d]}$ to the siblings list, and descend into $c_{k[d]}$; do \emph{not} stop when $p$ is not a prefix of $k$, since a target diverging inside a compressed edge still has a well-defined terminal. Append the reached leaf $(k',v')$. Run for a present key, the same walk ends at $k'=k$; that is an inclusion path and MUST NOT be issued as a non-inclusion certificate.
+
+\subsubsection{Function $\textsc{rsmt\_verify\_non\_inclusion}$}\label{sec:rsmt-verify-non-inclusion}
+
+Verifies that key $k$ is absent from a tree with root hash $\rho$.
+
+\textbf{Input}:
+\begin{enumerate}
+	\item $C^\mathsf{exc}$ -- non-inclusion certificate
+	\item $\rho \in \hashtype \opt$ -- expected (authentic) root hash ($\bot$ if the tree is empty)
+	\item $k \in \bytes{32}$ -- queried key
+\end{enumerate}
+
+\textbf{Output}: \TRUE or \FALSE
+
+\textbf{Computation}:
+\begin{algorithmic}
+	\Function{rsmt\_verify\_non\_inclusion}{$C^\mathsf{exc},\rho,k$}
+		\If{$C^\mathsf{exc}=C^\mathsf{exc}_\emptyset$} \Return $\rho=\bot$ \Comment{Empty tree contains no keys} \EndIf
+		\State ensure($\rho\ne\bot$)
+		\State $(\mathit{bitmap},\mathit{siblings};k',v') \gets C^\mathsf{exc}$
+		\State ensure($\len{\mathit{siblings}}=\mathsf{bitcount}(\mathit{bitmap})$)
+		\State ensure($k'\ne k$) \Comment{A terminal equal to the target proves inclusion, not absence}
 		\State $h \gets \Call{rsmt\_leaf\_hash}{k',v'}$
 		\State $j \gets \len{\mathit{siblings}}$
 		\For{each set bit $d$ of $\mathit{bitmap}$, from $255$ down to $0$}
 			\State $j \gets j-1$;\quad $s \gets \mathit{siblings}[j]$
-			\State ensure($k[d]=k'[d]$) \Comment{Certificate follows the target's branch}
+			\State ensure($k[d]=k'[d]$) \Comment{Certified path follows the target's descent}
 			\State $p \gets k'[0..d)$ \Comment{Authenticated terminal determines the region}
 			\State $(h_L,h_R)\gets(s,h)$ if $k'[d]=1$; otherwise $(h_L,h_R)\gets(h,s)$
 			\State $h\gets\Call{rsmt\_node\_hash}{h_L,h_R,d,p}$
@@ -506,10 +558,12 @@ To generate $C^\mathsf{inc}$ for $k$, return $C^\mathsf{inc}_\emptyset$ if the t
 	\EndFunction
 \end{algorithmic}
 
-Malformed field sizes or a non-canonical encoding MUST be rejected. An accepted non-empty $C^\mathsf{inc}$ is an \emph{inclusion certificate} for $(k,v)$ exactly when $(k',v')=(k,v)$, and a \emph{non-inclusion certificate} for $k$ exactly when $k'\ne k$. The empty certificate is a non-inclusion certificate for every key. If $k'=k$ but $v'$ differs from an expected value, the certificate authenticates the actual binding; it proves neither that expected binding nor non-inclusion.
+Malformed field sizes MUST be rejected. The two checks that distinguish this function from $\textsc{rsmt\_verify\_inclusion}$---$k'\ne k$, and $k[d]=k'[d]$ at every junction---are both security-critical: dropping the first would let an inclusion path pass as an absence proof, and dropping the second would let any authenticated leaf do so.
+
+Note that the terminal leaf exposes a neighbouring leaf's value $v'$; in the Unicity SMT, values are transaction hashes, so no payload data is revealed.
 
 % \paragraph{Security.}
-% Assuming collision resistance of $H$ and injective encodings, acceptance binds $(k',v')$ and every reconstructed junction to the tree committed by $\rho$: otherwise the first difference between the reconstructed path and that tree yields distinct preimages with the same hash. The test $k[d]=k'[d]$ at every junction proves that key-directed descent for $k$ follows this authenticated path. If $k$ were stored, deterministic descent would terminate at its unique leaf, so an accepted terminal with $k'\ne k$ proves absence. Conversely, the generation walk above produces an accepted certificate for every target key. Certified roots are canonical append-only RSMT roots by the consistency proof of Sec.~\ref{sec:rsmt-consistency-proof}; thus the argument also applies when the certificate generator is untrusted.
+% Assuming collision resistance of $H$ and injective encodings, acceptance binds $(k',v')$ and every reconstructed junction to the tree committed by $\rho$: otherwise the first difference between the reconstructed path and that tree yields distinct preimages with the same hash. The test $k[d]=k'[d]$ at every junction proves that key-directed descent for $k$ follows this authenticated path. If $k$ were stored, deterministic descent would terminate at its unique leaf, so an accepted terminal with $k'\ne k$ proves absence. Conversely, the generation walk above produces an accepted certificate for every absent target key. Certified roots are canonical append-only RSMT roots by the consistency proof of Sec.~\ref{sec:rsmt-consistency-proof}; thus the argument also applies when the certificate generator is untrusted.
 
 
 \subsection{Consistency Proof}\label{sec:rsmt-consistency-proof}
