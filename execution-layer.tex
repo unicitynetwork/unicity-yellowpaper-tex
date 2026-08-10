@@ -354,7 +354,7 @@ The Unicity Service processes the request as follows:
 	\item Compute message hash: $m \gets H(\sthash, \txhash)$
 	\item Evaluate predicate: verify $\predi(\tau, m, u) = 1$
 	\item Check uniqueness: verify $R[\mathsf{sid}] = \bot$
-	\item If both checks pass: $R[\mathsf{sid}] \gets \txhash$\footnote{The current SDK implementation stores $H(\mathsf{CBOR}(\predi, \sthash, \txhash, u))$ as the leaf value instead of $\txhash$, because of backward compatibility with the legacy SDK.}
+	\item If both checks pass: $R[\mathsf{sid}] \gets \txhash$
 \end{enumerate}
 
 If the request is accepted, the Unicity Service returns an inclusion proof $\pinc$. If the state has already been spent (uniqueness check fails) or the predicate evaluation fails, the request is rejected.
