@@ -170,9 +170,54 @@ The relation MUST derive $\mathsf{sid}_\mathsf{b}$ and $\txhash_\mathsf{b}$ from
 
 \section{Shared Anchor for Inclusion Checking}\label{app:bridging-anchor}
 
-Because the SMT is add-only, a single recent certificate suffices for proof validation. Fix an \emph{anchor certificate} $UC^*$ and its root $h^* = UC^*.IR.h$. For each certified transaction needed from a token, with leaf $L = (\mathsf{sid},\txhash)$, an \emph{anchored inclusion proof} is an SMT inclusion certificate $C^\mathsf{inc}$ of $L$ against $h^*$. The relation verifies $UC^*$ once via $\mathsf{VerifyUnicityCert}$ (Sec.~\ref{VerifyUnicityCert}) and each $L$ by $\mathsf{VerifyMember}(h^*, L, C^\mathsf{inc})$ --- the inclusion check of Sec.~\ref{VerifyInclusionProof} with the shared root $h^*$ substituted for the per-proof one. This replaces $m$ Unicity Certificate verifications by one certificate plus $m$ hash-path checks.
+Many certified transactions can be authenticated against a single verified signature. This section specifies the primitive as used by the bridge-return relation below and by token compression (Sec.~\ref{sec:token-compression}).
 
-Anchored inclusion intentionally omits the original request-validation time $\mathsf{time}(\pi)$ used by ordinary transfer verification (Sec.~\ref{sec:time-extraction}). Consequently, this bridge-return relation is defined only for token predicates whose validation is independent of that time. The current bridge token path uses such predicates. Future support for time-dependent predicates, such as timelocks, requires either carrying authenticated original validation time in the anchored transition data or verifying the relevant per-transition certificates.
+\subsection{The Anchor}\label{app:anchor-level}
+
+An \emph{anchor} is a Unicity Seal $C^{\mathsf{r}*}$, and the value it contributes is a single scalar plus a size: the \emph{anchor accumulator} $a^* = C^{\mathsf{r}*}.a_r$ and its size $N^* = C^{\mathsf{r}*}.n_r + 1$ (Sec.~\ref{sec:root-history}), which together commit every Unicity Tree root of rounds $0,\ldots,C^{\mathsf{r}*}.n_r$. $N^*$ is derived from the signed round number, so it is authenticated by the same signature; it must be carried explicitly because the accumulator's shape is a function of its size, and a verifier that does not fix the size does not fix the structure it is checking against. The seal's own root $C^{\mathsf{r}*}.r$ is not used separately; it is the last element $a^*$ commits, and treating it as a second anchor component only creates a value that has to be authenticated on its own.
+
+The natural-looking alternative --- anchoring at a shard's SMT root $UC^*.\mathcal{IR}.h$ --- does not work once a partition has more than one shard, and the reason is structural rather than a matter of tuning. A state identifier $\mathsf{sid} = H(\predi, \sthash)$ is a hash, so the successive states of one token are distributed across shards pseudo-randomly by $f_\mathcal{SH}$ (Sec.~\ref{sec:sharding}). A shard root commits only its own key range, so a shard-level anchor can never cover a leaf in another shard: a token with $m$ transitions over $S$ shards would need $\min(m, S)$ anchor certificates, each carrying a full BFT quorum signature, and no amount of re-anchoring would reduce that number. Nor can it be repaired by asking the shards to certify in step --- shards run asynchronously and no mechanism synchronizes their rounds.
+
+Anchoring one level up dissolves both problems. The seal signs $r$, the root of the Unicity Tree, which commits every shard of every partition through the shard trees (Sec.~\ref{VerifyUnicityCert}), and the shard tree carries forward each shard's last certified input record when that shard has no input to certify in a round (Sec.~\ref{se:shard-tree}). A seal at BFT round $n$ therefore commits \emph{some} certified SMT root for \emph{every} shard, whatever the shards' relative progress. Shard asynchrony becomes irrelevant: one anchor covers leaves from any set of shards, and the only requirement is that the anchor be recent enough that each shard's committed input record post-dates the leaves taken from it.
+
+\subsection{Anchored Inclusion}
+
+Anchoring is two-staged: one batched step authenticates the Unicity Tree roots of every round a proof draws leaves from, and a per-leaf step then works against one of those authenticated roots. The split is not presentational --- it is what makes the root history cost proportional to the number of distinct \emph{rounds} rather than to the number of leaves, and a verifier that checks a separate history path per leaf gets none of the saving claimed below.
+
+\paragraph{Round table.} A proof declares the distinct rounds it draws leaves from,
+\[
+\mathcal{R} = \langle (n_1, \rho_1), \ldots, (n_d, \rho_d)\rangle, \qquad n_1 < \cdots < n_d ,
+\]
+where $\rho_j$ is the Unicity Tree root of round $n_j$. The whole table is authenticated in one step:
+$\Call{VerifyRounds}{a^*, N^*, \mathcal{R}, \Psi} = 1$ iff the indices are strictly increasing, $n_d < N^*$, and $\Psi$ verifies $\mathcal{R}$ against $(a^*, N^*)$ as a batched root history proof (Sec.~\ref{sec:root-history}). Verification work is $O(d\log(1 + N^*/d) + \log N^*)$: the auxiliary path material shrinks as $d$ grows and the paths converge, but the $d$ table entries must each be consumed, so the $\Omega(d)$ term remains. At $d = N^*$ this is $\Theta(N^*)$, as it must be.
+
+\paragraph{Leaf.} Against the authenticated table, a leaf $L = (\mathsf{sid}, \txhash)$ is established by
+\[
+\pi^\mathsf{an} = (j,\, C^\mathsf{inc},\, \mathcal{IR},\, h_t,\, C^\mathsf{shard},\, C^\mathsf{uni},\, \mathcal{CD}_\beta),
+\]
+accepted by $\Call{VerifyAnchoredLeaf}{\alpha, \mathcal{R}, L, \pi^\mathsf{an}}$ iff, writing $\rho \gets \mathcal{R}[j].\rho$:
+\begin{enumerate}
+  \item $\Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, \mathcal{IR}.h, \mathsf{sid}, \txhash} = 1$ \quad (the leaf is in the shard's SMT);
+  \item $\mathcal{CD}_\beta.\alpha = \alpha$ and $H(\mathcal{CD}_\beta) = C^\mathsf{uni}.\mathsf{dhash}$ \quad (\emph{network binding} and authentic partition description);
+  \item $\sigma \gets C^\mathsf{shard}.\sigma$;\; $\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$ and $f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$ \quad (\emph{right-shard binding});
+  \item $\mathsf{CompUnicityTreeCert}(C^\mathsf{uni}, \mathsf{CompShardTreeCert}(C^\mathsf{shard}, \mathcal{IR}, h_t)) = \rho$ \quad (the leaf's round is the one claimed).
+\end{enumerate}
+
+Checks 2 and 3 are the two bindings that ordinary inclusion verification performs and that the certificate chain does not imply on its own. $\mathsf{VerifyUnicityCert}$ deliberately does \emph{not} bind a state identifier to the shard named in $C^\mathsf{shard}$ (Sec.~\ref{VerifyUnicityCert}); that binding is supplied by $\mathsf{VerifyInclusionProof}$ (Sec.~\ref{VerifyInclusionProof}), which also requires $\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha$. Anchored verification must reproduce both, or it is not equivalent to the ordinary path: without check 3 it would accept a leaf recorded by a shard not responsible for its key --- the exact equivocation the per-shard key-space invariant exists to prevent (Sec.~\ref{sec:partitions-shards}) --- and without check 2 it would accept a partition description belonging to another network.
+
+Every round root is established through the accumulator, with no shortcut for the anchor's own round. Admitting such a branch would mean the anchor consists of two values, of which one --- the accumulator --- would then have no reason to be authenticated wherever the pair is not read straight off a verified seal. Since an accumulator authorizes arbitrary historical roots, an unauthenticated one authorizes arbitrary fabricated roots. One value, one batched table, no branch.
+
+With it, one recent seal authenticates the roots of all earlier rounds, so an arbitrarily long history --- and, in Sec.~\ref{sec:token-compression}, an arbitrarily deep provenance --- collapses to one signature verification. It also means the relying party never needs the trust base of an earlier epoch: authority flows from the one seal it verifies under its \emph{current} trust base, and an old seal from an abandoned fork cannot be substituted, because its root is not in the accumulator of the chain the relying party is on.
+
+Cost per leaf is one SMT path plus $|\sigma| + O(\log |\mathcal{C}|)$ hashes for the shard and unicity trees; cost per proof is the round table and one seal verification, the latter being the only BFT signature check involved.
+
+This is not free asymptotically, and the trade should be stated plainly. Anchoring at a single shard root cost $O(1)$ certification evidence per leaf but, as shown above, cannot span shards at all. Anchoring at a seal costs $O(d\log(1 + N^*/d) + \log N^*)$ for $d$ distinct rounds instead. What it replaces is one \emph{Unicity Certificate verification} per leaf --- a BFT quorum signature check --- with hash compressions shared across a round, against a single signature check for the whole proof. For any realistic $N^*$ the added hashing is far cheaper than the signature verifications removed, but the added factor is real and does not vanish.
+
+\subsection{Reference Time from an Anchor}\label{app:anchor-time}
+
+Because the anchored path runs through the round's own input record, the reference time is available: $\tau = \mathcal{IR}.t$ of the round in which the leaf was certified (Sec.~\ref{sec:time-extraction}), authenticated by the same check~5. A time-dependent predicate --- $\predi_\mathsf{tlock}$, $\predi_\mathsf{htlc}$ --- is therefore evaluated under an anchored proof exactly as under an ordinary inclusion proof, at the cost of one extra root history path, and no per-transition Unicity Certificate is needed.
+
+This requires the leaf to be anchored at \emph{its own} round's root rather than at the anchor round's root: a recent root proves that the leaf exists, but its input record carries the recent round's reference time, not the leaf's. Both forms are admitted by check~5, and a prover uses the leaf's own round exactly when the transition's predicate reads $\tau$.
 
 \section{Public Statement and Public Calldata}\label{app:bridging-public}
 
@@ -191,7 +236,9 @@ The nullifier $\eta$ is included in the leaf, and emitted on settlement, so any 
 
 \section{Batch Proving Relation}\label{app:bridging-relation}
 
-Algorithm~\ref{alg:bridge-relation} defines $\mathfrak{R}$: the relation holds iff every check passes. The witness $\mathsf{w}$ comprises the bridge configuration $\mathcal{C}$, the trust base $\mathcal{T}$, the anchor certificate $UC^*$, and for each burn $i$: the source token $\mathcal{L}_i$, its anchored inclusion proofs, the lock record(s) backing its genesis, and the accumulator non-membership witness $w_i$. The first check binds the private configuration to the public statement by recomputing $h_\mathsf{cfg}$ exactly as in Sec.~\ref{app:bridging-config}; $\mathcal{C}$ is then safe to use for all per-burn checks. $\Call{VerifyToken}{}$ (Sec.~\ref{sec:token-verification}) is invoked in \emph{anchored} mode: wherever it would verify a certified transaction's own Unicity Certificate, it instead verifies an anchored inclusion proof against $h^*$ (Sec.~\ref{app:bridging-anchor}); its recursive split-reason checks (Sec.~\ref{sec:split-verification}) are unchanged and supply value conservation. The anchored mode accepts only time-independent predicate checks, as noted in Sec.~\ref{app:bridging-anchor}. The genesis backing verifier is \emph{structural}: it checks the binding to the lock record and exports the lock reference as a public obligation, leaving the existence of the lock to the vault's recorded digest (Sec.~\ref{app:bridging-in-security}). The external finality of the lock was already established at mint time by the bridge-in verifier (Sec.~\ref{app:bridging-backing}), so it need not be re-checked inside the proof.
+Algorithm~\ref{alg:bridge-relation} defines $\mathfrak{R}$: the relation holds iff every check passes. The witness $\mathsf{w}$ comprises the bridge configuration $\mathcal{C}$, the trust base $\mathcal{T}$, the anchor seal $C^{\mathsf{r}*}$, the round table $\mathcal{R}$ with its batched proof $\Psi$, and for each burn $i$: the source token $\mathcal{L}_i$, its anchored inclusion proofs, the lock record(s) backing its genesis, and the accumulator non-membership witness $w_i$. The first check binds the private configuration to the public statement by recomputing $h_\mathsf{cfg}$ exactly as in Sec.~\ref{app:bridging-config}; $\mathcal{C}$ is then safe to use for all per-burn checks. $\Call{VerifyToken}{}$ (Sec.~\ref{sec:token-verification}) is invoked in \emph{anchored} mode: wherever it would verify a certified transaction's own Unicity Certificate, it instead verifies an anchored leaf against the round table $\mathcal{R}$ (Sec.~\ref{app:bridging-anchor}); its reference-form split-reason checks (Sec.~\ref{sec:split-verification}) are unchanged and supply value conservation, with each source resolved from the witness rather than from an evidence set. Reference time is available from the anchored path (Sec.~\ref{app:anchor-time}), so time-dependent predicates are admitted. The genesis backing verifier is \emph{structural}: it checks the binding to the lock record and exports the lock reference as a public obligation, leaving the existence of the lock to the vault's recorded digest (Sec.~\ref{app:bridging-in-security}). The external finality of the lock was already established at mint time by the bridge-in verifier (Sec.~\ref{app:bridging-backing}), so it need not be re-checked inside the proof.
+
+A deployment that already verifies token attestations (Sec.~\ref{sec:token-compression}) may discharge $\Call{VerifyToken}{}$ here by verifying an attestation's $\pi_\mathsf{tok}$ in-circuit instead of expanding the token, authenticating its anchor against $a^*$ exactly as $\mathfrak{R}_\mathsf{tok}$ does; the two relations share the same anchoring primitive by construction.
 
 \begin{algorithm}[!htbp]
 \caption{Batch Return Relation $\mathfrak{R}(\mathsf{x},\mathsf{w})$}\label{alg:bridge-relation}
@@ -201,16 +248,17 @@ Algorithm~\ref{alg:bridge-relation} defines $\mathfrak{R}$: the relation holds i
   \State ensure($H_\mathsf{cfg}(\mathcal{C}) = \mathsf{x}.h_\mathsf{cfg}$)
   \State $(\chi,a_\mathsf{V},a_\mathsf{A},\mathsf{ty},\mathsf{aid},d_\mathsf{lock},d_\mathsf{nul},t_\mathsf{reason}) \gets \mathcal{C}$
   \State ensure($H(\mathcal{T}) = \mathsf{x}.h_\mathcal{T}$)
-  \State ensure($\mathsf{VerifyUnicityCert}(UC^*,\mathcal{T}) = 1$);\quad $h^* \gets UC^*.IR.h$
+  \State ensure($\mathsf{VerifyUnicitySeal}(C^{\mathsf{r}*}.r, C^{\mathsf{r}*},\mathcal{T}) = 1$);\quad $(a^*, N^*) \gets (C^{\mathsf{r}*}.a_r,\; C^{\mathsf{r}*}.n_r + 1)$
+  \State ensure($\Call{VerifyRounds}{a^*, N^*, \mathcal{R}, \Psi} = 1$) \Comment{one batched round table for the whole batch}
   \State $A \gets \mathsf{x}.A_\mathsf{old}$;\quad $V \gets 0$;\quad $\mathsf{leaves} \gets \langle\rangle$;\quad $\mathsf{lref} \gets \langle\rangle$
   \For{$i \gets 1 \ldots \mathsf{x}.B$}
-    \State \textbf{Finality:} ensure($\Call{VerifyToken}{\mathcal{L}_i,\mathcal{T}} = 1$ in anchored mode against $h^*$)
+    \State \textbf{Finality:} ensure($\Call{VerifyToken}{\mathcal{L}_i,\mathcal{T}} = 1$ in anchored mode against $\mathcal{R}$)
     \State $D_{\mathsf{mint},i} \gets \mathcal{L}_i.T_0.D_\mathsf{mint}$;\quad ensure($D_{\mathsf{mint},i}.\mathsf{ty} = \mathcal{C}.\mathsf{ty}$)
     \State $(T_{\mathsf{b},i},u_{\mathsf{b},i},\pi_{\mathsf{b},i}) \gets$ final certified transfer of $\mathcal{L}_i$
     \State $(\predi_{\mathsf{b},i},h_{\mathsf{b},i}) \gets$ state spent by $T_{\mathsf{b},i}$ in $\mathcal{L}_i$
     \State ensure($T_{\mathsf{b},i}.\sthash = h_{\mathsf{b},i}$)
     \State $\mathsf{sid}_{\mathsf{b},i} \gets H(\predi_{\mathsf{b},i},\;T_{\mathsf{b},i}.\sthash)$;\quad $\txhash_{\mathsf{b},i} \gets H(T_{\mathsf{b},i}.D)$
-    \State ensure($\pi_{\mathsf{b},i}$ proves the leaf $(\mathsf{sid}_{\mathsf{b},i},\txhash_{\mathsf{b},i})$ under $h^*$)
+    \State ensure($\Call{VerifyAnchoredLeaf}{\mathcal{T}.\alpha, \mathcal{R}, (\mathsf{sid}_{\mathsf{b},i},\txhash_{\mathsf{b},i}), \pi_{\mathsf{b},i}} = 1$)
     \State $\mathcal{R}_i \gets \Call{DecodeReason}{T_{\mathsf{b},i}.D.\auxd'}$ such that $T_{\mathsf{b},i}.D.\predi' = \predi_\mathsf{burn}(H(T_{\mathsf{b},i}.D.\auxd'))$
     \State \textbf{Destination:} ensure($\mathcal{R}_i.(\chi,a_\mathsf{V},a_\mathsf{A},\mathsf{ty},\mathsf{aid}) = (\chi,a_\mathsf{V},a_\mathsf{A},\mathsf{ty},\mathsf{aid})$)
     \State \textbf{Value:} $v_i \gets$ value of $D_{\mathsf{mint},i}.\auxd'$ for $\mathsf{aid}$ via $\Call{Assets}{D_{\mathsf{mint},i}.\mathsf{ty},D_{\mathsf{mint},i}.\auxd'}$
@@ -286,7 +334,7 @@ The public statement and the settlement procedure are identical for every value 
 
 \begin{description}
   \item[Single ($B=1$).] One token, one nullifier insertion, one root transition. Establishes the interface.
-  \item[In-circuit batch ($B>1$).] One proof for $B$ burns sharing one anchor certificate $UC^*$ and one accumulator transition. This amortizes, over the whole batch, the single on-chain $\mathsf{Verify}$, the single BFT-certificate verification of $UC^*$, and the single root update. The remaining on-chain settlement work is linear in the number of release leaves, with asset transfers the irreducible dominant term; lock checks are linear in the number of distinct referenced locks.
+  \item[In-circuit batch ($B>1$).] One proof for $B$ burns sharing one anchor seal $C^{\mathsf{r}*}$ and one accumulator transition. This amortizes, over the whole batch, the single on-chain $\mathsf{Verify}$, the single seal verification, and the single root update. The remaining on-chain settlement work is linear in the number of release leaves, with asset transfers the irreducible dominant term; lock checks are linear in the number of distinct referenced locks.
   \item[Recursion.] Prove each token's lineage independently (parallel across machines), each emitting its nullifier and validated facts; an aggregation relation verifies the child proofs, performs the batch accumulator insertion, binds all returns to one $h_\mathsf{cfg}$ and trust-base policy, and emits the same statement $\mathsf{x}$. This decouples per-token proving latency from batch size.
 \end{description}
 

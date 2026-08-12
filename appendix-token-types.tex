@@ -86,7 +86,6 @@ $\bot$ & absent reason & specified & admissible iff $\bot \in \mathsf{RT}$ (Sec.
 39048 & BridgeMintReason & specified & Sec.~\ref{sec:bridge-in}, Appendix~\ref{app:bridging-backing-reason} \\
 $\mathsf{ISSUER\_TAG}$ & MintReasonIssuer & draft & Sec.~\ref{app:reason-issuer} \\
 $\mathsf{SLOT\_TAG}$ & MintReasonSlot & draft & Sec.~\ref{app:reason-slot} \\
-$\mathsf{SPLITREF\_TAG}$ & MintReasonSplitRef & draft & Sec.~\ref{app:reason-splitref} \\
 $\mathsf{MERGE\_TAG}$ & MintReasonMerge & draft & Sec.~\ref{app:reason-merge} \\
 $\mathsf{CONVERT\_TAG}$ & MintReasonConvert & draft & Sec.~\ref{app:reason-convert} \\
 $\mathsf{PROOF\_TAG}$ & MintReasonProof & draft & Sec.~\ref{app:reason-proof} \\
@@ -164,7 +163,7 @@ The issuer SHOULD publish the \emph{audit table} $\langle(h_1, b_1), \ldots, (h_
 
 The mint of slot $j$ MUST use $D_\mathsf{mint}.\mathsf{salt} = \mathsf{salt}_j$. The genesis certification state is then a deterministic function of the slot: $\mathsf{id} = H(\mathsf{salt}_j, \alpha)$, source state hash $\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$, minting key $\mathsf{pk}_\mathsf{mint}$ derived from $\mathsf{id}$ (Appendix~\ref{app:el-constants}), and state identifier $\mathsf{sid} = H(\mathsf{pk}_\mathsf{mint}, \sthash)$. The Unicity Service certifies at most one transaction per state identifier (Sec.~\ref{sec:request-validation}); hence at most one certified genesis per slot can ever exist on network $\alpha$ --- a second mint of slot $j$, by the issuer or anyone else, is rejected exactly as a double spend would be.
 
-Consequently, for a type whose admissible set satisfies $\mathsf{RT} \subseteq \{\mathsf{SLOT\_TAG}, 39044, \mathsf{SPLITREF\_TAG}, \mathsf{MERGE\_TAG}\}$, at most $N$ geneses are ever created by direct issuance, and every other admitted format strictly conserves value (Secs.~\ref{sec:split-verification}, \ref{app:reason-splitref}, \ref{app:reason-merge}). The total value ever issued is therefore bounded by $\sum_{j} \Call{Value}{b_j}$, and the token count of a count-capped series by $N$. Admitting any non-conserving format (e.g.\ $\mathsf{ISSUER\_TAG}$) alongside $\mathsf{SLOT\_TAG}$ voids the bound; the admissible set is part of the frozen manifest, so a verifier sees at type-registration time whether the limit is unconditional.
+Consequently, for a type whose admissible set satisfies $\mathsf{RT} \subseteq \{\mathsf{SLOT\_TAG}, 39044, \mathsf{MERGE\_TAG}\}$, at most $N$ geneses are ever created by direct issuance, and every other admitted format strictly conserves value (Secs.~\ref{sec:split-verification}, \ref{app:reason-merge}). The total value ever issued is therefore bounded by $\sum_{j} \Call{Value}{b_j}$, and the token count of a count-capped series by $N$. Admitting any non-conserving format (e.g.\ $\mathsf{ISSUER\_TAG}$) alongside $\mathsf{SLOT\_TAG}$ voids the bound; the admissible set is part of the frozen manifest, so a verifier sees at type-registration time whether the limit is unconditional.
 
 \subsubsection{Reason Body}
 
@@ -202,56 +201,12 @@ The driver additionally validates the payload against $\Call{ParseAux}{}$ and th
 
 \paragraph{Open (claim-drop) variant.} Publishing the salts themselves and setting $\predi_\mathsf{issue}$ to the trivially-true predicate turns the series into a first-come-first-served public claim: whoever first certifies slot $j$ owns it, uniqueness and the limit still enforced by the platform. Deployments using this variant accept that ``blocking'' and ``claiming'' coincide by design.
 
-\subsection{Reference-Form Split Reason}\label{app:reason-splitref}
-
-\index{mint reason!split, reference form}\index{reference form}
-The split reason of Sec.~\ref{sec:token-splitting} (tag 39044) embeds the complete certified burned source token in the mint reason, hence in $\txhash$, hence in the certified genesis. Those bytes are fixed forever: a token minted under that format can never have its provenance compressed (Sec.~\ref{sec:token-evidence}). This format is its reference-form counterpart --- identical in what it proves and in every conservation check, differing only in that the source is named by identifier and supplied as evidence beside the token.
-
-It is a separate registry entry with its own tag, not a revision of 39044: the split reason is frozen as \emph{specified}, and the registry discipline (Sec.~\ref{app:registries}) forbids redefining a published format. A type admits whichever form it intends its holders to be able to compress; admitting both is permitted and lets a wallet fall back when it cannot produce evidence.
-
-\subsubsection{Reason Body}
-
-CBOR array under tag $\mathsf{SPLITREF\_TAG}$:
-
-\begin{longtable}{clp{8.6cm}}
-\textbf{Index} & \textbf{Type} & \textbf{Description} \\
-\hline
-\endhead
-0 & unsigned integer & format version; this specification defines version $1$ \\
-1 & byte string & source token identifier $\mathsf{id}_\mathsf{src}$ \\
-2 & Certified Transfer & the source's terminal burn transaction $T_\mathsf{burn}^\mathsf{cert}$, in full \\
-3 & array & RSMST inclusion proofs, in canonical output-asset order, exactly as in 39044 (Appendix~\ref{app:split-proof-encoding}) \\
-\end{longtable}
-
-\noindent The burn is carried in the reason rather than in the evidence set because it is not part of the source token's certificate: a certificate stops immediately before the terminal burn (Sec.~\ref{sec:compression-scope}), and the burn's auxiliary data --- the split manifest $b_\mathcal{M}$, from which the verifier reads the per-asset allocation roots --- must be presented byte-exactly.
-
-Everything the reason must fix is still committed by it: the source identifier, the exact burn, and this output's allocation proofs. The output commitment $d_j$ (Appendix~\ref{app:split-output-commitment}) is unchanged and already binds $\mathsf{id}_\mathsf{src}$.
-
-\subsubsection{Verification}
-
-As $V_{\mathsf{SPLITREF\_TAG}}$ in Alg.~\ref{alg:mint-auth}. The checks are those of Sec.~\ref{sec:split-verification} with check 3 --- recursive verification of the embedded source --- replaced by evidence resolution:
-
-\begin{enumerate}
-	\item Decode the reason under the strict rules of Appendix~\ref{app:split-proof-encoding}; ensure $\mathsf{ver} = 1$.
-	\item Resolve $\mathsf{id}_\mathsf{src}$ in the evidence set $\mathcal{E}$ (Sec.~\ref{sec:token-evidence}). A missing entry rejects. If the evidence is a complete token, hand it to $\mathsf{collect}$ for worklist verification (Sec.~\ref{sec:nested-verification}) and take $(\mathsf{ty}_\mathsf{src}, \mathcal{A}_\mathsf{src})$ from its genesis and $(h,e)$ from its final pre-burn state; if it is a certificate $\mathcal{K}$, ensure $\Call{VerifyTokenCertificate}{\mathcal{K}, \mathcal{T}, \Gamma} \ne \bot$ and take the same four values from its result. In both cases ensure the resolved identifier equals $\mathsf{id}_\mathsf{src}$ and the network identifier is $\mathcal{T}.\alpha$.
-	\item Verify $T_\mathsf{burn}^\mathsf{cert}$ as an ordinary certified transfer (Sec.~\ref{sec:transfer-tx}) out of the state $(\decpred(e), h)$; let $b_\mathcal{M}$ be its auxiliary data. Ensure its recipient predicate is exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.
-	\item Apply checks 2 and 5--10 of Sec.~\ref{sec:split-verification} unchanged, reading the source's asset collection from $\mathcal{A}_\mathsf{src}$, the source's type from $\mathsf{ty}_\mathsf{src}$, and the allocation roots from $b_\mathcal{M}$. In particular the output token type MUST be byte-identical to $\mathsf{ty}_\mathsf{src}$ (check 6) and the reconstructed root sum MUST equal the source amount for every asset (check 10).
-\end{enumerate}
-
-\paragraph{Security notes.}
-\begin{description}
-	\item[Same guarantees as 39044] Every check that establishes authenticity, single-spend and value conservation is retained verbatim; only the mechanism by which the verifier obtains the source token changes, and both mechanisms establish the same facts about the same token.
-	\item[Identifier binding] $\mathsf{id} = H(\mathsf{salt}, \alpha)$ is unique network-wide and at most one certified genesis exists per identifier (Sec.~\ref{sec:request-validation}), so naming the source by identifier is as tight as embedding it. Substituted evidence for a different token fails the identifier check; evidence for the same token in either form yields the same values.
-	\item[Evidence is untrusted] $\mathcal{E}$ is neither certified nor committed. It is checked in full on every verification, and a verifier that cannot verify the evidence it is given rejects, rather than proceeding on partial provenance.
-	\item[Amortization] One certificate for the source serves all $k$ outputs of the split and, transitively, their descendants; it is prepared before the split and requires no proving on the transaction path (Sec.~\ref{sec:certificate-preparation}).
-\end{description}
-
 \subsection{Merge Reason}\label{app:reason-merge}
 
 \index{token!merging}\index{mint reason!merge}
 Merging is the dual of splitting (Sec.~\ref{sec:token-splitting}): $k \ge 2$ source tokens of the same fungible type are burned and one output token carrying the summed assets is minted. It serves consolidation of change and is the aggregation substrate for pooled assets (Sec.~\ref{app:uts-pool}). A type admits merging by including $\mathsf{MERGE\_TAG}$ in $\mathsf{RT}$.
 
-Unlike a split, a merge needs no allocation tree: value conservation is direct arithmetic over the sources' verified payloads. The format is defined in \emph{reference form} (Sec.~\ref{sec:token-evidence}) from the outset --- the reason names its sources by identifier and their evidence travels beside the token --- so a merged token's provenance is compressible and repeated merging does not compound (see \emph{Provenance growth} below).
+Unlike a split, a merge needs no allocation tree: value conservation is direct arithmetic over the sources' verified payloads. Like the split reason it is in \emph{reference form} (Sec.~\ref{sec:token-evidence}) --- the reason names its sources by identifier and their evidence travels beside the token --- so a merged token's provenance is compressible and repeated merging does not compound (see \emph{Provenance growth} below).
 
 \subsubsection{Data Structures}
 
@@ -272,7 +227,7 @@ with term encodings as in Appendix~\ref{app:split-output-commitment} and the sou
 
 The \emph{merge manifest} is the byte string $d$ under semantic tag $\mathsf{MERGE\_MANIFEST\_TAG}$; let $b_\mathcal{M}$ be its canonical encoding. The distinct manifest tag separates merge burns from split burns: a burn commits unambiguously to one protocol.
 
-The mint reason is a CBOR array under tag $\mathsf{MERGE\_TAG}$: the format version ($1$), the source identifiers $\langle \mathsf{id}_1, \ldots, \mathsf{id}_k\rangle$ in strictly increasing order, and the $k$ certified terminal burn transactions in the same order. The sources themselves are resolved from the evidence set (Sec.~\ref{sec:token-evidence}), each as a complete token or as a token certificate.
+The mint reason is a CBOR array under tag $\mathsf{MERGE\_TAG}$ containing exactly two items: the format version ($1$) and the source identifiers $\langle \mathsf{id}_1, \ldots, \mathsf{id}_k\rangle$ in strictly increasing order. Everything else --- the sources and their terminal burns --- is resolved from the evidence set (Sec.~\ref{sec:token-evidence}), each source as a complete token or as a token attestation. As in a split, the burns need no commitment in the reason: each source's pre-burn state fixes a state identifier, and at most one transaction is ever certified for it (Sec.~\ref{sec:request-validation}).
 
 \subsubsection{Merge Protocol}
 
@@ -281,7 +236,7 @@ The mint reason is a CBOR array under tag $\mathsf{MERGE\_TAG}$: the format vers
 	\item Compute the output collection: for every asset identifier occurring in any source, $v_\mathsf{out}(\mathsf{aid}) = \sum_i v_i(\mathsf{aid})$ (missing entries are zero), rejecting any sum $\ge 2^{256}$. The output payload $\auxd'$ is exactly this canonical summed collection --- no asset omitted, none introduced.
 	\item Prepare the output mint fields, derive $\mathsf{id} = H(\mathsf{salt}, \alpha)$, compute $d$ and $b_\mathcal{M}$. Durably store the output mint fields and manifest before proceeding.
 	\item Burn each source with auxiliary data exactly $b_\mathcal{M}$ and recipient predicate $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$ (Sec.~\ref{sec:burn-transaction}). Burns may execute in any order; an interruption strands no value permanently, since the pre-committed output can be minted whenever all burns eventually complete.
-	\item Mint the output with the reason naming the burned sources and carrying their burn transactions, and assemble the evidence set for those sources (Sec.~\ref{sec:token-evidence}).
+	\item Mint the output with the reason naming the burned sources, and assemble the evidence set: for each source, the source itself in full or as an attestation, its certified burn transaction, and transitively the entries those name (Sec.~\ref{sec:token-evidence}).
 \end{enumerate}
 
 \subsubsection{Merge Verification}
@@ -290,8 +245,8 @@ As $V_{\mathsf{MERGE\_TAG}}$ in Alg.~\ref{alg:mint-auth}; every failed check rej
 \begin{enumerate}
 	\item Decode the reason under the strict rules of Appendix~\ref{app:split-proof-encoding}; require $2 \le k \le K_\mathsf{max}$.
 	\item Decode the output payload: $\mathcal{A}_\mathsf{out} \gets \Call{Assets}{D_\mathsf{mint}.\mathsf{ty}, D_\mathsf{mint}.\auxd'}$, a non-empty canonical collection of positive amounts.
-	\item Require the identifiers $\mathsf{id}_i$ strictly increasing in $i$. For each: resolve $\mathsf{id}_i$ in the evidence set $\mathcal{E}$ (Sec.~\ref{sec:token-evidence}) --- a missing entry rejects --- either handing a complete token to $\mathsf{collect}$ for worklist verification (Sec.~\ref{sec:nested-verification}) or verifying a token certificate by $\Call{VerifyTokenCertificate}{}$, which must not return $\bot$ (Sec.~\ref{sec:certificate-verification}). Take $(\mathsf{ty}_i, \mathcal{A}_i, h_i, e_i)$ from the resolved evidence; require the resolved identifier to equal $\mathsf{id}_i$, the type to be byte-identical to $D_\mathsf{mint}.\mathsf{ty}$, and the network identifier to be $\mathcal{T}.\alpha$.
-	\item Recompute $d$ from $\langle\mathsf{id}_1,\ldots,\mathsf{id}_k\rangle$ and the output mint fields other than $\mathsf{reason}$; form $b_\mathcal{M}$. Verify each carried burn transaction as an ordinary certified transfer out of $(\decpred(e_i), h_i)$ (Sec.~\ref{sec:transfer-tx}), and require its auxiliary data to be exactly $b_\mathcal{M}$ and its recipient predicate exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.
+	\item Require the identifiers $\mathsf{id}_i$ strictly increasing in $i$. For each: resolve $\mathsf{id}_i$ in the evidence set $\mathcal{E}$ (Sec.~\ref{sec:token-evidence}) --- a missing entry rejects --- either handing a complete token to $\mathsf{collect}$ for worklist verification (Sec.~\ref{sec:nested-verification}) or verifying a token attestation by $\Call{VerifyAttestation}{}$, which must not return $\bot$ (Sec.~\ref{sec:attestation}). Take $(\mathsf{ty}_i, \mathcal{A}_i, h_i, e_i)$ from the resolved evidence; require the resolved identifier to equal $\mathsf{id}_i$, the type to be byte-identical to $D_\mathsf{mint}.\mathsf{ty}$, and the network identifier to be $\mathcal{T}.\alpha$.
+	\item Recompute $d$ from $\langle\mathsf{id}_1,\ldots,\mathsf{id}_k\rangle$ and the output mint fields other than $\mathsf{reason}$; form $b_\mathcal{M}$. For each source require $\mathcal{E}$ to supply a certified transfer out of $(\decpred(e_i), h_i)$, verified as an ordinary transfer (Sec.~\ref{sec:transfer-tx}), with auxiliary data exactly $b_\mathcal{M}$ and recipient predicate exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$; when a source was supplied as a complete token this is its final transfer.
 	\item Conservation: compute the canonical summed collection over $\mathcal{A}_1, \ldots, \mathcal{A}_k$, rejecting overflow; require it to equal $\mathcal{A}_\mathsf{out}$ exactly --- the same asset identifiers with the same amounts.
 \end{enumerate}
 
@@ -304,7 +259,7 @@ As $V_{\mathsf{MERGE\_TAG}}$ in Alg.~\ref{alg:mint-auth}; every failed check rej
 	\item[Value risk, not inflation risk] As with splits, failing to mint the pre-committed output destroys value but can never create or redirect it; the merging party is responsible for durable storage of the pre-committed data.
 \end{description}
 
-\paragraph{Provenance growth.} With sources supplied in full, a merge carries $k$ complete tokens and repeated merging grows provenance multiplicatively, bounded by $\Lambda$. The intended composition is with compression (Secs.~\ref{sec:history-compression}, \ref{sec:provenance-compression}): sources SHOULD be supplied as token certificates, prepared in advance by each source holder. Each source then costs one constant-size certificate irrespective of its own history and ancestry, and the merged token's own certificate --- prepared later --- folds all $k$ of them into a single proof. What survives is the issuance roots: each independent lineage entering the merge contributes one genesis that every verifier checks in the clear (Sec.~\ref{sec:token-certificate}), so a merged token's cost is proportional to the number of distinct issuance events behind it rather than to its transaction history. Each source must in any case present its terminal burn in the clear.
+\paragraph{Provenance growth.} With sources supplied in full, a merge carries $k$ complete tokens and repeated merging grows provenance multiplicatively, bounded by $\Lambda$. The intended composition is with compression (Sec.~\ref{sec:token-compression}): sources SHOULD be supplied as token attestations, prepared in advance by each source holder. Each source then costs one constant-size attestation irrespective of its own history and ancestry, and the merged token's own attestation --- prepared later --- folds all $k$ into a single proof. What survives is the issuance events: each independent lineage entering the merge contributes one genesis that every verifier checks in the clear (Sec.~\ref{sec:attestation}), so a merged token's cost is proportional to the number of distinct issuance events behind it rather than to its transaction history. Each source must in any case present its terminal burn in the clear, in $\mathcal{E}$.
 
 \subsection{Conversion Reason}\label{app:reason-convert}
 
@@ -392,7 +347,7 @@ The fungible asset standard (the ERC-20 analogue): a divisible, issuer-gated con
 
 \begin{itemize}
 	\item $\Call{ParseAux}{}$ -- the canonical asset collection decoding $\Call{Assets}{}$ (Sec.~\ref{sec:asset-structure}, canonical rules of Appendix~\ref{app:split-proof-encoding}); the payload rules pin the permitted asset identifiers.
-	\item $\mathsf{RT} = \{\mathsf{ISSUER\_TAG}, 39044\}$ -- primary issuance by issuer authorization (Sec.~\ref{app:reason-issuer}); change-making by split (Sec.~\ref{sec:token-splitting}). The set MAY additionally include $\mathsf{MERGE\_TAG}$ to permit consolidation (Sec.~\ref{app:reason-merge}) and $\mathsf{SPLITREF\_TAG}$ (Sec.~\ref{app:reason-splitref}) to make split-minted tokens' provenance compressible; a type intended for high circulation SHOULD admit the reference form and its wallets SHOULD prefer it. A \emph{bridged} fungible asset is the variant with $\mathsf{RT} = \{39048, 39044\}$ and the bridge configuration $h_\mathsf{cfg}$ as issuance parameter (Sec.~\ref{sec:bridged-assets}).
+	\item $\mathsf{RT} = \{\mathsf{ISSUER\_TAG}, 39044\}$ -- primary issuance by issuer authorization (Sec.~\ref{app:reason-issuer}); change-making by split (Sec.~\ref{sec:token-splitting}). The set MAY additionally include $\mathsf{MERGE\_TAG}$ to permit consolidation (Sec.~\ref{app:reason-merge}); a type intended for high circulation SHOULD, since provenance breadth rather than depth is what survives compression (Sec.~\ref{sec:compression-scope}). A \emph{bridged} fungible asset is the variant with $\mathsf{RT} = \{39048, 39044\}$ and the bridge configuration $h_\mathsf{cfg}$ as issuance parameter (Sec.~\ref{sec:bridged-assets}).
 	\item $\Call{VerifyIssuance}{}$ -- for $\mathsf{ISSUER\_TAG}$ geneses, checks the pinned issuer predicate and any per-mint payload constraints (e.g.\ permitted asset identifiers); split geneses are constrained by the split verifier itself (type and value conservation, Sec.~\ref{sec:split-verification}).
 	\item \textbf{Metadata}: a registry entry with $\texttt{assetKind} = \texttt{"fungible"}$, carrying name, symbol, decimals and icons (Sec.~\ref{app:asset-metadata}).
 \end{itemize}
@@ -423,7 +378,7 @@ The capped variants of UTS-1 and UTS-2: issuance is signature- or multisig-gated
 
 \begin{itemize}
 	\item \textbf{Type parameters}: the slot commitment $(N, r_\mathsf{slots}, \predi_\mathsf{issue})$, frozen in the manifest; the published audit table makes $N$ and the committed denominations publicly checkable (Sec.~\ref{app:reason-slot}).
-	\item $\mathsf{RT} = \{\mathsf{SLOT\_TAG}\}$, optionally extended with 39044, $\mathsf{SPLITREF\_TAG}$ and $\mathsf{MERGE\_TAG}$ --- all value-conserving, so the limit remains unconditional. No other issuance format may be admitted. Compression (Secs.~\ref{sec:history-compression}, \ref{sec:provenance-compression}) is not an issuance format and never appears in $\mathsf{RT}$; it is available to capped types like any other and does not bear on the cap. A capped type's slot geneses are the issuance roots of its holders' certificates, checked in the clear by every verifier, so the cap is re-established on every verification exactly as it is for an uncompressed token.
+	\item $\mathsf{RT} = \{\mathsf{SLOT\_TAG}\}$, optionally extended with 39044 and $\mathsf{MERGE\_TAG}$ --- both value-conserving, so the limit remains unconditional. No other issuance format may be admitted. Compression (Sec.~\ref{sec:token-compression}) is not an issuance format and never appears in $\mathsf{RT}$; it is available to capped types like any other and does not bear on the cap. A capped type's slot geneses are exactly the opaque geneses of its holders' attestations, checked in the clear by every verifier under its own registry, so the cap is re-established on every verification exactly as it is for an uncompressed token. Capped types are also the case in which compression is not substitutable by issuer reissue (Sec.~\ref{sec:compression-scope}): an issuer able to authorize a fresh equivalent token would void the cap.
 \end{itemize}
 
 \paragraph{Capped fungible asset.} Payload rules as UTS-1. Each slot commits its denomination, $b_j = $ the canonical encoding of $\{(\mathsf{aid}, v_j)\}$; the maximum supply is
@@ -576,7 +531,7 @@ $V_\mathsf{in}' = V_\mathsf{in} + v_\mathsf{in}$, $V_\mathsf{out}' = V_\mathsf{o
 
 \begin{itemize}
 	\item \emph{Throughput}: one spendable state serializes all operations on a pool instance; contention is inherent. Sharded or tree-structured pools are a candidate extension.
-	\item \emph{Verification cost and compression}: pool verification cost grows with transition count, and each deposit/withdrawal embeds a burned token. Practical pools depend on history compression of $\mathsf{ty}_\mathsf{P}$ tokens. Since the pool type defines per-transfer checks, the generic chain relation $\mathfrak{R}_\mathsf{ch}$ (Sec.~\ref{sec:compression-relations}) does not cover it: a variant carrying the pool transition checks is required, and $\mathsf{ty}_\mathsf{P}$'s manifest must pin its verification keys --- tracked in the roadmap.
+	\item \emph{Verification cost and compression}: pool verification cost grows with transition count, and each deposit/withdrawal embeds a burned token. Practical pools depend on compression of $\mathsf{ty}_\mathsf{P}$ tokens, and on restating the pool transition records in reference form so that they can be compressed at all (Sec.~\ref{sec:token-evidence}). Since the pool type also defines per-transfer checks, the generic relation $\mathfrak{R}_\mathsf{tok}$ (Sec.~\ref{sec:compression-relation}) does not cover it: a variant carrying the pool transition checks is required, and $\mathsf{ty}_\mathsf{P}$'s manifest must pin its verification key --- tracked in the roadmap.
 	\item \emph{Privacy}: the pool state and every transition are visible to all verifiers of pool-derived tokens; deposits, swaps and withdrawals are linkable to their claim commitments.
 	\item \emph{Encodings}: transition record and manifest encodings, and the accumulator's tree parameters, are fixed when this draft freezes.
 \end{itemize}
@@ -597,9 +552,8 @@ Slot-bound issuance reason (Sec.~\ref{app:reason-slot}) & draft & review; alloca
 Merge reason (Sec.~\ref{app:reason-merge}) & draft & review; allocate tags \\
 Conversion reason (Sec.~\ref{app:reason-convert}) & draft & review; allocate tags \\
 Proof-carrying reason (Sec.~\ref{app:reason-proof}) & draft & select proof-system profile \\
-History compression (Sec.~\ref{sec:history-compression}) & draft & select proof-system profile; encode $\mathcal{H}$; relation variant for per-transfer type checks \\
-Provenance compression: token evidence, certificates, $\mathfrak{R}_\mathsf{lin}$ (Sec.~\ref{sec:provenance-compression}) & draft & review; encode $\mathcal{K}$ and the evidence set; reference form for conversion and pool records \\
-Reference-form split reason (Sec.~\ref{app:reason-splitref}) & draft & review; allocate tag \\
+Token compression: evidence set, attestations, $\mathfrak{R}_\mathsf{tok}$ (Sec.~\ref{sec:token-compression}) & draft & select proof-system profile; encode $\mathcal{K}$ and the evidence set; relation variant for per-transfer type checks; reference form for conversion and pool records \\
+Root history accumulator (Sec.~\ref{sec:root-history}) & draft & review; encoding and serving discipline for $\pi^\mathsf{rh}$ \\
 UTS-0, UTS-1, UTS-2 (Sec.~\ref{app:uts-blank}--\ref{app:uts-nft}) & draft & review \\
 UTS-3 capped-issuance series (Sec.~\ref{app:uts-capped}) & draft & review \\
 UTS-4 pooled assets: committee profile (Sec.~\ref{app:uts-pool}) & draft & review \\

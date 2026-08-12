@@ -930,7 +930,7 @@ For a deployable implementation, please refer to Distributed BFT Core (Section~\
     \State \emph{State}:
     \State $n \gets 0$ : BFT Core's Round number
     \State $e \gets 0$ : BFT Core's Epoch number
-    \State $r_- \gets \NULL$: Previous round's Unicity Tree root hash
+    \State $P \gets \langle\rangle$, $N \gets 0$: Root history accumulator peaks and size (Sec.~\ref{sec:root-history})
     \State $\mathcal{SI}[][]$ - shard info of every $\sigma\in\mathcal{SH}_\beta$ of every $\beta\in\mathcal{C}$
     \State \emph{Variables}:
     \State $\forall \ \beta\in\mathcal{C}, \sigma\in\mathcal{SH}_\beta \colon \mathcal{IRT}_\beta[\sigma] \gets (\zerohash)$
@@ -1054,7 +1054,9 @@ Periodically, do the following:
 
   \item For every record in IR changes array, respond to the shard based on request context from the request buffer. Then, clean up $req$ buffer, and reset respective \texttt{t2} timer.
 
-  \item Finally, reset $changes$, update the previous root hash used for linking\footnote{Note that linear hash-linking using $r_-$  illustrates the idea that some sort of cryptographic linking is present; actual mechanism depends on the BFT Core implementation and used linking scheme.}, increment BFT Core round number and reset the timer $\mathtt{t3}$ which triggers the Unicity Certificate Generation (Algorithm~\ref{alg:uc-gen}).
+  \item Append the round's Unicity Tree root to the root history accumulator and re-bag its peaks to obtain $a$, which the Unicity Seal carries (Sec.~\ref{sec:root-history}). The append is a deterministic function of $(P, N, n, r)$, all of which are already-agreed state, so it introduces no new consensus decision --- but its result is committed by the state authenticator (below), so a leader cannot substitute an accumulator of its own.
+
+  \item Finally, reset $changes$, increment BFT Core round number and reset the timer $\mathtt{t3}$ which triggers the Unicity Certificate Generation (Algorithm~\ref{alg:uc-gen}). Cryptographic linking between rounds is carried by the accumulator: $a$ commits every root the chain has certified, so each seal is bound to the whole history behind it.
 \end{enumerate}
 
 \begin{algorithm}
@@ -1077,7 +1079,9 @@ Periodically, do the following:
       \EndFor
       \State $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{CD}, \mathcal{IH})$ \Comment{Sec.~\ref{se:create-unicity-tree}}
       \State $t \gets \Call{GetUTCDateTime}$
-      \State $C^\mathsf{r} \gets \Call{CreateUnicitySeal}{\alpha, n, e, t, r_-, r; \mathsf{sk}_r}$
+      \State $(P, N) \gets \Call{AccAppend}{P, N, n, r}$ \Comment{$\ell_n = H(\mathsf{ROOT\_LEAF}, n, r)$, Sec.~\ref{sec:root-history}}
+      \State $a \gets \Call{plain\_tree\_root}{P}$
+      \State $C^\mathsf{r} \gets \Call{CreateUnicitySeal}{\alpha, n, e, t, r, a; \mathsf{sk}_r}$
       \ForAll{$(\beta, \sigma, ir, te) \in changes$}
         \State $req[\beta][\sigma] \gets []$
         \State $C^\mathsf{shard} \gets \Call{CreateShardTreeCert}{\sigma, \chi_\beta}$
@@ -1090,7 +1094,6 @@ Periodically, do the following:
         \State $\Call{reset\_timer}{\texttt{t2}_{\beta, \sigma}}$
       \EndFor
       \State $changes \gets \{\}$
-      \State $r_- \gets r$
       \State $n \gets n+1$
       \State $\Call{reset\_timer}{\texttt{t3}}$
       \State \Comment{Note that $IRT$ retains its current value for the next round}
@@ -1262,8 +1265,8 @@ Please refer to the following papers for more details:
 The concepts used in this specification map to the concepts used in the HotStuff and DiemBFT papers as follows:
 
 \begin{description}
-  \item[State:] Vector of Input Records
-  \item[State Authenticator:] State is identified by the root hash of Unicity Tree.
+  \item[State:] Vector of Input Records, together with the root history accumulator frontier $(P, N)$ (Sec.~\ref{sec:root-history})
+  \item[State Authenticator:] State is identified by $H(r, a)$, where $r$ is the root hash of the Unicity Tree and $a$ the root history accumulator value after appending $r$. Both are deterministic functions of the agreed Input Records and the previously agreed frontier, so every correct validator computes the same authenticator; a proposal whose $a$ does not follow from the frontier the quorum already agreed on is rejected by every correct validator and cannot be committed. The accumulator must be covered here rather than left to the seal alone: it authorizes arbitrary historical roots to any party that trusts it, so a value the quorum has not validated is as dangerous as a forged Input Record.
   \item[Block Proposal:] List of changes to Input Records, with justifications; or a proposal to switch epochs.
   \item[Block:] There are no (explicit) blocks. The set of Input Records can be seen as the cumulative state after applying all previous (virtual) blocks. Unicity Certificates are propagated downstream to shards where they could be saved as part of shard blocks. Validator implementation is encouraged to produce an audit log with all the block proposal payloads.
   \item[Blockchain:] There is no such thing as the BFT Core Blockchain. However, Unicity Trust Base is somewhat blockchain-like: it gets a new entry added once per BFT Core epoch, and similarly to block headers, it can be interpreted as the Root of Trust.
@@ -1274,11 +1277,15 @@ The concepts used in this specification map to the concepts used in the HotStuff
 Committing the payload happens across many rounds due to the pipe-lined nature of HotStuff. In consecutive rounds, the flow is like this:
 \begin{enumerate}[nosep]
   \item vector of IR change requests (payload of the proposal message)
-  \item updated IR-s (node block-tree) and Unicity Tree root (exec\_state\_id of a vote message)
-  \item committed Unicity Tree Root (commit\_state\_id of a vote message).
+  \item updated IR-s (node block-tree), Unicity Tree root $r$, and the accumulator value $a$ obtained by appending $r$ to the agreed frontier; exec\_state\_id of a vote message is $H(r, a)$
+  \item committed $H(r, a)$ (commit\_state\_id of a vote message).
 \end{enumerate}
 
-The output is commit\_state\_id from a Quorum Certificate which was formed by combining vote messages. QC is used to produce the Unicity Seal.
+The output is commit\_state\_id from a Quorum Certificate which was formed by combining vote messages. QC is used to produce the Unicity Seal, whose $r$ and $a_r$ fields are exactly the two components the committed authenticator binds. A validator advances its own frontier $(P, N)$ only on commit, so the frontier a proposal is evaluated against is always one the quorum has already agreed on.
+
+\paragraph{Speculative branches.} Execution is speculative: a validator may execute proposals on several competing branches of the block tree, and only one of them commits. The accumulator frontier is therefore per-branch state, carried alongside the Input Records of each executed proposal, exactly as the Input Records themselves are. A validator advances its \emph{durable} frontier only when a branch commits; a branch that is abandoned takes its frontier with it. Because the append is deterministic in $(P, N, n, r)$, the frontier of a branch is recomputable from its parent's and never has to be reconciled --- there is no merge case, only a choice of branch.
+
+\paragraph{Recovery and joining.} A validator that has fallen behind, or is joining, obtains the committed $(P, N)$ from any peer along with the Input Records, and accepts them only if they reproduce the commit\_state\_id of the highest Quorum Certificate it knows. The frontier is $O(\log N)$ hashes, so this adds one small field to state transfer rather than a separate synchronization protocol. No validator ever needs the full history of roots: the frontier is sufficient to continue appending, and serving historical proofs is an archival function outside consensus (Sec.~\ref{sec:root-history}).
 
 \subsubsection{Pacemaker}
 
@@ -1355,7 +1362,7 @@ Any BFT Core protocol leader can initiate an epoch change, given it has received
 			1. & Epoch number                   & $e$       & $\uint{64}$           \\\hline
 			2. & Validator identifiers and stakes& $\{\nu, b_\nu\}_e$ & $\{ (\bytestr, \uint{64}) \}$  \\\hline
 			3. & Quorum size (Voting power)     & $k_e$     & $\uint{64}$           \\\hline
-			4. & Hash of state summary          & $r$       & $\hashtype$          \\\hline
+			4. & Hash of state summary          & $H(r,a)$  & $\hashtype$          \\\hline
 			5. & Hash of Change Record         & $h_{\mathsf{cr}}$ & $\hashtype$ \\\hline
 			6. & Hash of the previous record    & $h_{e-1}$ & $\hashtype$          \\\hline
 			7. & (attached) Change Record      &           &   \\\hline
@@ -1588,7 +1595,7 @@ We start with one BFT Core validator, which does not change (and can not change 
 \begin{itemize}
   \item $\mathcal{T} = (\alpha, \mathsf{pk})$\,, \\
   where $\alpha$ is the system identifier and $\mathsf{pk}$ is the public key of the BFT Core.
-  \item $C^\mathsf{r} = (\alpha, n_r, t_r, r_-, r; s)$\,, \\
+  \item $C^\mathsf{r} = (\alpha, n_r, e_r, t_r, r, a_r; s)$\,, \\
   as defined in the Platform Specification; $s$ is a digital signature created using BFT Core's secret key.
 \end{itemize}
 
@@ -1614,7 +1621,7 @@ In the case of dynamic BFT Core the validator(s) can change at epoch boundaries.
   is Unicity Trust Base Record, where $s = \mathsf{Sig}_{\mathsf{sk}_{e-1}}(T_e)$ is a cryptographic signature over verification record of epoch $e$ (calculated over all fields except signature), signed by the previous epoch's secret key of the BFT Core.
   \item $\mathcal{T} = (T_j, T_{j+1}, \ldots, T_k)$\,, \\
   where $j$ is the first epoch and $k$ is the latest epoch covered. In the pseudocode below, we use notation $\mathcal{T}[j] := (T \in \mathcal{T}\colon \; T.e = j )$, that is, the element pointing to the epoch number $j$. System instance identifier of every epoch is invariant: $\forall\ i, j \colon T_i.\alpha = T_j.\alpha$.
-  \item $C^\mathsf{r} = (\alpha, n_r, t_r, r_-, r; (s, e))$  \\
+  \item $C^\mathsf{r} = (\alpha, n_r, e_r, t_r, r, a_r; (s, e))$  \\
   as defined in the Platform Specification; $s$ is a cryptographic signature created using BFT Core's secret key of the epoch $e$.
 \end{itemize}
 
@@ -1669,7 +1676,7 @@ This version is illustrative and not for implementation.
 Unicity Trust Base is a map of BFT Core validator identifiers to validator public keys, and a number $q$ which specifies the required quorum size, i.e.,
 \begin{itemize}
     \item $\mathcal{T} = (\alpha, \{ (i, \mathsf{pk}_i)  \mid i \gets 1 \ldots \nu_r  \}, q) \quad\text{ where }\quad q \ge \nu_r - f \,,$
-    \item $C^\mathsf{r} = (\alpha, n_r, t_r, r_-, r; s) \quad \text{where} \quad s = \{(i, s_i) \mid i \in (1 \,.\,.\, \nu_r)  \}  \quad \text{and} \quad \lvert s \rvert \ge q$\,. \\
+    \item $C^\mathsf{r} = (\alpha, n_r, e_r, t_r, r, a_r; s) \quad \text{where} \quad s = \{(i, s_i) \mid i \in (1 \,.\,.\, \nu_r)  \}  \quad \text{and} \quad \lvert s \rvert \ge q$\,. \\
 \end{itemize}
 
 Unicity Trust Base does not change as the BFT Core configuration is static.
@@ -1709,13 +1716,15 @@ The Unicity Trust Base Record is defined by Table~\ref{ta:t-drc}.
 			3. & Epoch starting round            & $n_e$          & $\uint{64}$                \\\hline
 			4. & Validator identifiers and stakes& $\{\nu, b_\nu\}_e$& $\{ (\bytestr, \uint{64}) \}$\\\hline
 			5. & Quorum size (voting power)      & $k_e$          & $\uint{64}$                \\\hline
-			6. & Hash of state summary           & $r$            &  $\hashtype$              \\\hline
+			6. & Hash of state summary           & $H(r,a)$       &  $\hashtype$              \\\hline
 			7. & Hash of related change record   & $h_{\mathsf{cr}}$& $\hashtype$             \\\hline
 			8. & Hash of previous record         & $h_{e-1}$      & $\hashtype$               \\\hline
 			9. & Signature of previous epoch validators & $s_{e-1}$& \textit{version-dependent}\\\hline
 		\end{tabular}
 	\end{center}
 \end{table}
+
+The state summary is the committed state authenticator $H(r,a)$, not the Unicity Tree root alone, so that a validator set bootstrapping from the trust base chain inherits authenticated accumulator continuity along with the Input Records. Were the record to bind $r$ only, a new set would have no signed statement about the accumulator it is expected to extend, and would have to obtain the preceding highest Quorum Certificate by some other means to get one.
 
 Fields 1, 2, 4 and 5 are copied from the referenced Governance Record. Initially, the stakes are fixed to $1$. When appropriate orchestrating processes implementing (delegated) Proof of Stake mechanisms are in place, the stakes reflect the epoch's locked stake amounts of each particular validator.
 

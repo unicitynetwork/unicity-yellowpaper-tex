@@ -370,16 +370,19 @@ The verifier uses Appendix~\ref{sec:rsmst-verify-inclusion}.  It MUST reject an 
 
 \subsection{Split Mint Reason}\label{app:split-mint-reason}
 
-The mint-reason byte string of a split output contains CBOR semantic tag \texttt{39044} applied to this two-element array:
+The mint-reason byte string of a split output contains CBOR semantic tag \texttt{39044} applied to this three-element array:
 
 \begin{longtable}{clp{9cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
-0 & CBOR structure & Complete burned source token $\mathcal{L}_\mathsf{burn}$, including its certified manifest-bearing burn transfer. \\
-1 & CBOR array & Split allocation proofs, one per output asset in canonical output-asset order. \\
+0 & unsigned integer & Format version; this specification defines version $1$. \\
+1 & byte string & Source token identifier $\mathsf{id}_\mathsf{src}$. \\
+2 & CBOR array & Split allocation proofs, one per output asset in canonical output-asset order. \\
 \end{longtable}
 
 The proof array contains no asset identifiers. Its length and positional interpretation are determined exclusively by $\Call{Assets}{\mathsf{ty}_j,\auxd'_j}$.
+
+The source token and the burn transfer that spent it are \emph{not} in the reason. They are supplied in the evidence set $\mathcal{E}$ under key $\mathsf{id}_\mathsf{src}$ (Sec.~\ref{sec:token-evidence}), which is what allows one presentation to serve all $k$ outputs and allows the source to be replaced by a token attestation later. Nothing is lost by leaving them uncommitted: $\mathsf{id}_\mathsf{src}$ determines the source's genesis, the source's pre-burn state determines a state identifier, and at most one transaction is ever certified for that identifier, so the burn --- and with it the manifest and the allocation roots --- is unique. Each allocation leaf independently binds $\mathsf{id}_\mathsf{src}$ through $d_j$ (Appendix~\ref{app:split-output-commitment}).
 
 \subsection{Split Construction Algorithm}\label{app:split-construction}
 
@@ -418,9 +421,10 @@ The proof array contains no asset identifiers. Its length and positional interpr
 			\State durably persist $b_\mathcal{M}$, the burn transfer, and every $(D_{\mathsf{out},j},P_j)$
 			\State certify the burn and obtain $\mathcal{L}_\mathsf{burn}$
 			\For{$j\gets1$ to $k$}
-				\State $\mathsf{reason}_j\gets\Call{EncodeSplitReason}{\mathcal{L}_\mathsf{burn},P_j}$
+				\State $\mathsf{reason}_j\gets\Call{EncodeSplitReason}{1,\mathcal{L}.\mathsf{id},P_j}$
 			\EndFor
-			\State \Return the burn transfer and output mint data with reasons $\mathsf{reason}_j$
+			\State $\mathcal{E}\gets$ evidence for $\mathcal{L}.\mathsf{id}$: $\mathcal{L}$ or an attestation of it, plus the certified burn, plus what those name
+			\State \Return the output mint data with reasons $\mathsf{reason}_j$, and $\mathcal{E}$ shared by all outputs
 		\EndFunction
 	\end{algorithmic}
 \end{algorithm}
@@ -429,27 +433,25 @@ The caller MUST persist all output mint fields and proofs before submitting the 
 
 \subsection{Split Mint-Reason Verification Algorithm}\label{app:split-verification-algorithm}
 
-The following algorithm runs as the token-type-specific mint-reason check after normal verification of the output's certified mint transaction. Recursive calls share the same trust base, verifier registry, issuance policy and cumulative resource budget.
+The following algorithm runs as the token-type-specific mint-reason check after normal verification of the output's certified mint transaction. $\Call{ResolveEvidence}{}$ looks the source up in the evidence set and returns its identifier, type, genesis asset collection and reached state, verifying a complete token through $\mathsf{collect}$ or an attestation through $\Call{VerifyAttestation}{}$ (Sec.~\ref{sec:token-evidence}). Resolved tokens share the same trust base, verifier registry, issuance policy and cumulative resource budget.
 
 \begin{algorithm}[!htbp]
 	\caption{Split Mint-Reason Verification}\label{alg:split-verify}
 	\begin{algorithmic}[0]
-		\Function{VerifySplitReason}{$D_{\mathsf{mint},j},\mathcal{T},\mathsf{context}$}
-			\State $(\mathcal{L}_\mathsf{burn},P_j)\gets\Call{DecodeSplitReason}{D_{\mathsf{mint},j}.\mathsf{reason}}$
-			\State ensure($\Call{VerifyToken}{\mathcal{L}_\mathsf{burn},\mathcal{T},\mathsf{context}}=1$)
-			\State ensure($\mathcal{L}_\mathsf{burn}.\alpha=D_{\mathsf{mint},j}.\alpha=\mathcal{T}.\alpha$)
-			\State $T_\mathsf{burn}\gets$ final certified transfer of $\mathcal{L}_\mathsf{burn}$
+		\Function{VerifySplitReason}{$D_{\mathsf{mint},j},\mathcal{T},\mathcal{E},\mathsf{context}$}
+			\State $(\mathsf{ver},\mathsf{id}_\mathsf{src},P_j)\gets\Call{DecodeSplitReason}{D_{\mathsf{mint},j}.\mathsf{reason}}$;\quad ensure($\mathsf{ver}=1$)
+			\State $(\mathsf{id},\mathsf{ty}_\mathsf{src},\mathcal{A},h,e)\gets\Call{ResolveEvidence}{\mathcal{E},\mathsf{id}_\mathsf{src},\mathcal{T},\mathsf{context}}$ \Comment{Sec.~\ref{sec:token-evidence}}
+			\State ensure($\mathsf{id}=\mathsf{id}_\mathsf{src}$ and $D_{\mathsf{mint},j}.\alpha=\mathcal{T}.\alpha$)
+			\State $T_\mathsf{burn}\gets\mathcal{E}$'s certified transfer spending $(\decpred(e),h)$;\quad ensure it verifies (Sec.~\ref{sec:transfer-tx})
 			\State $b_\mathcal{M}\gets T_\mathsf{burn}.\auxd'$
 			\State $\langle r_1,\ldots,r_m\rangle\gets\Call{DecodeSplitManifest}{b_\mathcal{M}}$
 			\State ensure($T_\mathsf{burn}.\predi'=\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$)
-			\State $D_\mathsf{src}\gets\mathcal{L}_\mathsf{burn}.T_0.D_\mathsf{mint}$
-			\State ensure($D_{\mathsf{mint},j}.\mathsf{ty}=D_\mathsf{src}.\mathsf{ty}$)
-			\State $\mathcal{A}\gets\Call{Assets}{D_\mathsf{src}.\mathsf{ty},D_\mathsf{src}.\auxd'}$
+			\State ensure($D_{\mathsf{mint},j}.\mathsf{ty}=\mathsf{ty}_\mathsf{src}$)
 			\State ensure($\len{\mathcal{A}}=m$ and $\mathcal{A}$ is canonical)
 			\State $\mathcal{A}_j\gets\Call{Assets}{D_{\mathsf{mint},j}.\mathsf{ty},D_{\mathsf{mint},j}.\auxd'}$
 			\State ensure($\mathcal{A}_j$ is non-empty and canonical and $\len{P_j}=\len{\mathcal{A}_j}$)
 			\State $\mathsf{id}_j\gets H(D_{\mathsf{mint},j}.\mathsf{salt},D_{\mathsf{mint},j}.\alpha)$
-			\State $d_j\gets\Call{split\_output\_commitment}{\mathcal{L}_\mathsf{burn}.\mathsf{id},D_{\mathsf{mint},j}}$
+			\State $d_j\gets\Call{split\_output\_commitment}{\mathsf{id}_\mathsf{src},D_{\mathsf{mint},j}}$
 			\For{$\ell\gets1$ to $\len{\mathcal{A}_j}$}
 				\State $(\mathsf{aid},v)\gets\mathcal{A}_j[\ell]$
 				\State $i\gets$ the unique index with $\mathcal{A}[i].\mathsf{aid}=\mathsf{aid}$; ensure it exists

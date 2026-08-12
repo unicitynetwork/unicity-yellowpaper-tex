@@ -26,7 +26,7 @@ To reduce the risk of confusion, it is recommended for each major deployment to 
 
 It is strongly recommended to avoid using the identifier $0$, so that an uninitialized identifier (which defaults to $0$ in many programming languages) would not match any actual network.
 
-\section{Partitions and Shards}
+\section{Partitions and Shards}\label{sec:partitions-shards}
 
 Unicity network's aggregation layer consists of multiple \emph{partitions}\index{partition}. Each partition is identified by a partition identifier $\beta \in \mathbb{C}$\index{$\beta$ (partition identifier)}\index{$\mathbb{C}$ (partition identifier type)}. Each partition runs an unicity proving service instance (Unicity Service), or some other utility service instance\footnote{Roughly, this is similar to Layer 1, Layer 2 division of Ethereum type blockchains}.
 
@@ -347,18 +347,55 @@ For the single shard case, $\mathsf{CompShardTreeCert}((\emptystr, \bot), IR, h_
 
 \subsection{Unicity Seal}
 
-\emph{Unicity Seal}\index{$C^\mathsf{r}$ (unicity seal)}\index{unicity seal} is a tuple $C^\mathsf{r} = (\alpha, n_r, e_r, t_r, r_-, r; s)$, where:
+\emph{Unicity Seal}\index{$C^\mathsf{r}$ (unicity seal)}\index{unicity seal} is a tuple $C^\mathsf{r} = (\alpha, n_r, e_r, t_r, r, a_r; s)$, where:
 \begin{enumerate}
 	\item $\alpha$ -- Network identifier
 	\item $n_r$ -- BFT Core's Round number
 	\item $e_r$ -- BFT Core's Epoch number
 	\item $t_r$ -- Round creation time (wall clock value specified and verified by the BFT Core), with one-second precision. See Appendix~\ref{app:encodings} for encoding
-	\item $r_-$ -- Root hash of previous round's Unicity Tree
 	\item $r$ -- Root hash of the Unicity Tree (denoted as $r^{\text{root}}$ if necessary for clarity)
-	\item $s$ -- Signature, computed by the BFT Core over preceding fields ($s = \mathsf{Sign}_{\mathsf{sk}_r}(n_r, e_r, t_r, r_-, r)$). The formulation of signature field depends on underlying consensus mechanism and its parameters. Here we assume an opaque data structure which can be verified based on the Unicity Trust Base, i.e., there is an implementation of an abstract function $\mathsf{Verify}_{\mathcal{T}}((n_r, e_r, t_r, r_-, r), s)$, encapsulated into the implementation of $\mathsf{VerifyUnicitySeal}$.
+	\item $a_r$ -- Root history accumulator, committing every Unicity Tree root up to and including $r$ (Sec.~\ref{sec:root-history})
+	\item $s$ -- Signature, computed by the BFT Core over preceding fields ($s = \mathsf{Sign}_{\mathsf{sk}_r}(n_r, e_r, t_r, r, a_r)$). The formulation of signature field depends on underlying consensus mechanism and its parameters. Here we assume an opaque data structure which can be verified based on the Unicity Trust Base, i.e., there is an implementation of an abstract function $\mathsf{Verify}_{\mathcal{T}}((n_r, e_r, t_r, r, a_r), s)$, encapsulated into the implementation of $\mathsf{VerifyUnicitySeal}$.
 \end{enumerate}
 
 $\mathsf{VerifyUnicitySeal}$ -- unicity seal verification function of type $\hashtype \times \mathbb{US} \times \mathbb{UB} \to \bool$\;. This function also verifies, if Unicity Seal's network identifier matches with the Unicity Trust Base.
+
+\subsubsection{Root History Accumulator}\label{sec:root-history}
+
+\index{root history accumulator}\index{$a_r$ (root history accumulator)}
+$a_r$ is the seal's chain-linking field: it commits the whole sequence of Unicity Tree roots the network has certified, so any historical root is provable against the \emph{current} seal in $O(\log n_r)$.
+
+\paragraph{Sequence and size.} BFT Core round numbers start at $0$ and increase by one per round (Sec.~\ref{sec:distributed-bft-core}), so the seal of round $n_r$ is the $(n_r{+}1)$-th. The accumulator of that seal commits the roots of rounds $0, \ldots, n_r$, and its \emph{size} is $N = n_r + 1$.
+
+$N$ is derived from the signed $n_r$, and is therefore authenticated by the same signature. The operations below use $N$ to derive the shape of the MMR accumulator.
+
+\paragraph{Leaves.} The accumulator leaf for round $n$ is
+\[
+\ell_n \;:=\; H(\mathsf{ROOT\_LEAF},\; n,\; r_n),
+\]
+with $\mathsf{ROOT\_LEAF}$ the ASCII byte string \texttt{"UNICITY\_ROOT\_LEAF"}.
+% The domain separator distinguishes leaves from interior nodes, which $\textsc{plain\_tree\_root}$ does not provide. Binding $n$ into the leaf makes the index unforgeable and ensures that at most one root verifies at each index.
+
+\paragraph{Structure and modification.} The accumulator over $\langle \ell_0, \ldots, \ell_{N-1}\rangle$ is a list of MMR peaks: the roots of complete binary trees of strictly decreasing size, one for each $1$-bit of $N$, built with $\textsc{plain\_tree\_root}$. The append operation $\Call{AccAppend}{P, N, n, r}$ forms $\ell_n$, adds it as a singleton peak, repeatedly merges the two smallest equal-sized peaks, and returns the new peak list and $N+1$. The accumulator value is $a_r = \Call{plain\_tree\_root}{P}$ over the resulting list.
+
+The retained state is the list of peaks: one hash per $1$-bit of $N$.
+% Per-round cost is $O(1)$ amortized for the merge step but $O(\operatorname{popcount} N) = O(\log N)$ for re-bagging the peaks into $a_r$, which must be done every round; the per-round cost is therefore $O(\log N)$, not $O(1)$. In absolute terms this is a few dozen hashes per round and is negligible beside the round's other work, but it is not constant.
+
+\paragraph{Membership.} A \emph{root history proof} $\varpi$ for a root $r_n$ at index $n$ against $(a_r, N)$ is the sibling path of $\ell_n$ within its peak, followed by the other peaks in canonical order. $\Call{VerifyRootHistory}{a_r, N, n, r_n, \varpi} = 1$ iff $n < N$, the path length matches the height of the peak that index $n$ falls in under the decomposition of $N$, and recomputation from $\ell_n = H(\mathsf{ROOT\_LEAF}, n, r_n)$ yields $a_r$.
+
+\paragraph{Batched membership.} Roots at $d$ distinct indices are proved together by a \emph{batched} root history proof, which supplies each distinct interior node once instead of once per index. Its size is $O(d\log(N/d) + \log N)$ rather than $O(d\log N)$, since paths converge as they approach the peaks and the peak list is shared.
+Verifiers and aggregators MUST implement the batched form. $d = 1$ is a special case.
+
+\paragraph{Prefix consistency.} A \emph{root history consistency proof} $\psi$ shows that an earlier accumulator value is the accumulator over a prefix of the same sequence: $\Call{VerifyRootHistoryPrefix}{a_M, M, a_N, N, \psi} = 1$, for $M \le N$, iff $\psi$ exhibits the peaks of the size-$M$ accumulator together with the siblings needed to recompute the peaks of the size-$N$ accumulator from them, yielding $a_M$ and $a_N$ respectively under the decompositions of $M$ and $N$. This is the ordinary append-only log consistency check.
+
+% Both proofs must exist for the accumulator to be usable. An accumulator value that is merely asserted --- claimed to be some round's, but not shown to extend to the current one --- authenticates nothing: an accumulator authorizes arbitrary historical roots, so an unauthenticated accumulator authorizes arbitrary fabricated roots. Wherever an earlier accumulator value is accepted, it MUST be tied to a verified one by $\Call{VerifyRootHistoryPrefix}{}$; Sec.~\ref{sec:compression-relation} is the case in point.
+
+\paragraph{Consensus state.} The accumulator is deterministically computable consensus state. The peak list and $N$ are part of the State of the BFT Core; the append is a deterministic function of the round's own Unicity Tree root, so every correct validator computes the same $a_r$; and the post-round value is committed by the state authenticator that validators vote on. A proposal carrying a wrong $a_r$ cannot reach a quorum. A recovering or newly joining validator obtains the peak list and $N$ from a peer and accepts them only if they reproduce the authenticator of the highest known Quorum Certificate. The accumulator persists across epoch and trust base changes.
+
+\paragraph{Genesis.} The accumulator is initialized at round $0$, with round-$0$ root being the 1st entry.
+
+\paragraph{Consequences.} A relying party that verifies a single \emph{recent} seal under its current trust base gains the ability to authenticate every earlier Unicity Tree root and every earlier accumulator value. Because $a_r$ is signed, an aggregator or archival node can serve $\varpi$ and $\psi$ trustlessly.
+
 
 \subsection{Unicity Certificate}\label{se:unicity-certificate}\index{$UC$ (unicity certificate)}
 
@@ -434,6 +471,68 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
 	\State \Return \TRUE
 \end{algorithmic}
+
+\subsection{Root History Proofs and Their Service}\label{sec:root-history-service}
+
+\index{root history accumulator!service}\index{aggregation layer node!root history service}
+The accumulator is maintained by the BFT Core, retaining only the cumulative state (frontier) and exposing no public interface. Root history proofs are served by aggregators (as an optional service) and archive nodes. The root history is \emph{network-global}, verifiable public data and not shard-specific.
+
+\subsubsection{Seal Distribution}\label{sec:seal-distribution}
+
+To build the root history a node needs $r_n$ for \emph{every} round $n$, without gaps. A Certification Response (Sec.~\ref{certification-response}) delivers a seal only to shards whose input changed in that round.
+
+The BFT Core MUST therefore publish each round's Unicity Seal to the aggregation layer, in every round, independently of whether any shard's input changed.
+
+Aggregators MAY obtain seals from each other. A seal is self-authenticating based on Unicity Trust Base. A node that recovers the state can use whichever peer answers first.
+
+\subsubsection{Ingestion}
+
+On receiving the seal of round $n$, a node:
+\begin{enumerate}
+	\item verifies $C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$ and $\mathsf{VerifyUnicitySeal}(C^\mathsf{r}.r, C^\mathsf{r}, \mathcal{T}) = 1$;
+	\item requires $n$ to be exactly one past its current $N$, and requires the seal's accumulator to follow from its own frontier: $\Call{plain\_tree\_root}{P'} = C^\mathsf{r}.a_r$ where $(P', N') = \Call{AccAppend}{P, N, n, C^\mathsf{r}.r}$;
+	\item appends $C^\mathsf{r}.r$ to its root log and adopts $(P', N')$.
+\end{enumerate}
+
+On failure the node recovers missing/corrupted state.
+
+\subsubsection{Bootstrapping}
+
+A new node recovers the root log as a batch from any peer and validates it in one pass: recompute the accumulator over $\langle r_0, \ldots, r_{N-1}\rangle$; the result must equal $a_r$ of a seal it has verified for round $N-1$. A node may validate against any \emph{later} seal, by additionally checking prefix consistency.
+
+% \subsubsection{Retained State}
+
+% \begin{itemize}
+% 	\item the \emph{root log}: $r_n$ for every round, 32 bytes per round, append-only. At one round per second this is approximately 1\,GB per year;
+% 	\item the frontier $(P, N)$, $O(\log N)$ hashes, derivable from the log;
+% 	\item optionally, cached MMR interior nodes to avoid recomputing paths --- a further 32 bytes per round at most, and discardable at any time.
+% \end{itemize}
+
+% A node that serves root history MUST retain the log from round $0$: a path for even a recent round includes sibling material spanning older ranges, so a suffix is not sufficient.
+
+\subsubsection{Queries}
+
+\begin{longtable}{lp{9.4cm}}
+\textbf{Query} & \textbf{Response} \\
+\hline
+\endhead
+$\Call{GetSeal}{n}$ & the Unicity Seal of round $n$; The latest if $n$ is not provided. \\
+$\Call{GetRootHistory}{n, N^*}$ & $\varpi$, the membership path of $r_n$ against the accumulator of size $N^*$ \\
+$\Call{GetRootHistoryBatch}{\langle n_1, \ldots, n_d\rangle, N^*}$ & the round table $\mathcal{R}$ and its batched proof $\Psi$ (Appendix~\ref{app:bridging-anchor}) \\
+$\Call{GetRootHistoryPrefix}{M, N^*}$ & $\psi$, prefix consistency of the size-$M$ accumulator into the size-$N^*$ one \\
+\end{longtable}
+
+
+\subsubsection{Data Flows}
+
+\begin{description}
+	\item[Ingestion] BFT Core $\rightarrow$ aggregators, once per round, as above. Continuous and independent of any client.
+	\item[Replication] p2p batched protocol.
+	\item[Proofs] A holder compressing a token obtains the rounds $n_1 < \cdots < n_d$ from the inclusion proofs of the token. It obtains an anchor by $\Call{GetSeal}{}$ or reuses an existing recent seal, and requests $\Call{GetRootHistoryBatch}{\langle n_1, \ldots, n_d\rangle, N^*}$. Folding of an existing attestation additionally requires one $\Call{GetRootHistoryPrefix}{}$.
+	\item[Verification] Tokens are self-contained, thus, no query.
+\end{description}
+
+The serving node is trustless and can be replicated without coordination, cached, placed behind ordinary content-distribution infrastructure, or run privately by a semi-offline 3rd party.
 
 \subsection{Non-Inclusion Proof}
 
@@ -657,14 +756,15 @@ Unicity Tree is an indexed Merkle tree that aggregates the state of all partitio
 	\State \Return $\Call{\textsc{index\_tree\_root}}{(C_1, x_1), (C_2, x_2), \ldots, (C_n, x_n)}$ \Comment{Sec.~\ref{sec:index-tree-root}}
 \end{algorithmic}
 
-\section{State of the BFT Core}
+\section{State of the BFT Core}\label{sec:bft-state}
 
-\emph{State of the BFT Core}\index{BFT Core!BFT Core state} is a tuple $(\alpha, n, e, r_-, \mathcal{T}, \mathcal{C}, \mathcal{CD}, \mathcal{SI})$, where:
+\emph{State of the BFT Core}\index{BFT Core!BFT Core state} is a tuple $(\alpha, n, e, P, N, \mathcal{T}, \mathcal{C}, \mathcal{CD}, \mathcal{SI})$, where:
 \begin{enumerate}
 	\item $\alpha$ -- network identifier of type $\mathbb{A}$
 	\item $n$ -- BFT Core's round number of type $\uint{64}$
 	\item $e$ -- BFT Core's epoch number of type $\uint{64}$
-	\item $r_-$ -- previous root hash of the unicity tree of type $\hashtype$
+	\item $P$ -- root history accumulator peak list, of type $\hashtype^\ast$, with one entry per $1$-bit of $N$ (Sec.~\ref{sec:root-history})
+	\item $N$ -- root history accumulator size of type $\uint{64}$, equal to $n$ at the start of a round and to $n+1$ after that round's root has been appended
 	\item $\mathcal{T}$ -- unicity trust base of type $\mathbb{UB}$
 	\item $\mathcal{C}$ -- set of partition identifiers, with elements of type $\mathbb{C}$
 	\item $\mathcal{CD}$ -- partition descriptions of type $\mathbb{CD}[\mathbb{C}]$
@@ -770,15 +870,16 @@ When the BFT Core's round $n$ is completed, then:
 	\item For every $\beta\in\mathcal{C}$, the shard tree $\chi_\beta$  (Sec.~\ref{se:shard-tree}) is created by the function call $\chi_\beta\gets\mathsf{CreateShardTree}(\mathcal{SH}_\beta,\mathcal{IRT}_\beta)$ (Sec.~\ref{se:create-shard-tree}).
 	\item A temporary data structure $\mathcal{IH}$ of type $\hashtype[\mathcal{C}]$ is created such that $\mathcal{IH}[\beta]\gets \chi_\beta(\emptystr)$ for every $\beta\in\mathcal{C}$, i.e. $\mathcal{IH}$ contains the root hashes of the shard trees.
 	\item The root of unicity tree is computed as $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{CD}, \mathcal{IH})$ (Sec.~\ref{se:create-unicity-tree})
-	\item Unicity seal $C^\mathsf{r}=(\alpha, n, e, t, r_-,r; s )$ is created, where $t\gets\mathsf{time}()$ is the current time and $s$ is a "signature" on all other fields. The form of $s$ depends on the used consensus mechanism.
+	\item Unicity seal $C^\mathsf{r}=(\alpha, n, e, t, r, a; s )$ is created, where $t\gets\mathsf{time}()$ is the current time, $a$ is the root history accumulator after appending $r$ (Sec.~\ref{sec:root-history}), and $s$ is a "signature" on all other fields. The form of $s$ depends on the used consensus mechanism.
 	\item For every $\beta\in\mathcal{C}$, the unicity tree certificate $C^\mathsf{uni}_\beta$ is created by the function call $C^\mathsf{uni}_\beta\gets \mathsf{CreateUnicityTreeCert}(\beta, \mathcal{C}, \mathcal{CD}, \mathcal{IH})$ (Sec.~\ref{se:create-unicity-tree-cert})
 	\item For every $\beta\in\mathcal{C}$, and $\sigma\in \mathcal{SH}_\beta$:
 	\begin{enumerate}
 		\item The shard tree certificate $C^\mathsf{shard}_{\beta,\sigma}$ (Sec.~\ref{se:shard-tree-cert}) is created by the function call $C^\mathsf{shard}_{\beta,\sigma}\gets \mathsf{CreateShardTreeCert}(\sigma,\chi_\beta)$ (Sec.~\ref{se:create-shard-tree-cert})
 		\item The unicity certificate $UC_{\beta,\sigma}=(\mathcal{IRT}_\beta[\sigma].\mathcal{IR},\mathcal{IRT}_\beta[\sigma].h_t, C^\mathsf{shard}_{\beta,\sigma}, C^\mathsf{uni}_\beta, C^\mathsf{r})$ (Sec.~\ref{se:unicity-certificate}) and the certification response $\mathsf{CReS}_{\beta,\sigma}=\langle \alpha,\beta,\sigma; UC_{\beta,\sigma}, \mathcal{TE}_{\beta,\sigma}\rangle$ are composed (if the shard input have changed)
+		\item Independently of $changes$, the seal $C^\mathsf{r}$ itself is published to the aggregation layer, so that the sequence of Unicity Tree roots reaches it without gaps (Sec.~\ref{sec:root-history-service})
 		\item The last unicity certificate field is updated by $\mathcal{SI}[\beta,\sigma] UC_-\gets UC$ (if the shard input have changed).
 	\end{enumerate}
-	\item The round number and the previous root hash of the unicity tree are updated by $n\gets n+1$ and $r_-\gets r$.
+	\item The round number is updated by $n\gets n+1$; the accumulator frontier was advanced when $a$ was computed.
 \end{enumerate}
 
 When a shard's (identified by $\beta$, $\sigma$) epoch with at least one non-empty round ends, the following assignments are executed:
