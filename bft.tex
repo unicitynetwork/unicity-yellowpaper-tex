@@ -1052,7 +1052,7 @@ Periodically, do the following:
 
   \item Based on the roots of Shard Trees, build the Unicity Tree. Extract root hash value. Obtain wall clock time. Create the Unicity Certificate.
 
-  \item For every record in IR changes array, respond to the shard based on request context from the request buffer. Then, clean up $req$ buffer, and reset respective \texttt{t2} timer.
+  \item For every record in IR changes array, respond to the shard based on request context from the request buffer. Then, clean up $req$ buffer, and reset respective \texttt{t2} timer. Together with step~1, this delivers a Unicity Certificate to every shard at least once per \texttt{t2}, which bounds how far behind the current round a shard's latest certificate can be (Platform Specification, Sec.~\ref{sec:leaf-representation}).
 
   \item Append the round's Unicity Tree root to the root history accumulator and re-bag its peaks to obtain $a$, which the Unicity Seal carries (Sec.~\ref{sec:root-history}). The append is a deterministic function of $(P, N, n, r)$, all of which are already-agreed state, so it introduces no new consensus decision --- but its result is committed by the state authenticator (below), so a leader cannot substitute an accumulator of its own.
 

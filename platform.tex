@@ -238,6 +238,23 @@ The SMT exposes the following functionalities and authenticated objects:
 
 Appendix~\ref{app:rsmt} defines the corresponding wire formats and verification procedures.
 
+\subsubsection{Re-presentation of Certified Leaves}\label{sec:leaf-representation}
+
+\index{SMT!re-presentation}\index{inclusion proof!re-presentation}
+The SMT is append-only: a certified insertion adds leaves and modifies none (Sec.~\ref{sec:consistency-proof}). A leaf $(\mathsf{sid}, \txhash)$ first certified in round $n$ is therefore still present under the root certified in any later round $n' > n$, and the shard can issue an inclusion certificate for it against that later root. A holder who needs certification evidence for an old transition does not have to keep, or re-obtain, the Unicity Certificate issued at the time; it is sufficient to ask the shard for a fresh certificate.
+
+Two properties of the aggregation layer are load-bearing for this and are therefore normative rather than incidental. A shard MUST NOT remove or rewrite a certified leaf, which the single-spend rule already requires (Sec.~\ref{sec:request-validation}) and which re-presentation now also depends on. And a successor of a shard split MUST retain the leaves of the parent that route to it under $f_\mathcal{SH}$, as specified in Appendix~\ref{sec:rsmt-shard-split}, so that a pre-split leaf remains provable after the split.
+
+Re-presentation against a recent round also removes the need for historical auxiliary data at verification: the partition description authenticated by $C^\mathsf{uni}.\mathsf{dhash}$ and used for the right-shard binding of $\mathsf{VerifyInclusionProof}$ is the one currently in force, not the one in force when the transition was certified.
+
+Shards expose the query
+\[
+\Call{GetInclusionMulti}{\langle \mathsf{sid}_1, \ldots, \mathsf{sid}_k\rangle},
+\]
+which returns one inclusion certificate covering all $k$ keys against the shard's last certified SMT root, together with the $UC$ that certified it. The keys are all in the responding shard's key range. A single certificate for $k$ keys shares the internal nodes their paths have in common, which is the saving over $k$ separate certificates. The shard answers against $\mathcal{SI}[\beta,\sigma].UC_-$, the version it already retains in order to serve ordinary inclusion proofs, so no versioned tree state beyond current practice is required.
+
+Each shard answers at whatever round it last certified, and no attempt is made to bring the shards into step. The spread is bounded without one: the BFT Core issues a repeat certification after a shard's \texttt{t2} timeout (Sec.~\ref{sec:bft-functional}, step~8), so a shard's latest $UC$ is at most \texttt{t2} behind the current round however long that shard has been idle. A client collecting proofs from several shards therefore obtains certificates spanning at most the rounds within one \texttt{t2}, and reconciles them against a single anchor with one batched root history proof over that span (Sec.~\ref{sec:root-history-service}). This makes \texttt{t2} the parameter that sets both the size of the round table and the minimum retention a node needs in order to serve the leaf path.
+
 \subsection{Shard Tree Certificate}\label{se:shard-tree-cert}
 
 \emph{Shard Tree Certificate}\index{$C^\mathsf{shard}$ (shard tree certificate)}\index{shard tree certificate} connects a shard's certified input hash to the partition's shard-tree root, from which the Unicity Tree certificate continues to the global root of trust. It is a tuple $C^\mathsf{shard} = (\sigma; h^s_1, \ldots, h^s_{|\sigma|})$, where:
@@ -475,40 +492,26 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 \subsection{Root History Proofs and Their Service}\label{sec:root-history-service}
 
 \index{root history accumulator!service}\index{aggregation layer node!root history service}
-The accumulator is maintained by the BFT Core, retaining only the cumulative state (frontier) and exposing no public interface. Root history proofs are served by aggregators (as an optional service) and archive nodes. The root history is \emph{network-global}, verifiable public data and not shard-specific.
+The accumulator is maintained by the BFT Core, which retains only the frontier and exposes no public interface. Root history proofs are served by aggregators and by archive nodes, as an optional service. The root history is network-global, verifiable public data and is not shard-specific.
+
+The service answers queries of two kinds, and they differ sharply in the retention they need. Reconciling the certificates a client has just collected from several shards spans at most one \texttt{t2} of rounds (Sec.~\ref{sec:leaf-representation}), so any node that has been running for that long can answer. Relating an \emph{older} accumulator value to a current one, as folding an existing token attestation requires (Sec.~\ref{sec:compression-relation}, check~5), spans the age of the attestation, and only a node retaining that far back can answer. No party is obliged to retain any particular depth; Sec.~\ref{sec:compression-relation} specifies the alternative available to a prover when no node retains the range it needs.
 
 \subsubsection{Seal Distribution}\label{sec:seal-distribution}
 
-To build the root history a node needs $r_n$ for \emph{every} round $n$, without gaps. A Certification Response (Sec.~\ref{certification-response}) delivers a seal only to shards whose input changed in that round.
+A node that maintains root history needs $r_n$ for every round $n$ within its retained range, without gaps. A Certification Response (Sec.~\ref{certification-response}) reaches a shard only in rounds where its input changed or a repeat certification was induced, so it is not a gapless source. The BFT Core MUST therefore publish each round's Unicity Seal to the aggregation layer in every round, independently of whether any shard's input changed (Sec.~\ref{sec:bft-functional}, step~8). Other nodes obtain seals from any peer, a seal being self-authenticating against the Unicity Trust Base, so a recovering node can use whichever peer answers first.
 
-The BFT Core MUST therefore publish each round's Unicity Seal to the aggregation layer, in every round, independently of whether any shard's input changed.
+\subsubsection{Retention and Pruning}\label{sec:root-history-pruning}
 
-Aggregators MAY obtain seals from each other. A seal is self-authenticating based on Unicity Trust Base. A node that recovers the state can use whichever peer answers first.
+\index{root history accumulator!pruning}
+A node serves root history over a range of its own choosing. Retaining the range $[M_0, N)$ requires the roots $r_{M_0}, \ldots, r_{N-1}$ at 32 bytes each --- approximately 1\,GB per year at one round per second --- together with the \emph{seam frontier} $P_{M_0}$, the accumulator peak list at size $M_0$, which is one hash per $1$-bit of $M_0$.
 
-\subsubsection{Ingestion}
+The smallest configuration that serves the leaf path retains only the frontier and the roots of the last \texttt{t2} worth of rounds, since that is the widest span a set of freshly collected shard certificates can cover (Sec.~\ref{sec:leaf-representation}). At one round per second and a \texttt{t2} of a few seconds this is a handful of hashes beside the $O(\log N)$ frontier, and it grows with \texttt{t2} rather than with the age of the network. Aggregation layer nodes SHOULD retain at least this much, updating the frontier once per round from the seal they already receive, so that a client compressing a token can obtain its round table without reaching an archive.
 
-On receiving the seal of round $n$, a node:
-\begin{enumerate}
-	\item verifies $C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$ and $\mathsf{VerifyUnicitySeal}(C^\mathsf{r}.r, C^\mathsf{r}, \mathcal{T}) = 1$;
-	\item requires $n$ to be exactly one past its current $N$, and requires the seal's accumulator to follow from its own frontier: $\Call{plain\_tree\_root}{P'} = C^\mathsf{r}.a_r$ where $(P', N') = \Call{AccAppend}{P, N, n, C^\mathsf{r}.r}$;
-	\item appends $C^\mathsf{r}.r$ to its root log and adopts $(P', N')$.
-\end{enumerate}
+The seam frontier is sufficient because an MMR append only ever merges a new right subtree into an existing peak. Every node ever formed over a range beginning below $M_0$ is therefore a merge of a suffix of the peaks of $P_{M_0}$ with nodes over ranges at or above $M_0$, and the latter are computable from the retained roots. A node holding $(P_{M_0}, M_0)$ and the retained roots can consequently produce $\varpi$ for any $n \in [M_0, N)$ and $\psi$ for any $M \in [M_0, N]$. Queries below $M_0$ fail, which is the intended effect of pruning.
 
-On failure the node recovers missing/corrupted state.
+Bootstrapping is one small transfer and requires no trust in the peer. A node starting at $M_0$ obtains $P_{M_0}$ from any peer and accepts it only if $\Call{plain\_tree\_root}{P_{M_0}} = C^\mathsf{r}.a_r$ for a seal of round $M_0 - 1$ that it has verified under its own trust base. Thereafter it advances by appending each round's root as the seal arrives, requiring $\Call{plain\_tree\_root}{P'} = C^\mathsf{r}.a_r$ where $(P', N') = \Call{AccAppend}{P, N, n, C^\mathsf{r}.r}$, and recovering from a peer on any mismatch or gap. A node may raise $M_0$ at any time by discarding older roots and adopting the corresponding frontier, which it computes from material it already holds.
 
-\subsubsection{Bootstrapping}
-
-A new node recovers the root log as a batch from any peer and validates it in one pass: recompute the accumulator over $\langle r_0, \ldots, r_{N-1}\rangle$; the result must equal $a_r$ of a seal it has verified for round $N-1$. A node may validate against any \emph{later} seal, by additionally checking prefix consistency.
-
-% \subsubsection{Retained State}
-
-% \begin{itemize}
-% 	\item the \emph{root log}: $r_n$ for every round, 32 bytes per round, append-only. At one round per second this is approximately 1\,GB per year;
-% 	\item the frontier $(P, N)$, $O(\log N)$ hashes, derivable from the log;
-% 	\item optionally, cached MMR interior nodes to avoid recomputing paths --- a further 32 bytes per round at most, and discardable at any time.
-% \end{itemize}
-
-% A node that serves root history MUST retain the log from round $0$: a path for even a recent round includes sibling material spanning older ranges, so a suffix is not sufficient.
+The depth a deployment chooses bounds the age of an attestation that can be folded by prefix consistency rather than by the fallback of Sec.~\ref{sec:compression-relation}. Retaining from round $0$ is permitted but is not required of any node.
 
 \subsubsection{Queries}
 
@@ -516,23 +519,24 @@ A new node recovers the root log as a batch from any peer and validates it in on
 \textbf{Query} & \textbf{Response} \\
 \hline
 \endhead
-$\Call{GetSeal}{n}$ & the Unicity Seal of round $n$; The latest if $n$ is not provided. \\
+$\Call{GetSeal}{n}$ & the Unicity Seal of round $n$; the latest if $n$ is not provided \\
 $\Call{GetRootHistory}{n, N^*}$ & $\varpi$, the membership path of $r_n$ against the accumulator of size $N^*$ \\
 $\Call{GetRootHistoryBatch}{\langle n_1, \ldots, n_d\rangle, N^*}$ & the round table $\mathcal{R}$ and its batched proof $\Psi$ (Appendix~\ref{app:bridging-anchor}) \\
 $\Call{GetRootHistoryPrefix}{M, N^*}$ & $\psi$, prefix consistency of the size-$M$ accumulator into the size-$N^*$ one \\
 \end{longtable}
 
+A query naming a round below the node's $M_0$ is answered with an explicit out-of-range error, not with a failure indistinguishable from a missing round.
 
 \subsubsection{Data Flows}
 
 \begin{description}
-	\item[Ingestion] BFT Core $\rightarrow$ aggregators, once per round, as above. Continuous and independent of any client.
+	\item[Ingestion] BFT Core $\rightarrow$ aggregators, once per round. Continuous and independent of any client.
 	\item[Replication] p2p batched protocol.
-	\item[Proofs] A holder compressing a token obtains the rounds $n_1 < \cdots < n_d$ from the inclusion proofs of the token. It obtains an anchor by $\Call{GetSeal}{}$ or reuses an existing recent seal, and requests $\Call{GetRootHistoryBatch}{\langle n_1, \ldots, n_d\rangle, N^*}$. Folding of an existing attestation additionally requires one $\Call{GetRootHistoryPrefix}{}$.
+	\item[Proofs] A holder compressing a token collects fresh inclusion proofs from the shards holding its state identifiers (Sec.~\ref{sec:leaf-representation}), takes the newest of the returned seals as the anchor, and requests one $\Call{GetRootHistoryBatch}{\langle n_1, \ldots, n_d\rangle, N^*}$ over the rounds those proofs came from --- a span of at most one \texttt{t2}. A holder folding an existing attestation additionally requests one $\Call{GetRootHistoryPrefix}{}$, from a node whose retained range covers the attestation's anchor.
 	\item[Verification] Tokens are self-contained, thus, no query.
 \end{description}
 
-The serving node is trustless and can be replicated without coordination, cached, placed behind ordinary content-distribution infrastructure, or run privately by a semi-offline 3rd party.
+The serving node is trustless and can be replicated without coordination, cached, placed behind ordinary content-distribution infrastructure, or run privately by a semi-offline third party.
 
 \subsection{Non-Inclusion Proof}
 
@@ -810,7 +814,7 @@ Certification requests are sent to the BFT Core by the aggregation layer nodes (
 
 Certification response is sent by the BFT Core to the nodes of an aggregation layer nodes as a response to a certification request message. This is an asynchronous message: response is not immediate, and there can be multiple subsequent responses.
 
-\section{Functional Description of the BFT Core}
+\section{Functional Description of the BFT Core}\label{sec:bft-functional}
 
 \index{BFT Core!functional description}
 During every round, the BFT Core receives certification requests from the shards of partitions
@@ -875,7 +879,7 @@ When the BFT Core's round $n$ is completed, then:
 	\item For every $\beta\in\mathcal{C}$, and $\sigma\in \mathcal{SH}_\beta$:
 	\begin{enumerate}
 		\item The shard tree certificate $C^\mathsf{shard}_{\beta,\sigma}$ (Sec.~\ref{se:shard-tree-cert}) is created by the function call $C^\mathsf{shard}_{\beta,\sigma}\gets \mathsf{CreateShardTreeCert}(\sigma,\chi_\beta)$ (Sec.~\ref{se:create-shard-tree-cert})
-		\item The unicity certificate $UC_{\beta,\sigma}=(\mathcal{IRT}_\beta[\sigma].\mathcal{IR},\mathcal{IRT}_\beta[\sigma].h_t, C^\mathsf{shard}_{\beta,\sigma}, C^\mathsf{uni}_\beta, C^\mathsf{r})$ (Sec.~\ref{se:unicity-certificate}) and the certification response $\mathsf{CReS}_{\beta,\sigma}=\langle \alpha,\beta,\sigma; UC_{\beta,\sigma}, \mathcal{TE}_{\beta,\sigma}\rangle$ are composed (if the shard input have changed)
+		\item The unicity certificate $UC_{\beta,\sigma}=(\mathcal{IRT}_\beta[\sigma].\mathcal{IR},\mathcal{IRT}_\beta[\sigma].h_t, C^\mathsf{shard}_{\beta,\sigma}, C^\mathsf{uni}_\beta, C^\mathsf{r})$ (Sec.~\ref{se:unicity-certificate}) and the certification response $\mathsf{CReS}_{\beta,\sigma}=\langle \alpha,\beta,\sigma; UC_{\beta,\sigma}, \mathcal{TE}_{\beta,\sigma}\rangle$ are composed (if the shard input have changed, including the induced change of a repeat certification after the shard's \texttt{t2} timeout)
 		\item Independently of $changes$, the seal $C^\mathsf{r}$ itself is published to the aggregation layer, so that the sequence of Unicity Tree roots reaches it without gaps (Sec.~\ref{sec:root-history-service})
 		\item The last unicity certificate field is updated by $\mathcal{SI}[\beta,\sigma] UC_-\gets UC$ (if the shard input have changed).
 	\end{enumerate}
