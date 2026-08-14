@@ -199,13 +199,13 @@ Anchoring is two-staged: one batched step authenticates the Unicity Tree roots o
 where $\rho_j$ is the Unicity Tree root of round $n_j$. The whole table is authenticated in one step:
 $\Call{VerifyRounds}{a^*, N^*, \mathcal{R}, \Psi} = 1$ iff the indices are strictly increasing, $n_d < N^*$, and $\Psi$ verifies $\mathcal{R}$ against $(a^*, N^*)$ as a batched root history proof (Sec.~\ref{sec:root-history}). Verification work is $O(d\log(1 + N^*/d) + \log N^*)$: the auxiliary path material shrinks as $d$ grows and the paths converge, but the $d$ table entries must each be consumed, so the $\Omega(d)$ term remains. At $d = N^*$ this is $\Theta(N^*)$, as it must be.
 
-\paragraph{Leaf.} Against the authenticated table, a leaf $L = (\mathsf{sid}, \txhash)$ is established by
+\paragraph{Leaf.} Against the authenticated table, a leaf $L = (\mathsf{sid}, v)$ is established by
 \[
 \pi^\mathsf{an} = (j,\, C^\mathsf{inc},\, \mathcal{IR},\, h_t,\, C^\mathsf{shard},\, C^\mathsf{uni},\, \mathcal{CD}_\beta),
 \]
 accepted by $\Call{VerifyAnchoredLeaf}{\alpha, \mathcal{R}, L, \pi^\mathsf{an}}$ iff, writing $\rho \gets \mathcal{R}[j].\rho$:
 \begin{enumerate}
-  \item $\Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, \mathcal{IR}.h, \mathsf{sid}, \txhash} = 1$ \quad (the leaf is in the shard's SMT);
+  \item $\Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, \mathcal{IR}.h, \mathsf{sid}, v} = 1$ \quad (the leaf is in the shard's SMT);
   \item $\mathcal{CD}_\beta.\alpha = \alpha$ and $H(\mathcal{CD}_\beta) = C^\mathsf{uni}.\mathsf{dhash}$ \quad (\emph{network binding} and authentic partition description);
   \item $\sigma \gets C^\mathsf{shard}.\sigma$;\; $\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$ and $f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$ \quad (\emph{right-shard binding});
   \item $\mathsf{CompUnicityTreeCert}(C^\mathsf{uni}, \mathsf{CompShardTreeCert}(C^\mathsf{shard}, \mathcal{IR}, h_t)) = \rho$ \quad (the leaf's round is the one claimed).
@@ -223,9 +223,9 @@ This is not free asymptotically, and the trade should be stated plainly. Anchori
 
 \subsection{Reference Time from an Anchor}\label{app:anchor-time}
 
-Because the anchored path runs through the round's own input record, the reference time is available as $\tau = \mathcal{IR}.t$ of the round in which the leaf was certified (Sec.~\ref{sec:time-extraction}), authenticated by check~4 above. A time-dependent predicate --- $\predi_\mathsf{tlock}$, $\predi_\mathsf{htlc}$ --- is therefore evaluated under an anchored proof exactly as under an ordinary inclusion proof, at the cost of one extra root history path, and no per-transition Unicity Certificate is needed.
+The reference time of a transition is not read from the round the leaf is anchored at. It is committed by the leaf value itself, $v = H(\txhash, \tau)$, fixed by the BFT Core when the round was certified (Sec.~\ref{sec:us-processing}, Sec.~\ref{sec:derived-leaf-values}). A prover witnesses $\tau$, check~1 above binds it by reconstructing $v$, and a time-dependent predicate --- $\predi_\mathsf{tlock}$, $\predi_\mathsf{htlc}$ --- is then evaluated in-circuit exactly as outside it.
 
-This requires the leaf to be presented at \emph{its own} round's root rather than at a later round's root. A later root proves that the leaf exists, but its input record carries that later round's reference time, not the leaf's. Both forms are admitted by check~4, and a prover uses the leaf's own round exactly when the transition's predicate reads $\tau$. Presenting a leaf at its own round requires a root history path for a round that may be long past, so a prover doing so depends on a node retaining that range (Sec.~\ref{sec:root-history-pruning}); leaves whose predicates do not read $\tau$ carry no such dependency, because they can be re-presented against a recent round (Sec.~\ref{sec:leaf-representation}).
+Anchoring is therefore uniform over predicate types. Any leaf may be established against any round at or after its own, so every leaf of a derivation can be re-presented against a recent round (Sec.~\ref{sec:leaf-representation}) and no class of transition obliges a prover to obtain a root history path for a distant round. Were $\tau$ instead read off the anchored round's input record, a time-dependent transition would have to be presented at its own round and would carry a retention dependency the others do not (Sec.~\ref{sec:root-history-pruning}); committing $\tau$ to the leaf removes that asymmetry rather than managing it.
 
 \section{Public Statement and Public Calldata}\label{app:bridging-public}
 

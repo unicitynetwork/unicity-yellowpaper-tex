@@ -116,7 +116,7 @@ The Unicity Service processes the request by:
 	\item Evaluating the predicate: $\predi(\tau, H(\sthash, \txhash), u) = 1$
 	\item Computing the state identifier: $\mathsf{sid} = H(\predi, \sthash)$
 	\item Checking uniqueness: the state has not been spent before (i.e., $\mathsf{sid}$ does not already exist in the SMT)
-	\item If all checks pass: setting the SMT leaf $(\mathsf{sid}, \txhash)$ in the tree
+	\item If all checks pass: setting the SMT leaf $(\mathsf{sid}, v)$ in the tree
 \end{enumerate}
 
 The request is accepted without returning a synchronous response. The detailed validation algorithm will be specified in Sec.~\ref{sec:request-validation}.
@@ -150,7 +150,7 @@ Given a Unicity Service Request $Q = (\predi, \sthash, \txhash, u)$, the aggrega
 
 If all checks are satisfied, the request is accepted and the aggregation layer node sets the SMT leaf:
 \[
-\text{Set SMT leaf: } (\mathsf{sid}, \txhash)
+\text{Set SMT leaf: } (\mathsf{sid}, v)
 \]
 This updates the SMT by inserting the new leaf.
 
@@ -202,13 +202,13 @@ After processing a batch of requests, the aggregation layer nodes compute the ne
 	\end{minipage}
 \end{figure}
 
-See Fig.~\ref{fi:inc-proof} for the Inclusion Proof structure and Fig.~\ref{fi:uc} for the Unicity Certificate. The Inclusion Proof contains an SMT leaf $L = (\mathsf{sid}, \txhash)$ where $\mathsf{sid} = H(\predi, \sthash)$ is a state identifier and $\txhash$ is a transaction hash. The Inclusion Certificate $C^\mathsf{inc}$ connects the leaf to the SMT root hash $h$ in the Input Record. The Unicity Certificate then chains through the shard tree, unicity tree, and unicity seal to the global root of trust: Unicity Trust Base $\mathcal{T}$.
+See Fig.~\ref{fi:inc-proof} for the Inclusion Proof structure and Fig.~\ref{fi:uc} for the Unicity Certificate. The Inclusion Proof contains an SMT leaf $L = (\mathsf{sid}, v)$ where $\mathsf{sid} = H(\predi, \sthash)$ is a state identifier and $v = H(\txhash, \tau)$ binds the transaction hash to the round's reference time (Execution Layer, Sec.~\ref{sec:us-processing}). The Inclusion Certificate $C^\mathsf{inc}$ connects the leaf to the SMT root hash $h$ in the Input Record. The Unicity Certificate then chains through the shard tree, unicity tree, and unicity seal to the global root of trust: Unicity Trust Base $\mathcal{T}$. A Non-Inclusion Proof has the same shape, except that its certificate carries the leaf its key-directed path actually reaches instead of the queried one.
 
 
 \subsection{Sparse Merkle Tree}\label{sec:smt}
 
 \index{sparse merkle tree}\index{SMT}\index{RSMT}
-The aggregation layer maintains a \emph{(Radix) Sparse Merkle Tree} (SMT), a path-compressed authenticated map from 256-bit state identifiers to transaction hashes. Leaves are anchored by full keys, and internal nodes commit to their absolute branching depth and to the key prefix (\emph{region}) addressing them, which both routes lookups and pins every node to its position in the key space. The SMT supports batch insertion, inclusion certificates, non-inclusion certificates and consistency proofs. Exact formats and algorithms are given in Appendix~\ref{app:rsmt}.
+The aggregation layer maintains a \emph{(Radix) Sparse Merkle Tree} (SMT), a path-compressed authenticated map from 256-bit state identifiers to transaction hashes. Leaves are anchored by full keys, and internal nodes commit to their absolute branching depth and to the key prefix (\emph{region}) addressing them, which pins every node to its position in the key space. The SMT supports batch insertion, inclusion certificates, non-inclusion certificates and consistency proofs. Exact formats and algorithms are given in Appendix~\ref{app:rsmt}.
 
 
 \subsubsection{SMT Leaf Structure}
@@ -227,21 +227,23 @@ The SMT effectively maintains a mapping $\mathsf{sid} \mapsto \txhash$ that prov
 
 \subsubsection{SMT Certificates and Updates}\label{InclusionCert}
 
-\index{$C^\mathsf{inc}$ (Inclusion Certificate)}\index{Inclusion Certificate}\index{$C^\mathsf{exc}$ (Non-Inclusion Certificate)}\index{Non-Inclusion Certificate}
+\index{$C^\mathsf{inc}$ (inclusion certificate)}\index{Inclusion Certificate}\index{$C^\mathsf{exc}$ (non-inclusion certificate)}\index{Non-Inclusion Certificate}
 The SMT exposes the following functionalities and authenticated objects:
 \begin{itemize}
 	\item \textbf{Batch insertion}: inserts a batch of new leaves into the tree and updates the root hash.
-	\item \textbf{Inclusion Certificate} $C^\mathsf{inc}$: authenticates that a leaf $(\mathsf{sid}, \txhash)$ is present under a given SMT root.
-	\item \textbf{Non-Inclusion Certificate} $C^\mathsf{exc}$: authenticates that a state identifier $\mathsf{sid}$ is absent from the tree.
+	\item \textbf{Inclusion Certificate} $C^\mathsf{inc}$: authenticates that a leaf $(\mathsf{sid}, v)$ is present under a given SMT root.
+	\item \textbf{Non-Inclusion Certificate} $C^\mathsf{exc}$: authenticates that a state identifier $\mathsf{sid}$ is absent from the tree, by authenticating the different leaf that key-directed descent for $\mathsf{sid}$ reaches.
 	\item \textbf{Consistency proof} $\pi_{CP}$: authenticates that a new SMT root extends a previous root by a batch insertion.
 \end{itemize}
+
+Both certificates share one path encoding and differ only in whether the certified leaf travels with the certificate (Sec.~\ref{sec:rsmt-cert-path}). They are nonetheless distinct objects with distinct verification functions: each states one relation, and neither is interpreted by inspecting how the other failed.
 
 Appendix~\ref{app:rsmt} defines the corresponding wire formats and verification procedures.
 
 \subsubsection{Re-presentation of Certified Leaves}\label{sec:leaf-representation}
 
 \index{SMT!re-presentation}\index{inclusion proof!re-presentation}
-The SMT is append-only: a certified insertion adds leaves and modifies none (Sec.~\ref{sec:consistency-proof}). A leaf $(\mathsf{sid}, \txhash)$ first certified in round $n$ is therefore still present under the root certified in any later round $n' > n$, and the shard can issue an inclusion certificate for it against that later root. A holder who needs certification evidence for an old transition does not have to keep, or re-obtain, the Unicity Certificate issued at the time; it is sufficient to ask the shard for a fresh certificate.
+The SMT is append-only: a certified insertion adds leaves and modifies none (Sec.~\ref{sec:consistency-proof}). A leaf $(\mathsf{sid}, v)$ first certified in round $n$ is therefore still present under the root certified in any later round $n' > n$, and the shard can issue an inclusion certificate for it against that later root. A holder who needs certification evidence for an old transition does not have to keep, or re-obtain, the Unicity Certificate issued at the time; it is sufficient to ask the shard for a fresh certificate.
 
 Two properties of the aggregation layer are load-bearing for this and are therefore normative rather than incidental. A shard MUST NOT remove or rewrite a certified leaf, which the single-spend rule already requires (Sec.~\ref{sec:request-validation}) and which re-presentation now also depends on. And a successor of a shard split MUST retain the leaves of the parent that route to it under $f_\mathcal{SH}$, as specified in Appendix~\ref{sec:rsmt-shard-split}, so that a pre-split leaf remains provable after the split.
 
@@ -455,10 +457,10 @@ This function authenticates the certificate chain itself. It does not, by itself
 
 \subsection{Inclusion Proof}
 
-\emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state identifier has been recorded in the SMT as a proof of the spend being unique, and that the resulting shard state was certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, where:
+\emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state identifier has been recorded in the SMT as a proof of the spend being unique, and that the resulting shard state was certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (\mathsf{sid}, v, C^\mathsf{inc}, UC)$, where:
 \begin{enumerate}
 	\item $\mathsf{sid} \in \bytes{32}$ -- state identifier (SMT leaf key)
-	\item $\txhash \in \hashtype$ -- transaction data hash (SMT leaf value)
+	\item $v \in \hashtype$ -- SMT leaf value, $v = H(\txhash, \tau)$ for the transaction data hash and the reference time of the round it was certified in (Execution Layer, Sec.~\ref{sec:us-processing})
 	\item $C^\mathsf{inc}$ -- Inclusion Certificate (Sec.~\ref{InclusionCert})
 	\item $UC$ -- unicity certificate (Sec.~\ref{se:unicity-certificate})
 \end{enumerate}
@@ -469,7 +471,7 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$ -- inclusion proof
+	\item $\pi^\mathsf{inc} = (\mathsf{sid}, v, C^\mathsf{inc}, UC)$ -- inclusion proof
 	\item $\mathcal{CD}_\beta$ -- partition description of the partition identified by $UC.C^\mathsf{uni}.\beta$
 	\item $\mathcal{T}$ -- trust base
 \end{enumerate}
@@ -484,10 +486,12 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
 	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Proof comes from the right shard}
 	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
-	\If {$\neg \Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, h, \mathsf{sid}, \txhash}$} \Return \FALSE \EndIf
+	\If {$\neg \Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, h, \mathsf{sid}, v}$} \Return \FALSE \EndIf
 	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
 	\State \Return \TRUE
 \end{algorithmic}
+
+This is the inclusion verifier denoted by $\mathcal{V}(\mathsf{sid},v,\pi,\mathcal{CD}_\beta,\mathcal{T})$ in the execution layer.
 
 \subsection{Root History Proofs and Their Service}\label{sec:root-history-service}
 
@@ -546,6 +550,8 @@ The serving node is trustless and can be replicated without coordination, cached
 	\item $UC$ -- unicity certificate (Sec.~\ref{se:unicity-certificate})
 \end{enumerate}
 
+The queried $\mathsf{sid}$ is not part of the proof: it is supplied by the verifier, which is the party that cares which key is absent. A non-inclusion proof is a statement about one certified root, not a promise about later ones; a verifier with freshness requirements MUST additionally bound $UC.\mathcal{IR}$ by its own policy on certified round or time.
+
 \subsubsection{Verification: $\mathsf{VerifyNonInclusionProof}$}\label{VerifyNonInclusionProof}\index{functions!VerifyNonInclusionProof}
 
 $\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function of type $\mathbb{EP} \times \mathbb{CD} \times \mathbb{UB} \to \bool$
@@ -566,12 +572,17 @@ $\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function 
 	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
 	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
 	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
-	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Proof comes from the right shard}
+	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Queried key routes to the certified shard}
+	\If{$C^\mathsf{exc} \ne C^\mathsf{exc}_\emptyset$}
+		\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(C^\mathsf{exc}.k') = \sigma$) \Comment{So must the authenticated terminal}
+	\EndIf
 	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
 	\If {$\neg \Call{rsmt\_verify\_non\_inclusion}{C^\mathsf{exc}, h, \mathsf{sid}}$} \Return \FALSE \EndIf
 	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
 	\State \Return \TRUE
 \end{algorithmic}
+
+Two cautions. First, the terminal check inside $\textsc{rsmt\_verify\_non\_inclusion}$ is what carries the relation: a verifier that authenticated the path but skipped it would establish that some leaf is committed, not that $\mathsf{sid}$ is absent. Second, $h = \bot$ (empty tree) is the one case in which the empty certificate is accepted, and it is accepted for every key; the encoding MUST therefore distinguish an empty tree unambiguously from a certified 256-bit root, and a verifier MUST NOT infer an empty tree from a missing or malformed root field.
 
 
 \subsection{Consistency Proof}\label{sec:consistency-proof}
@@ -615,7 +626,7 @@ $\mathsf{VerifyConsistencyProof}$ -- consistency proof verification function of 
 
 The verification algorithm ($\textsc{rsmt\_verify\_consistency}$) is defined in Appendix~\ref{sec:rsmt-verify-consistency}.
 
-The proof system must enforce \emph{append-only consistency}\index{append-only consistency}, which combines the following two properties. Let $M_0, M_1 \colon \bytes{32} \to \hashtype\opt$ denote the partial maps committed by $h'$ and $h$, respectively (a binding is committed exactly when an inclusion certificate for it verifies against the root).
+The proof system must enforce \emph{append-only consistency}\index{append-only consistency}, which combines the following two properties. Let $M_0, M_1 \colon \bytes{32} \to \hashtype\opt$ denote the partial maps committed by $h'$ and $h$, respectively (a binding is committed exactly when the inclusion relation of a certificate verifies against the root).
 
 \begin{itemize}
 	\item \textbf{Prior-state preservation}: If $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B, h', h) = \TRUE$, then
@@ -630,7 +641,18 @@ Append-only consistency is required to avoid potential double-spending with the 
 
 The security model where an untrusted Aggregator machine generates (non-)inclusion proofs, anchored by committed root hashes, allows us to avoid stronger guarantees like \emph{completeness} (censoring a request is denial of service at worst), \emph{batch incorporation} (failure to insert some leaves results in denial of service at worst), \emph{batch binding} (inclusion proofs do it better), and \emph{no phantom insertions} (free recording service at worst; phantom entries carry fresh keys, since coherent placement forbids re-recording).
 
-For the hash-based instantiation of the consistency proof in this model, the batch $B$ (the sorted list of inserted $(\mathsf{sid}, h_\mathsf{tx})$ pairs) accompanies the opcode stream on the wire, since the BFT Core does not otherwise possess it; the check $|B| = \mathsf{CR}.\ell_B$ cross-links it to the certification request. Supplying $B$ from the untrusted aggregator is safe in this model: append-only consistency holds for whatever batch is declared, and batch contents beyond that are covered by the scoping argument above. The ZK-compressed instantiation (Appendix~\ref{app:zk-consistency-proof}) keeps the batch private and exposes only the two roots.
+For the hash-based instantiation of the consistency proof in this model, the batch $B$ (the sorted list of inserted $(\mathsf{sid}, h_\mathsf{tx})$ pairs) accompanies the opcode stream on the wire, since the BFT Core does not otherwise possess it; the check $|B| = \mathsf{CR}.\ell_B$ cross-links it to the certification request. Supplying $B$ from the untrusted aggregator is safe in this model: append-only consistency holds for whatever batch is declared, and batch contents beyond that are covered by the scoping argument above.
+
+\paragraph{Derived leaf values.}\label{sec:derived-leaf-values}
+The batch declares transaction hashes; the tree stores leaf values that bind the round's reference time. Before verifying the proof, the BFT Core derives
+\[
+	B^{*} \;=\; \bigl\langle\, (\mathsf{sid}_i,\; H(h_{\mathsf{tx},i},\, \tau)) \,\bigr\rangle_{i=1}^{j}, \qquad \tau = \mathsf{CR}.\mathcal{IR}.t ,
+\]
+and verifies $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B^{*}, h', h)$ against $B^{*}$ rather than $B$. It already holds both operands: $B$ arrives with the opcode stream, and $\tau$ is the value it already checks against the previous seal (Sec.~\ref{certification-request}, Execution Layer Sec.~\ref{sec:time-extraction}). A shard that built its tree under any other $\tau$ produces a root the Core does not reproduce, so the round is rejected rather than merely attributable afterwards.
+
+Deriving rather than accepting a supplied leaf value is what makes a wrong $\tau$ unrepresentable. Were $B$ to carry the leaf value directly, it would have to carry $h_\mathsf{tx}$ alongside for the Core to check the derivation, doubling the batch to obtain a weaker property. Note also that this does not extend the Core into semantic validation: it evaluates no predicate and parses no transaction, and the scoping argument above is unchanged. It applies one hash to a field it already receives, using a value it already enforces.
+
+The ZK-compressed instantiation (Appendix~\ref{app:zk-consistency-proof}) keeps the batch private and exposes the two roots and $\tau$, deriving the leaf values inside the circuit so that both instantiations enforce $\tau$ identically.
 
 
 %%%%%%%% BFT Core
@@ -845,8 +867,8 @@ For every incoming certificate request $\mathsf{CR}=\langle \alpha, \beta, \sigm
 \item $\mathsf{CR}.\mathcal{IR}.n=\mathcal{SI}[\beta,\sigma].n + 1$ -- round number is correctly incremented
 \item $\mathsf{CR}.\mathcal{IR}.e=\mathcal{SI}[\beta,\sigma].e$ -- epoch number matches
 \item $\mathsf{CR}.\mathcal{IR}.h'=\mathcal{SI}[\beta,\sigma].h_-$ -- previous round's SMT root hash in IR matches the recorded one
-	\item $\mathcal{CD}[\beta].\gamma_{CP}(\mathsf{CR}.\mathcal{IR}, \mathsf{CR}.\pi_{CP})$ -- consistency proof verification (Sec.~\ref{sec:consistency-proof}) succeeds: verify $\mathsf{VerifyConsistencyProof}(\mathsf{CR}.\pi_{CP}, B, \mathsf{CR}.\mathcal{IR}.h', \mathsf{CR}.\mathcal{IR}.h) = \TRUE$ and $|B| = \mathsf{CR}.\ell_B$ (batch size matches).
 \item $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta, \sigma].UC_-.C^\mathsf{r}.t$ -- time reference is equal to the time field of the previous unicity seal
+	\item $\mathcal{CD}[\beta].\gamma_{CP}(\mathsf{CR}.\mathcal{IR}, \mathsf{CR}.\pi_{CP})$ -- consistency proof verification (Sec.~\ref{sec:consistency-proof}) succeeds: derive $B^{*}$ from $B$ and the reference time $\mathsf{CR}.\mathcal{IR}.t$ checked above (Sec.~\ref{sec:derived-leaf-values}), then verify $\mathsf{VerifyConsistencyProof}(\mathsf{CR}.\pi_{CP}, B^{*}, \mathsf{CR}.\mathcal{IR}.h', \mathsf{CR}.\mathcal{IR}.h) = \TRUE$ and $|B| = \mathsf{CR}.\ell_B$ (batch size matches).
 \end{enumerate}
 Only one (majority-voted) certificate request (denoted by $\mathsf{CR}_{\beta,\sigma}$) is accepted from every shard.
 
