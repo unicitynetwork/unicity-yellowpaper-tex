@@ -53,7 +53,7 @@ graph LR
     C8[8 · Root history service]
   end
   subgraph t4["4 · Independent, breaking"]
-    C9[9 · Execution context commit]
+    C9[9 · Reference time in leaf]
     C10[10 · Certificate interning]
   end
   subgraph t5["5 · Extra services"]
@@ -80,7 +80,7 @@ graph LR
 
 ---
 
-## Summary 1/2 — format and compression
+## Summary
 
 | # | Change | Primary win | Breaking | Depends on |
 |---|---|---|---|---|
@@ -104,7 +104,7 @@ graph LR
 
 | # | Change | Primary win | Breaking | Depends on |
 |---|---|---|---|---|
-| 9 | Execution context in `txhash` | functional: `tlock` / `htlc` become secure | yes, tx format | — |
+| 9 | Reference time in the leaf value | functional: `tlock` / `htlc` become secure; BFT-enforced | yes, leaf value | — |
 | 10 | Seal / certificate interning | wire ~4×, computation *n* → *d* | yes, token format | 11, to be practical |
 | 11 | Multi-inclusion proof service | wire *O(k·log(L/k))* not *O(k·log L)* | no | — |
 | 12 | Token Type Registry | portable verification policy | no | — |
@@ -268,19 +268,21 @@ Reconcile certs on top of clear transactions, using batch inclusion cert queries
 
 ---
 
-## 9. Bind execution context into `txhash`
+## 9. Commit reference time in the SMT leaf value
 
-**Summary.** Commit the execution context: reference time $\tau$ taken from the previous Unicity Certificate, and anything else predicate evaluation reads, into the transaction.
+**Summary.** The leaf value becomes `H(txhash, τ)` instead of `txhash` alone, where τ is the round's `IR.t`. Certified transactions carry τ. **Specified; landed on `main`.**
 
-**Why.** The only certified time today is `IR.t`, reachable solely through the transition's *own* round's certificate. Presenting a leaf against a later root supplies another $\tau$.
+**Why.** Predicate evaluation already takes τ as an argument, but τ was recoverable only from the inclusion proof, as `UC.IR.t`. The SMT is append-only, so a leaf can be certified afresh against any later root, and a later proof carries a later round's `IR.t`. Reference time was a property of the *proof*, not of the leaf, so re-presenting a leaf changed the predicate evaluation outcome. `tlock` and `htlc` are specified but not safely usable as-is.
 
-This makes time-dependent predicates possible: `tlock` and `htlc` are already specified but insecure as-is.
+**Alternatives.** 1) No time-dependent predicates. 2) Sandwich: non-inclusion proof at `h'` plus inclusion proof at `h` of the same IR.
 
-**Alternatives.** 1) No time-dependent predicates, 2) sandwitch: non-inclusion proof certified by $h'$, inclusion proof certified by $h$ of the same IR.
+---
 
-**Security.** Verified but not proven by Aggregator.Round's `IR.t` is BFT-enforced (`CR.IR.t = SI[β,σ].UC₋.C^r.t_r`), but a per-leaf committed context is only *asserted*. UC can be replaced later.
+**Scope.** Leaf value, so `sid`, `D`, `txhash` and the certification request are all unchanged and the transaction format does not move. Split and merge output commitments are unaffected. Breaking for the aggregator, the inclusion-proof consumers in all SDKs, and the BFT Core's consistency check.
 
-**Scope.** Transaction format and validation; and US request validation. Breaking.
+**BFT Core enforces it.** The Core already receives the batch `B` of `(sid, txhash)` pairs with the opcode stream, and already checks `CR.IR.t` against the previous seal. It now derives `B* = ⟨(sid, H(txhash, τ))⟩` and verifies the consistency proof against `B*`.
+
+**ZK instantiation.** The ZK-compressed consistency proof exposes no batch, so τ becomes a third public input.
 
 ---
 
