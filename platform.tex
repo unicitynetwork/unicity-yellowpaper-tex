@@ -403,10 +403,10 @@ This function authenticates the certificate chain itself. It does not, by itself
 
 \subsection{Inclusion Proof}
 
-\emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state identifier has been recorded in the SMT as a proof of the spend being unique, and that the resulting shard state was certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, where:
+\emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state identifier has been recorded in the SMT as a proof of the spend being unique, and that the resulting shard state was certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (\mathsf{sid}, v, C^\mathsf{inc}, UC)$, where:
 \begin{enumerate}
 	\item $\mathsf{sid} \in \bytes{32}$ -- state identifier (SMT leaf key)
-	\item $\txhash \in \hashtype$ -- transaction data hash (SMT leaf value)
+	\item $v \in \hashtype$ -- SMT leaf value, $v = H(\txhash, \tau)$ for the transaction data hash and the reference time of the round it was certified in (Execution Layer, Sec.~\ref{sec:us-processing})
 	\item $C^\mathsf{inc}$ -- Inclusion Certificate (Sec.~\ref{InclusionCert})
 	\item $UC$ -- unicity certificate (Sec.~\ref{se:unicity-certificate})
 \end{enumerate}
@@ -417,7 +417,7 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$ -- inclusion proof
+	\item $\pi^\mathsf{inc} = (\mathsf{sid}, v, C^\mathsf{inc}, UC)$ -- inclusion proof
 	\item $\mathcal{CD}_\beta$ -- partition description of the partition identified by $UC.C^\mathsf{uni}.\beta$
 	\item $\mathcal{T}$ -- trust base
 \end{enumerate}
@@ -432,12 +432,12 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
 	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Proof comes from the right shard}
 	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
-	\If {$\neg \Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, h, \mathsf{sid}, \txhash}$} \Return \FALSE \EndIf
+	\If {$\neg \Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, h, \mathsf{sid}, v}$} \Return \FALSE \EndIf
 	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
 	\State \Return \TRUE
 \end{algorithmic}
 
-This is the inclusion verifier denoted by $\mathcal{V}(\mathsf{sid},\txhash,\pi,\mathcal{CD}_\beta,\mathcal{T})$ in the execution layer.
+This is the inclusion verifier denoted by $\mathcal{V}(\mathsf{sid},v,\pi,\mathcal{CD}_\beta,\mathcal{T})$ in the execution layer.
 
 \subsection{Non-Inclusion Proof}
 
@@ -538,7 +538,18 @@ Append-only consistency is required to avoid potential double-spending with the 
 
 The security model where an untrusted Aggregator machine generates (non-)inclusion proofs, anchored by committed root hashes, allows us to avoid stronger guarantees like \emph{completeness} (censoring a request is denial of service at worst), \emph{batch incorporation} (failure to insert some leaves results in denial of service at worst), \emph{batch binding} (inclusion proofs do it better), and \emph{no phantom insertions} (free recording service at worst; phantom entries carry fresh keys, since coherent placement forbids re-recording).
 
-For the hash-based instantiation of the consistency proof in this model, the batch $B$ (the sorted list of inserted $(\mathsf{sid}, h_\mathsf{tx})$ pairs) accompanies the opcode stream on the wire, since the BFT Core does not otherwise possess it; the check $|B| = \mathsf{CR}.\ell_B$ cross-links it to the certification request. Supplying $B$ from the untrusted aggregator is safe in this model: append-only consistency holds for whatever batch is declared, and batch contents beyond that are covered by the scoping argument above. The ZK-compressed instantiation (Appendix~\ref{app:zk-consistency-proof}) keeps the batch private and exposes only the two roots.
+For the hash-based instantiation of the consistency proof in this model, the batch $B$ (the sorted list of inserted $(\mathsf{sid}, h_\mathsf{tx})$ pairs) accompanies the opcode stream on the wire, since the BFT Core does not otherwise possess it; the check $|B| = \mathsf{CR}.\ell_B$ cross-links it to the certification request. Supplying $B$ from the untrusted aggregator is safe in this model: append-only consistency holds for whatever batch is declared, and batch contents beyond that are covered by the scoping argument above.
+
+\paragraph{Derived leaf values.}\label{sec:derived-leaf-values}
+The batch declares transaction hashes; the tree stores leaf values that bind the round's reference time. Before verifying the proof, the BFT Core derives
+\[
+	B^{*} \;=\; \bigl\langle\, (\mathsf{sid}_i,\; H(h_{\mathsf{tx},i},\, \tau)) \,\bigr\rangle_{i=1}^{j}, \qquad \tau = \mathsf{CR}.\mathcal{IR}.t ,
+\]
+and verifies $\mathsf{VerifyConsistencyProof}(\pi_{CP}, B^{*}, h', h)$ against $B^{*}$ rather than $B$. It already holds both operands: $B$ arrives with the opcode stream, and $\tau$ is the value it already checks against the previous seal (Sec.~\ref{certification-request}, Execution Layer Sec.~\ref{sec:time-extraction}). A shard that built its tree under any other $\tau$ produces a root the Core does not reproduce, so the round is rejected rather than merely attributable afterwards.
+
+Deriving rather than accepting a supplied leaf value is what makes a wrong $\tau$ unrepresentable. Were $B$ to carry the leaf value directly, it would have to carry $h_\mathsf{tx}$ alongside for the Core to check the derivation, doubling the batch to obtain a weaker property. Note also that this does not extend the Core into semantic validation: it evaluates no predicate and parses no transaction, and the scoping argument above is unchanged. It applies one hash to a field it already receives, using a value it already enforces.
+
+The ZK-compressed instantiation (Appendix~\ref{app:zk-consistency-proof}) keeps the batch private and exposes the two roots and $\tau$, deriving the leaf values inside the circuit so that both instantiations enforce $\tau$ identically.
 
 
 %%%%%%%% BFT Core
@@ -752,8 +763,8 @@ For every incoming certificate request $\mathsf{CR}=\langle \alpha, \beta, \sigm
 \item $\mathsf{CR}.\mathcal{IR}.n=\mathcal{SI}[\beta,\sigma].n + 1$ -- round number is correctly incremented
 \item $\mathsf{CR}.\mathcal{IR}.e=\mathcal{SI}[\beta,\sigma].e$ -- epoch number matches
 \item $\mathsf{CR}.\mathcal{IR}.h'=\mathcal{SI}[\beta,\sigma].h_-$ -- previous round's SMT root hash in IR matches the recorded one
-	\item $\mathcal{CD}[\beta].\gamma_{CP}(\mathsf{CR}.\mathcal{IR}, \mathsf{CR}.\pi_{CP})$ -- consistency proof verification (Sec.~\ref{sec:consistency-proof}) succeeds: verify $\mathsf{VerifyConsistencyProof}(\mathsf{CR}.\pi_{CP}, B, \mathsf{CR}.\mathcal{IR}.h', \mathsf{CR}.\mathcal{IR}.h) = \TRUE$ and $|B| = \mathsf{CR}.\ell_B$ (batch size matches).
 \item $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta, \sigma].UC_-.C^\mathsf{r}.t$ -- time reference is equal to the time field of the previous unicity seal
+	\item $\mathcal{CD}[\beta].\gamma_{CP}(\mathsf{CR}.\mathcal{IR}, \mathsf{CR}.\pi_{CP})$ -- consistency proof verification (Sec.~\ref{sec:consistency-proof}) succeeds: derive $B^{*}$ from $B$ and the reference time $\mathsf{CR}.\mathcal{IR}.t$ checked above (Sec.~\ref{sec:derived-leaf-values}), then verify $\mathsf{VerifyConsistencyProof}(\mathsf{CR}.\pi_{CP}, B^{*}, \mathsf{CR}.\mathcal{IR}.h', \mathsf{CR}.\mathcal{IR}.h) = \TRUE$ and $|B| = \mathsf{CR}.\ell_B$ (batch size matches).
 \end{enumerate}
 Only one (majority-voted) certificate request (denoted by $\mathsf{CR}_{\beta,\sigma}$) is accepted from every shard.
 

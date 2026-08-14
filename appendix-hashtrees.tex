@@ -719,17 +719,20 @@ A ZK-compressed consistency proof proves successful execution of the $\mathsf{rs
 	\begin{itemize}
 		\item $h'$ -- previous SMT root hash (matches $\mathcal{IR}.h'$)
 		\item $h$ -- current SMT root hash (matches $\mathcal{IR}.h$)
+		\item $\tau$ -- reference time of the round (matches $\mathcal{IR}.t$)
 %		\item $j$ -- number of leaves in batch (matches $\ell_B$ in the Certification Request)
 	\end{itemize}
 	\item \textbf{Private inputs (witness)}: unique inserted batch and consistency proof $(B, \Pi_{CP})$
 \end{itemize}
+
+$\tau$ is public because the batch is not. In the hash-based instantiation the BFT Core derives each leaf value as $H(h_\mathsf{tx}, \tau)$ from the batch it receives (Sec.~\ref{sec:derived-leaf-values}); here it receives no batch, so the circuit performs that derivation internally and exposes $\tau$ for the Core to check against $\mathcal{IR}.t$. Without this the ZK instantiation would leave the reference time asserted by the shard while the hash-based one enforces it, and a deployment could weaken the guarantee by changing instantiation alone.
 
 \subsubsection{Verification}
 
 When receiving a ZK-compressed consistency proof, the verifier must:
 \begin{enumerate}
 	\item Verify that the proof is proving the right statement (hash-based consistency proof verification algorithm)
-	\item Verify the ZK proof, obtaining authentic public inputs $h'$, $h$
+	\item Verify the ZK proof, obtaining authentic public inputs $h'$, $h$, $\tau$
 	\item Confirm these values match the claimed Input Record
 \end{enumerate}
 

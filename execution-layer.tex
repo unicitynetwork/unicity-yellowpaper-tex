@@ -58,7 +58,7 @@ where $T_0^\mathsf{cert}$ is a certified mint transaction and $T_i^\mathsf{cert}
 \subsubsection{Mint Transaction}\label{sec:mint-tx}
 
 \index{mint transaction!structure}
-A \emph{certified mint transaction} is a tuple $(T_0, \pi_0)$, where $T_0 = (\sthash, D_\mathsf{mint})$ and
+A \emph{certified mint transaction} is a tuple $(T_0, \tau_0, \pi_0)$, where $T_0 = (\sthash, D_\mathsf{mint})$ and
 \[
 D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd') .
 \]
@@ -73,6 +73,7 @@ D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason},
 		\item $\mathsf{reason}$ -- mint reason; content depends on the token type. Justifies minting this token, e.g., by proving minting authority
 		\item $\auxd'$ -- auxiliary payload (application-specific; e.g. asset value for fungible tokens)
 	\end{itemize}
+	\item $\tau_0$ -- reference time the genesis was validated under, bound by the certified leaf value as for a transfer (Sec.~\ref{sec:time-extraction})
 	\item $\pi_0$ -- inclusion proof from the Unicity Service
 \end{itemize}
 
@@ -93,12 +94,12 @@ $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant
 	\item $\pi_0 \gets \unisrv(Q)$
 \end{enumerate}
 
-\paragraph{Verifying a certified mint transaction} $(T_0, \pi_0)$ against trust base $\mathcal{T}$, using known, fixed mint keys:
+\paragraph{Verifying a certified mint transaction} $(T_0, \tau_0, \pi_0)$ against trust base $\mathcal{T}$, using known, fixed mint keys:
 \begin{enumerate}
 	\item require $T_0.D_\mathsf{mint}.\alpha = \pi_0.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$
 	\item derive $\mathsf{id} \gets H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha)$;\; require $T_0.\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
-	\item $\txhash \gets H(D_\mathsf{mint})$;\; require $\txhash = \pi_0.\txhash$
-	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), \txhash, \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
+	\item $\txhash \gets H(D_\mathsf{mint})$;\; require $H(\txhash, \tau_0) = \pi_0.v$
+	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), H(\txhash, \tau_0), \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
 	\item Token type-specific checks on $\mathsf{reason}$ and $\auxd'$ (e.g. mint reason validity and auxiliary payload format and semantics check)
 \end{enumerate}
 
@@ -108,7 +109,7 @@ Correctness of the token id derivation is enforced implicitly by step~2: $\sthas
 \subsubsection{Transfer Transaction}\label{sec:transfer-tx}
 
 \index{transfer transaction!structure}
-A \emph{certified transfer transaction} is a tuple $(T, u, \pi)$, where $T = (\sthash, D)$:
+A \emph{certified transfer transaction} is a tuple $(T, u, \tau, \pi)$, where $T = (\sthash, D)$:
 \begin{itemize}
 	\item $D = (\predi', x, \auxd')$ -- transaction data:
 	\begin{itemize}
@@ -117,6 +118,7 @@ A \emph{certified transfer transaction} is a tuple $(T, u, \pi)$, where $T = (\s
 		\item $\auxd'$ -- auxiliary data for the next state
 	\end{itemize}
 	\item $u$ -- unlocking argument satisfying the current predicate $\predi$
+	\item $\tau$ -- reference time the transition was validated under, returned by the Unicity Service and bound by the certified leaf value (Sec.~\ref{sec:time-extraction})
 	\item $\pi$ -- inclusion proof from the Unicity Service
 \end{itemize}
 
@@ -129,13 +131,13 @@ A \emph{certified transfer transaction} is a tuple $(T, u, \pi)$, where $T = (\s
 	\item $\pi \gets \unisrv(Q)$
 \end{enumerate}
 
-\paragraph{Verifying a certified transfer transaction} $(T, u, \pi)$ in state $(\predi, h)$:
+\paragraph{Verifying a certified transfer transaction} $(T, u, \tau, \pi)$ in state $(\predi, h)$:
 \begin{enumerate}
 	\item $T.\sthash = h$ \quad (state hash matches expected)
 	\item $\pi.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$ \quad (inclusion proof is from the same network as the trust base)
-	\item $\txhash \gets H(T.D)$;\; require $\txhash = \pi.\txhash$ \quad (transaction data binds to the certified SMT leaf)
-	\item $\predi(\mathsf{time}(\pi), H(\sthash, \txhash), u) = 1$ \quad (predicate satisfied)
-	\item $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pi, \mathcal{CD}_\beta, \mathcal{T}) = 1$ \quad (inclusion proof valid and certified by the correct shard)
+	\item $\txhash \gets H(T.D)$;\; require $H(\txhash, \tau) = \pi.v$ \quad (transaction data and reference time bind to the certified SMT leaf value)
+	\item $\predi(\tau, H(\sthash, \txhash), u) = 1$ \quad (predicate satisfied)
+	\item $\mathcal{V}(H(\predi, T.\sthash), H(\txhash, \tau), \pi, \mathcal{CD}_\beta, \mathcal{T}) = 1$ \quad (inclusion proof valid and certified by the correct shard)
 	\item Additional token type-specific checks
 \end{enumerate}
 
@@ -207,14 +209,12 @@ where $UC_-$ is the last valid Unicity Certificate of that shard (which the Aggr
 \paragraph{BFT Core enforcement.}
 The BFT Core verifies the Aggregator's choice of reference time as part of request admission (Sec.~\ref{certification-request}, check $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta,\sigma].UC_-.C^\mathsf{r}.t_r$).
 
-\paragraph{Extraction from inclusion proofs.}
-Given an inclusion proof $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, the \emph{system time} used for predicate evaluation is extracted as
-\[
-	\mathsf{time}(\pi^\mathsf{inc}) \;=\; UC.\mathcal{IR}.t
-\]
-This is the same value the Aggregator used when admitting the request -- the previous seal's $t_r$, copied into $\mathcal{IR}.t$ and BFT-verified. Re-validation by any later verifier is therefore deterministic and yields the identical predicate evaluation outcome.
+\paragraph{Binding to the certified leaf.}
+$\tau$ is committed by the leaf value the Unicity Service records, $H(\txhash, \tau)$ (Sec.~\ref{sec:request-validation}), and is carried with the transition. A verifier recomputes that value from the transaction data and the carried $\tau$ and requires it to equal the certified leaf value; a mismatch rejects. This is what makes re-validation deterministic and independent of \emph{which} inclusion proof establishes the leaf.
 
-Note that $UC.\mathcal{IR}.t \ne UC.C^\mathsf{r}.t_r$ in general: $\mathcal{IR}.t$ is the reference time of the round \emph{being} certified (taken from the prior seal), whereas $C^\mathsf{r}.t_r$ is the wall-clock time at which the new seal itself was produced. Predicate evaluation uses $\mathcal{IR}.t$.
+The alternative of reading the time off the proof, as $\mathsf{time}(\pi^\mathsf{inc}) = UC.\mathcal{IR}.t$, is correct only for the proof issued in the transition's own round. The SMT is append-only, so a leaf can be certified afresh against any later root, and a later proof carries a later round's $\mathcal{IR}.t$. Reference time is therefore a property of the leaf, not of the proof: proofs are replaceable, and the leaf value is not.
+
+Note that $UC.\mathcal{IR}.t \ne UC.C^\mathsf{r}.t_r$ in general: $\mathcal{IR}.t$ is the reference time of the round \emph{being} certified (taken from the prior seal), whereas $C^\mathsf{r}.t_r$ is the wall-clock time at which the new seal itself was produced. It is $\mathcal{IR}.t$ that enters the leaf value.
 
 \subsection{Standard Predicates}\label{sec:standard-predicates}
 
@@ -346,7 +346,7 @@ A certification request from the execution layer is a tuple $Q = (\predi, \sthas
 	\item $u$ -- unlocking argument satisfying $\predi$
 \end{itemize}
 
-\subsection{Processing}
+\subsection{Processing}\label{sec:us-processing}
 
 The Unicity Service processes the request as follows:
 \begin{enumerate}
@@ -354,8 +354,10 @@ The Unicity Service processes the request as follows:
 	\item Compute message hash: $m \gets H(\sthash, \txhash)$
 	\item Evaluate predicate: verify $\predi(\tau, m, u) = 1$
 	\item Check uniqueness: verify $R[\mathsf{sid}] = \bot$
-	\item If both checks pass: $R[\mathsf{sid}] \gets \txhash$
+	\item If both checks pass: $R[\mathsf{sid}] \gets H(\txhash, \tau)$
 \end{enumerate}
+
+The leaf value binds the reference time the request was validated under, not the transaction hash alone. The Aggregator does not choose it: the BFT Core derives every leaf value of a round from the declared batch and $\mathsf{CR}.\mathcal{IR}.t$ before verifying the consistency proof (Sec.~\ref{sec:derived-leaf-values}), so a round built under any other $\tau$ yields a root the Core does not accept.
 
 If the request is accepted, the Unicity Service returns an inclusion proof $\pinc$. If the state has already been spent (uniqueness check fails) or the predicate evaluation fails, the request is rejected.
 
