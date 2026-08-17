@@ -156,7 +156,7 @@ Let $b_\mathcal{R}$ be the deterministic CBOR encoding of $\mathcal{R}$ under $\
 
 \section{Nullifier}\label{app:bridging-nullifier}
 
-Let $\mathsf{BURN\_DOMAIN}$ be the fixed byte string \texttt{unicity-burn-transition:v1}. Let the burn be the final certified transfer of the source token. It spends the state $(\predi_{n-1},\sthash_{n-1})$ and its transaction data hash is $\txhash_\mathsf{b}=H(T_\mathsf{b}.D)$. The certified Unicity leaf for that burn is keyed by
+Let $\mathsf{BURN\_DOMAIN}$ be the fixed byte string \texttt{unicity-burn-transition:v1}. Let the burn be the final certified transfer of the source token. It spends the state $(\predi_{n-1},\sthash_{n-1})$ and its transaction hash is $\txhash_\mathsf{b}=H(T_\mathsf{b}.D,\tau_{Q,\mathsf b})$. The certified Unicity leaf for that burn is keyed by
 \[
 \mathsf{sid}_\mathsf{b} = H(\predi_{n-1},\sthash_{n-1}).
 \]
@@ -170,9 +170,9 @@ The relation MUST derive $\mathsf{sid}_\mathsf{b}$ and $\txhash_\mathsf{b}$ from
 
 \section{Shared Anchor for Inclusion Checking}\label{app:bridging-anchor}
 
-Because the SMT is add-only, a single recent certificate suffices for proof validation. Fix an \emph{anchor certificate} $UC^*$ and its root $h^* = UC^*.IR.h$. For each certified transaction needed from a token, with leaf $L = (\mathsf{sid},\txhash)$, an \emph{anchored inclusion proof} is an RSMT inclusion certificate $C^\mathsf{inc}$ for $L$ against $h^*$. The relation verifies $UC^*$ once via $\mathsf{VerifyUnicityCert}$ (Sec.~\ref{VerifyUnicityCert}) and each $L$ by $\mathsf{VerifyMember}(h^*,L,C^\mathsf{inc})$---the inclusion check of Sec.~\ref{VerifyInclusionProof} with the shared root $h^*$ substituted for the per-proof one. This replaces $m$ Unicity Certificate verifications by one certificate plus $m$ hash-path checks.
+Because the SMT is add-only, a single recent certificate suffices for proof validation. Fix an \emph{anchor certificate} $UC^*$ and its root $h^* = UC^*.IR.h$. For each certified transaction needed from a token, with leaf $L = (\mathsf{sid},H(\txhash,\tau))$, an \emph{anchored inclusion proof} is an RSMT inclusion certificate $C^\mathsf{inc}$ for $L$ against $h^*$. The relation verifies $UC^*$ once via $\mathsf{VerifyUnicityCert}$ (Sec.~\ref{VerifyUnicityCert}) and each $L$ by $\mathsf{VerifyMember}(h^*,L,C^\mathsf{inc})$---the inclusion check of Sec.~\ref{VerifyInclusionProof} with the shared root $h^*$ substituted for the per-proof one. This replaces $m$ Unicity Certificate verifications by one certificate plus $m$ hash-path checks.
 
-Anchored inclusion intentionally omits the original request-validation time $\mathsf{time}(\pi)$ used by ordinary transfer verification (Sec.~\ref{sec:time-extraction}). Consequently, this bridge-return relation is defined only for token predicates whose validation is independent of that time. The current bridge token path uses such predicates. Future support for time-dependent predicates, such as timelocks, requires either carrying authenticated original validation time in the anchored transition data or verifying the relevant per-transition certificates.
+Anchored verification carries each transaction's request timeout and request-validation reference time and applies the ordinary transaction-verification relation.
 
 \section{Public Statement and Public Calldata}\label{app:bridging-public}
 
@@ -206,11 +206,11 @@ Algorithm~\ref{alg:bridge-relation} defines $\mathfrak{R}$: the relation holds i
   \For{$i \gets 1 \ldots \mathsf{x}.B$}
     \State \textbf{Finality:} ensure($\Call{VerifyToken}{\mathcal{L}_i,\mathcal{T}} = 1$ in anchored mode against $h^*$)
     \State $D_{\mathsf{mint},i} \gets \mathcal{L}_i.T_0.D_\mathsf{mint}$;\quad ensure($D_{\mathsf{mint},i}.\mathsf{ty} = \mathcal{C}.\mathsf{ty}$)
-    \State $(T_{\mathsf{b},i},u_{\mathsf{b},i},\pi_{\mathsf{b},i}) \gets$ final certified transfer of $\mathcal{L}_i$
+    \State $(T_{\mathsf{b},i},u_{\mathsf{b},i},\tau_{Q,\mathsf{b},i},\tau_{\mathsf{b},i},\pi_{\mathsf{b},i}) \gets$ final certified transfer of $\mathcal{L}_i$
     \State $(\predi_{\mathsf{b},i},h_{\mathsf{b},i}) \gets$ state spent by $T_{\mathsf{b},i}$ in $\mathcal{L}_i$
     \State ensure($T_{\mathsf{b},i}.\sthash = h_{\mathsf{b},i}$)
-    \State $\mathsf{sid}_{\mathsf{b},i} \gets H(\predi_{\mathsf{b},i},\;T_{\mathsf{b},i}.\sthash)$;\quad $\txhash_{\mathsf{b},i} \gets H(T_{\mathsf{b},i}.D)$
-    \State ensure($\pi_{\mathsf{b},i}$ proves the leaf $(\mathsf{sid}_{\mathsf{b},i},\txhash_{\mathsf{b},i})$ under $h^*$)
+    \State $\mathsf{sid}_{\mathsf{b},i} \gets H(\predi_{\mathsf{b},i},\;T_{\mathsf{b},i}.\sthash)$;\quad $\txhash_{\mathsf{b},i} \gets H(T_{\mathsf{b},i}.D,\tau_{Q,\mathsf{b},i})$
+    \State ensure($\tau_{\mathsf{b},i}<\tau_{Q,\mathsf{b},i}$ and $\pi_{\mathsf{b},i}$ proves $(\mathsf{sid}_{\mathsf{b},i},H(\txhash_{\mathsf{b},i},\tau_{\mathsf{b},i}))$ under $h^*$)
     \State $\mathcal{R}_i \gets \Call{DecodeReason}{T_{\mathsf{b},i}.D.\auxd'}$ such that $T_{\mathsf{b},i}.D.\predi' = \predi_\mathsf{burn}(H(T_{\mathsf{b},i}.D.\auxd'))$
     \State \textbf{Destination:} ensure($\mathcal{R}_i.(\chi,a_\mathsf{V},a_\mathsf{A},\mathsf{ty},\mathsf{aid}) = (\chi,a_\mathsf{V},a_\mathsf{A},\mathsf{ty},\mathsf{aid})$)
     \State \textbf{Value:} $v_i \gets$ value of $D_{\mathsf{mint},i}.\auxd'$ for $\mathsf{aid}$ via $\Call{Assets}{D_{\mathsf{mint},i}.\mathsf{ty},D_{\mathsf{mint},i}.\auxd'}$

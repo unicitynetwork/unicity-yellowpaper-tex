@@ -261,7 +261,7 @@ For a key $k$ and a depth $d$, we write $k[d]$ for the bit of $k$ at position $d
 
 The region identifies the node's absolute position and is part of the Merkle commitment: the commitment is determined by the leaf contents, the child hashes, the absolute bifurcation depths and the regions.
 
-The RSMT format itself permits every $v\in\bytestr$.  The Unicity aggregation profile defines the named restriction $\ell_{\mathsf{agg}}:=32$ bytes because its leaf values are raw SHA-256 transaction hashes.  This is an application-profile constraint, not a certificate-format rule.
+The RSMT format itself permits every $v\in\bytestr$.  The Unicity aggregation profile defines the named restriction $\ell_{\mathsf{agg}}:=32$ bytes because its leaf values are SHA-256 digests.  This is an application-profile constraint, not a certificate-format rule.
 
 \subsection{Hash Computation}
 
@@ -560,7 +560,7 @@ Verifies that key $k$ is absent from a tree with root hash $\rho$.
 
 Malformed field sizes MUST be rejected. The two checks that distinguish this function from $\textsc{rsmt\_verify\_inclusion}$---$k'\ne k$, and $k[d]=k'[d]$ at every junction---are both security-critical: dropping the first would let an inclusion path pass as an absence proof, and dropping the second would let any authenticated leaf do so.
 
-Note that the terminal leaf exposes a neighbouring leaf's value $v'$; in the Unicity SMT, values are transaction hashes, so no payload data is revealed.
+Note that the terminal leaf exposes a neighbouring leaf's value $v'$; in the Unicity SMT, values are digests, so no payload data is revealed.
 
 % \paragraph{Security.}
 % Assuming collision resistance of $H$ and injective encodings, acceptance binds $(k',v')$ and every reconstructed junction to the tree committed by $\rho$: otherwise the first difference between the reconstructed path and that tree yields distinct preimages with the same hash. The test $k[d]=k'[d]$ at every junction proves that key-directed descent for $k$ follows this authenticated path. If $k$ were stored, deterministic descent would terminate at its unique leaf, so an accepted terminal with $k'\ne k$ proves absence. Conversely, the generation walk above produces an accepted certificate for every absent target key. Certified roots are canonical append-only RSMT roots by the consistency proof of Sec.~\ref{sec:rsmt-consistency-proof}; thus the argument also applies when the certificate generator is untrusted.

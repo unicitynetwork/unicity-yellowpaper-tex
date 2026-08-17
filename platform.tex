@@ -51,7 +51,7 @@ A \emph{partition type descriptor} is a tuple $\mathcal{SD} = (\mathsf{hf}, \mat
 \item $\gamma_{CP} \colon \mathbb{IR} \times \mathbb{CP} \to \bool$ -- consistency proof verification predicate
 \end{itemize}
 
-For the SMT-based aggregation, the partition maintains a sparse Merkle tree mapping state identifiers to transaction hashes. The hash function $\mathsf{hf}$ is used for all cryptographic operations, and the encoding scheme $\mathsf{enc}$ specifies how data structures are serialized before hashing (see Sec.~\ref{sec:smt} for SMT structure).
+For the SMT-based aggregation, the partition maintains a sparse Merkle tree mapping state identifiers to certified leaf values. The hash function $\mathsf{hf}$ is used for all cryptographic operations, and the encoding scheme $\mathsf{enc}$ specifies how data structures are serialized before hashing (see Sec.~\ref{sec:smt} for SMT structure).
 
 The \emph{consistency proof}\index{consistency proof} is a data structure that allows BFT Core nodes to verify that aggregation layer shard nodes performed the SMT manipulations correctly during the round. The actual mechanism and content of consistency proofs will be defined separately for each partition type.
 
@@ -103,21 +103,25 @@ and if no new leaves are inserted during that round then $\mathsf{CR}.\mathcal{I
 
 \section{Unicity Service Request}
 
-A \emph{Unicity Service Request}\index{$Q$ (unicity service request)} is a request to the Unicity Service for state transition certification. It is a tuple $Q = (\predi, \sthash, \txhash, u)$, where:
+A \emph{Unicity Service Request}\index{$Q$ (unicity service request)} is a request to the Unicity Service for state transition certification. It is a tuple $Q = (\predi, \sthash, \txhash, \tau_Q, u)$, where:
 \begin{itemize}
 	\item $\predi$ -- current owner's spending predicate (Sec.~\ref{sec:predicates})
 	\item $\sthash \in \hashtype$ -- current state hash
-	\item $\txhash \in \hashtype$ -- transaction data hash
+	\item $\txhash \in \hashtype$ -- transaction hash, committing to the transaction data and $\tau_Q$
+	\item $\tau_Q \in \mathbb{T}$ -- exclusive request timeout
 	\item $u$ -- unlocking argument satisfying $\predi$
 \end{itemize}
 
 The Unicity Service processes the request by:
 \begin{enumerate}
+	\item Checking the request timeout: $\tau < \tau_Q$
 	\item Evaluating the predicate: $\predi(\tau, H(\sthash, \txhash), u) = 1$
 	\item Computing the state identifier: $\mathsf{sid} = H(\predi, \sthash)$
 	\item Checking uniqueness: the state has not been spent before (i.e., $\mathsf{sid}$ does not already exist in the SMT)
-	\item If all checks pass: setting the SMT leaf $(\mathsf{sid}, \txhash)$ in the tree
+	\item If all checks pass: setting the SMT leaf $(\mathsf{sid}, H(\txhash,\tau))$ in the tree
 \end{enumerate}
+
+The timeout constrains validation only: a request or certified transaction is valid only if $\tau=\mathcal{IR}.t<\tau_Q$; certification and delivery may occur later.
 
 The request is accepted without returning a synchronous response. The detailed validation algorithm will be specified in Sec.~\ref{sec:request-validation}.
 
@@ -127,7 +131,7 @@ The aggregation layer nodes process Unicity Service Requests by validating them 
 
 \subsection{Validation and Processing Algorithm}
 
-Given a Unicity Service Request $Q = (\predi, \sthash, \txhash, u)$, the aggregation layer node performs the following checks:
+Given a Unicity Service Request $Q = (\predi, \sthash, \txhash, \tau_Q, u)$, the aggregation layer node performs the following checks:
 
 \begin{enumerate}
 	\item \textbf{Right shard check}: Compute the state identifier
@@ -140,6 +144,11 @@ Given a Unicity Service Request $Q = (\predi, \sthash, \txhash, u)$, the aggrega
 	\]
 	If this check fails, the request was sent to the wrong shard and must be rejected (or forwarded to the correct shard).
 
+	\item \textbf{Timeout check}: Verify
+	\[
+	\tau < \tau_Q .
+	\]
+
 	\item \textbf{Predicate evaluation}: Verify that the unlocking argument satisfies the predicate:
 	\[
 	\predi(\tau, H(\sthash, \txhash), u) = 1
@@ -150,12 +159,13 @@ Given a Unicity Service Request $Q = (\predi, \sthash, \txhash, u)$, the aggrega
 
 If all checks are satisfied, the request is accepted and the aggregation layer node sets the SMT leaf:
 \[
-\text{Set SMT leaf: } (\mathsf{sid}, \txhash)
+\text{Set SMT leaf: } (\mathsf{sid}, H(\txhash,\tau))
 \]
 This updates the SMT by inserting the new leaf.
 
 If either check fails, the request is rejected:
 \begin{itemize}
+	\item If the timeout check fails: the request is expired and must be rejected
 	\item If predicate evaluation fails: the request is invalid and must be rejected
 	\item If uniqueness check fails (leaf with key $\mathsf{sid}$ already exists): the state has already been spent (double-spend attempt) and the request must be rejected
 \end{itemize}
@@ -202,13 +212,13 @@ After processing a batch of requests, the aggregation layer nodes compute the ne
 	\end{minipage}
 \end{figure}
 
-See Fig.~\ref{fi:inc-proof} for the Inclusion Proof structure and Fig.~\ref{fi:uc} for the Unicity Certificate. The Inclusion Proof contains an SMT leaf $L = (\mathsf{sid}, \txhash)$ where $\mathsf{sid} = H(\predi, \sthash)$ is a state identifier and $\txhash$ is a transaction hash. The Inclusion Certificate $C^\mathsf{inc}$ connects the leaf to the SMT root hash $h$ in the Input Record. The Unicity Certificate then chains through the shard tree, unicity tree, and unicity seal to the global root of trust: Unicity Trust Base $\mathcal{T}$. A Non-Inclusion Proof has the same shape, except that its certificate carries the leaf its key-directed path actually reaches instead of the queried one.
+See Fig.~\ref{fi:inc-proof} for the Inclusion Proof structure and Fig.~\ref{fi:uc} for the Unicity Certificate. The Inclusion Proof contains an SMT leaf $L = (\mathsf{sid}, v)$ where $\mathsf{sid} = H(\predi, \sthash)$ and $v=H(\txhash,\tau)$. The Inclusion Certificate $C^\mathsf{inc}$ connects the leaf to the SMT root hash $h$ in the Input Record. The Unicity Certificate then chains through the shard tree, unicity tree, and unicity seal to the global root of trust: Unicity Trust Base $\mathcal{T}$. A Non-Inclusion Proof has the same shape, except that its certificate carries the leaf its key-directed path actually reaches instead of the queried one.
 
 
 \subsection{Sparse Merkle Tree}\label{sec:smt}
 
 \index{sparse merkle tree}\index{SMT}\index{RSMT}
-The aggregation layer maintains a \emph{(Radix) Sparse Merkle Tree} (SMT), a path-compressed authenticated map from 256-bit state identifiers to transaction hashes. Leaves are anchored by full keys, and internal nodes commit to their absolute branching depth and to the key prefix (\emph{region}) addressing them, which pins every node to its position in the key space. The SMT supports batch insertion, inclusion certificates, non-inclusion certificates and consistency proofs. Exact formats and algorithms are given in Appendix~\ref{app:rsmt}.
+The aggregation layer maintains a \emph{(Radix) Sparse Merkle Tree} (SMT), a path-compressed authenticated map from 256-bit state identifiers to certified leaf values. Leaves are anchored by full keys, and internal nodes commit to their absolute branching depth and to the key prefix (\emph{region}) addressing them, which pins every node to its position in the key space. The SMT supports batch insertion, inclusion certificates, non-inclusion certificates and consistency proofs. Exact formats and algorithms are given in Appendix~\ref{app:rsmt}.
 
 
 \subsubsection{SMT Leaf Structure}
@@ -220,10 +230,10 @@ An SMT leaf contains a key-value pair:
 		\item $\predi$ -- spending predicate of the token owner (Sec.~\ref{sec:predicates})
 		\item $\sthash$ -- state hash representing the current state of a token
 	\end{itemize}
-	\item \textbf{Value}: Transaction data hash $\txhash$.
+	\item \textbf{Value}: $v=H(\txhash,\tau)$, where $\txhash$ commits to the transaction data and request timeout and $\tau$ is the request-validation reference time.
 \end{itemize}
 
-The SMT effectively maintains a mapping $\mathsf{sid} \mapsto \txhash$ that proves a state transition from state identifier $\mathsf{sid}$ was authorized via transaction with hash $\txhash$. This prevents double-spending: once a state identifier is registered in the SMT with a transaction hash, that state cannot be spent again.
+The SMT effectively maintains a mapping $\mathsf{sid} \mapsto H(\txhash,\tau)$ that proves a state transition from state identifier $\mathsf{sid}$ was authorized via transaction with hash $\txhash$ at reference time $\tau$. This prevents double-spending: once a state identifier is registered in the SMT, that state cannot be spent again.
 
 \subsubsection{SMT Certificates and Updates}\label{InclusionCert}
 
@@ -406,7 +416,7 @@ This function authenticates the certificate chain itself. It does not, by itself
 \emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state identifier has been recorded in the SMT as a proof of the spend being unique, and that the resulting shard state was certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (\mathsf{sid}, v, C^\mathsf{inc}, UC)$, where:
 \begin{enumerate}
 	\item $\mathsf{sid} \in \bytes{32}$ -- state identifier (SMT leaf key)
-	\item $v \in \hashtype$ -- SMT leaf value, $v = H(\txhash, \tau)$ for the transaction data hash and the reference time of the round it was certified in (Execution Layer, Sec.~\ref{sec:us-processing})
+	\item $v \in \hashtype$ -- SMT leaf value, $v = H(\txhash, \tau)$ for the timeout-bound transaction hash and the request-validation reference time (Execution Layer, Sec.~\ref{sec:us-processing})
 	\item $C^\mathsf{inc}$ -- Inclusion Certificate (Sec.~\ref{InclusionCert})
 	\item $UC$ -- unicity certificate (Sec.~\ref{se:unicity-certificate})
 \end{enumerate}

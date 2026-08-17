@@ -192,13 +192,15 @@ A transfer transaction (spending a mint or prior transaction output) is encoded 
 
 \subsection{Certified Transaction}
 
-A certified transaction (mint or transfer) is encoded as a CBOR array with two elements:
+A certified transaction (mint or transfer) is encoded as a CBOR array with four elements:
 
 \begin{longtable}{clp{8cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
 0 & CBOR array & The transaction \\
-1 & CBOR structure & Inclusion proof $\pi$ \\
+1 & unsigned integer & Exclusive request timeout $\tau_Q$ \\
+2 & unsigned integer & Validation reference time $\tau$ \\
+3 & CBOR structure & Inclusion proof $\pi$ \\
 \end{longtable}
 
 
@@ -249,15 +251,15 @@ For transfer transactions, the next state hash:
 
 For mint transactions:
 \[
-\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd'))
+\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd', \tau_Q))
 \]
 
 For transactions:
 \[
-\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', x, \auxd'))
+\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', x, \auxd', \tau_Q))
 \]
 
-where $\mathsf{CBOR}(\ldots)$ denotes the CBOR array encoding of the arguments as specified in Sec.~\ref{app:transaction-encoding}.
+where $\tau_Q$ is carried by the certified transaction and $\mathsf{CBOR}(\ldots)$ denotes deterministic CBOR array encoding.
 
 
 \section{Signature Format}\label{app:signature-format}
@@ -267,7 +269,7 @@ All standard predicates that verify digital signatures ($\predi_\mathsf{sig}$, $
 \begin{itemize}
 	\item \textbf{Public keys}: compressed format, 33 bytes (1-byte prefix $\texttt{0x02}$ or $\texttt{0x03}$, followed by 32-byte $x$-coordinate).
 	\item \textbf{Signatures}: 65 bytes ($R \mathbin{\|} S \mathbin{\|} V$), where $R$ and $S$ are 32-byte integers and $V$ is a 1-byte recovery identifier.
-	\item \textbf{Signed message}: the predicate message hash $m = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, \txhash))$, as defined in Sec.~\ref{sec:predicate-framework}.
+	\item \textbf{Signed message}: the predicate message hash $m = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, \txhash))$, where $\txhash$ commits to the exclusive request timeout $\tau_Q$, as defined in Sec.~\ref{sec:predicate-framework}.
 \end{itemize}
 
 

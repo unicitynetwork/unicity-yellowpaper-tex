@@ -362,7 +362,7 @@ Note that a block can be without any requests; however, this does not necessaril
 
 \emph{Validating} Unicity Service Requests is performing their full verification, according to Unicity Platform Specification, section \titleref{sec:request-validation}, and performing partition specific additional checks. The requests must appear in the \emph{proposal} in the same order. Requests without interdependencies (i.e., affecting distinct state) can be executed in parallel. Invalid requests are not executed and not included into produced proposal.
 
-The expiration of Unicity Service Requests is checked relative to shard round number. Validation context includes also the time value $t$ obtained from previous UC and to be recorded as current round's $UC.IR.t$.
+The expiration of a Unicity Service Request is checked against the time value $t$ obtained from the previous UC and recorded as the current round's $UC.IR.t$. A request with $t \ge Q.\tau_Q$ is invalid.
 
 Refer to Algorithm~\ref{alg:execute} for details.
 
@@ -1735,4 +1735,3 @@ Unicity Trust Base is a tuple of aggregate public key and a numeric parameter ($
 A standardization attempt of the closest appropriate signature scheme is available from IETF --- \url{https://datatracker.ietf.org/doc/draft-irtf-cfrg-bls-signature/}.
 
 Specifically, threshold signature schemes are avoided because of 1) accountability requirement 2) complicated and security-critical key setup, and 3) missing support of non-equal voting powers.
-
