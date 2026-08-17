@@ -16,21 +16,21 @@ Risto / 13 August 2026
 
 | Resource | Unit | Now, per token with *n* txs |
 |---|---|---|
-| **Verification complexity** | BFT quorum signature verifications | *n × q* ECDSA verifications |
+| **Verification complexity** | individual BFT signatures | $\sum_{j=1}^{n} m_j$ ECDSA verifications |
 | **Token size** | bytes | *n ×* (seal + certificate + SMT path) |
 | **Provenance overhead** | bytes | all source tokens nested |
 
-where *q* -- quorum size (~number of BFT Core validators), *n* -- transition count, *d* -- number of distinct certification rounds, *k* -- split/join arity, and *D* -- provenance depth.
+where $m_j$ is the number of signer entries in seal $j$, *n* is the transition count, *d* is the number of distinct certification rounds, *k* is split/join arity, and *D* is provenance depth. For unit-weight validators, $m_j$ is at least the quorum cardinality.
 
 ---
 
 A signature verification costs two to three orders of magnitude more than a hash computation, in a zkVM and real CPU. Not PQ secure, not forward secure.
 
-**Goal.** Verification cost constant in the length of a token's history, in the depth of the provenance the proof expands, and in the number of folds it has undergone. A fold verifies the previous proof in-circuit and emits a single proof, so the relying party sees one proof and one seal however many folds preceded it.
+**Goal.** For ordinary receipt, verification is one zk proof and one recent Unicity Seal, independent of token history, expanded provenance depth and fold count. The recipient verifies that seal off-circuit. The normal compression relation verifies no Unicity Seal and no historical Trust Base signatures.
 
-Mint authorizations stay transparent and is always done by the verifier.
+Ownership and predicate signatures for transitions expanded by the proof remain in-circuit. Mint authorizations stay transparent and are checked by the recipient.
 
-Compression is not mandatory background job.
+Compression is an optional background operation.
 
 ---
 
@@ -87,17 +87,17 @@ graph LR
 | 1 | Mint reason in reference form | **unblocks compression**; removes *D*-compounding | yes, non-migratable | 2 |
 | 2 | External evidence set | replaceable, deduplicated provenance | yes, API + token | — |
 | 3 | Joins of fungible tokens | functional: value consolidation | no | 2 |
-| 4 | The attestation | verification independent of *n* and *D* | yes, token format | 1, 2, 7, 12 |
+| 4 | The attestation | one proof + one off-circuit seal | yes, token format | 1, 2, 7, 12 |
 
 
 ---
 
 | # | Change | Primary win | Breaking | Depends on |
 |---|---|---|---|---|
-| 5 | Recursive compression (proof folding) | folds compose at constant cost | no | 4; 8 optional |
-| 6 | Compression across split and join | provenance collapses to issuance events | no | 3, 4, 5 || 7 | Root history accumulator | *d* quorum checks → 1, across shards and epochs | yes, consensus level | needs 8 to pay off |
+| 5 | Recursive compression (proof folding) | hash-only anchor reconciliation | no | 4, 8 |
+| 6 | Compression across split and join | provenance collapses to issuance events | no | 3, 4, 5 |
 | 7 | Root history accumulator | *d* quorum checks → 1, across shards and epochs | yes, consensus level | needs 8 to pay off |
-| 8 | Root history proof distribution service | no reliance on past-epoch validator sets | no | 7 |
+| 8 | Root history proof distribution service | no historical quorum checks in the normal fold path | no | 7 |
 
 
 ---
@@ -168,11 +168,11 @@ graph LR
 
 ## 4. The attestation
 
-**Summary.** A constant-size object representing a token's history and provenance. Connected to the rest via public inputs: identifier, type, the state reached, the owner predicate, the proof, the anchor seal (optimally only one), and the bare mint transactions of every genesis the prover did not verify in-circuit (keep issuance transparent)
+**Summary.** A recursively composable proof representing a token's history and provenance. Its statement binds the network, token identifier and type, genesis hash, reached state, one root-history anchor $(A,N)$, and a commitment to the geneses left opaque.
 
-**Why.** It replaces an arbitrarily long history and an arbitrarily deep provenance with one unicity proof and one signature verification.
+The transport object carries the proof, one recent outer seal, and the bare opaque geneses. Proof size is independent of history length and expanded provenance depth. Cleartext evidence still grows with independent issuance lineages left outside the generic relation.
 
-**Wins.** For the relying party, verification becomes optimally one zk proof, one unicity seal, and one *mint authorization* check per input genesis, verifying mint authorization only (no certificate and no historical trust base). Independent of history length, expanded provenance depth and folding count.
+**Recipient verification.** Verify the recent seal once under the current Trust Base and freshness policy, bind its $(a_r,n_r+1)$ to $(A,N)$, verify the zk proof, and run one *mint authorization* check per opaque issuance genesis. No historical certificate or Trust Base is needed.
 
 ---
 
@@ -180,29 +180,66 @@ graph LR
 
 **Scope.** New CBOR type: as an evidence entry stored as the first item in token tx history. `Token` gains an attestation slot, and the `[transaction, inclusionProof]` pairing must support a non-certified mint with no proof when an attestation already anchors the genesis. Breaking.
 
-**Implementation notes.** The opaque-genesis commitment is a sorted, deduplicated set of genesis transaction hashes. The verifier verifies mint txs in clear - this justifies #12 below.
+**Implementation notes.** The opaque-genesis commitment is a sorted, deduplicated set of genesis transaction hashes. The verifier checks their mint authorization in clear; the proof already establishes their certification.
 
 ---
 
 ## 5. Recursive compression (proof folding)
 
-**Summary.** An attestation may verify previous attestation in-circuit - this extends compressed history.
+**Summary.** An attestation may verify a previous attestation recursively and emit one new proof.
 
-**Why.** Compression can be run any time, and across the joins. *Proving* cost per fold is one recursive verification plus one re-anchoring, independent of the sub-proof's transfer count, provenance depth, or anchor age. *Verification* cost does not grow with folds.
+**Normal anchor reconciliation.** Let $(A_{sub},N_{sub})$ be the old proof's public anchor and $(A^*,N^*)$ the anchor of a recent seal:
 
-**Anchoring.** A sub-proof's public inputs must be validated to match the rest of the token and genesis and unicity cert. Possibilities: 1) prefix consistency against the current accumulator (hashing only, needs #8 (calendar database)), or 2) in-circuit verification of the sub-anchor's unicity seal (one quorum verification per epoch, needs the unicity trust base record for that epoch).
+`VerifyRootHistoryPrefix(A_sub, N_sub, A*, N*, ψ) = 1`
+
+The outer relation verifies this MMR prefix proof and the recursive proof. It then discards the old anchor. This step uses hashes only: no old seal, validator set, epoch-change signature or historical Trust Base is verified in-circuit.
+
+The recipient verifies the one recent seal off-circuit and binds $(A^*,N^*)$ to it. An anchor on an abandoned fork cannot satisfy prefix consistency against the recipient's accepted chain.
 
 ---
 
-Prefix consistency ties the sub-anchor to the latest, single unicity proof verified outside the circuit. Both methods can be supported in parallel, seal verification if calendar db is not available / implemented.
+### How this crosses shards and epochs
 
-**Alternatives.** Brute force: cost grows with total provenance and tx history. Or one anchor per fold in clear, verified by the verifier, so the attestation grows with merge history.
+**Across shards.** The MMR commits the network-global sequence of Unicity Tree roots. A transaction leaf is connected through its shard tree and the Unicity Tree for its round, then through the root-history proof. One outer seal therefore covers every Aggregator shard.
 
-**Scope.** Relation definition and verification-key pinning, plus a trust base commitment in the public input. Additive on top of #4.
+**Across epochs.** The MMR frontier is consensus state, persists across validator-set changes, and is included in the epoch state summary $H(r,a)$. A current-epoch seal therefore authenticates the historical prefix without verifying old epoch signatures.
 
-**Relation count.** One relation and one `vk_tok` for every token type. (ie, NFT-s just skip value conservation). Do not support per-transfer type rules. (bridging uses another format which also verifies bridge-specific genesis in-circuit)
+**Asynchronous shards.** Each shard re-presents its leaves against its latest certified root. The resulting round table spans at most `t2` and is authenticated in one batched root-history proof.
 
-**Proof format.** Inside Unicity: SP1 compressed STARK, poseidon2 in proof,verifiable recursively. Groth16 SNARK wrapping only when bridging out.
+**Freshness.** Signature validity does not prove that a seal is the latest one. The recipient applies its own freshness policy to the outer seal.
+
+---
+
+### Fallback trades proving cost for availability
+
+If no archive retains the prefix witness, a fallback-capable relation may verify the old seal and its authenticated epoc
+h record in-circuit.
+
+| Path | In-circuit work per absorbed proof | Assumption |
+|---|---|---|
+| **MMR prefix** | $O(\log N^*)$ hashes | current accepted chain |
+| **Old-seal fallback** | $m_i$ ECDSA checks + epoch-record authentication | old quorum remains unforgeable and non-conf
+licting |
+
+For $s$ fallback inputs, accountable ECDSA cost is $\sum_{i=1}^{s}m_i$ signature checks. A *k*-source merge using fallba
+ck for every source costs $\sum_{i=1}^{k}m_i$ at that fold.
+
+Fallback may be disabled. Or be the the default if we skip #8.
+
+---
+
+### Token compression vs. bridging
+
+| Token compression | Bridge return |
+|---|---|
+| Network-versioned generic $\mathfrak{R}_{tok}$ | Asset-specific $\mathfrak{R}_{br,\mathcal C}$ |
+| Proves transitions and network-defined conserving edges | Also proves bridged genesis, backing, value lineage, destination and replay protection |
+| Leaves issuance authorization to the recipient | Binds external chain, vault, asset, token type and asset identifier in $\mathcal C$ |
+| Recipient verifies the current seal off-circuit | Vault relation verifies one current seal in-circuit unless the vault verifies it natively |
+| Historical anchors use hash-only prefix proofs | Historical anchors use the same hash-only prefix proofs |
+| Raw STARK (~1MB) | STARK + Groth16 SNARK (~250 bytes)|
+
+Vaults pin $(\mathcal C,\mathsf{vk})$; special transfer rules pin a variant of $\mathfrak{R}_{tok}$.
 
 ---
 
@@ -214,7 +251,7 @@ Prefix consistency ties the sub-anchor to the latest, single unicity proof verif
 
 **Wins.** At split time no proving occurs: the splitter hands each of the *k* outputs the *same* attestation (with transparent burn). Shared proving for all *k* recipients. At merge, each of the *k* sources contributes one attestation and the merged token's own attestation folds them again to constant size.
 
-**Alternative.** Each value-conserving genesis (of split/join) is either verified in-circuit (opaque) or transparent.
+**Boundary choice.** Each value-conserving genesis is either expanded in-circuit or left opaque for the ordinary verifier. Issuance authorization always remains opaque to the generic relation.
 
 **Scope.** Depends on #1, #2, #3, #4 and #5.
 
@@ -226,11 +263,11 @@ Prefix consistency ties the sub-anchor to the latest, single unicity proof verif
 
 ## 7. Root history accumulator
 
-**Summary.** Add `a_r` to the Unicity Seal: a Merkle mountain range over every Unicity Tree root the network has certified. The BFT Core retains only the frontier, one hash per set bit of the round count, at *O(1)* amortized cost per round.
+**Summary.** Add `a_r` to the Unicity Seal: a Merkle mountain range over every Unicity Tree root the network has certified. The BFT Core retains an $O(\log N)$ frontier. Appending has $O(1)$ amortized merges and $O(\log N)$ peak bagging per round.
 
 **Why.** One recently verified seal then authenticates efficiently any earlier round root. Across shards and epochs.
 
-**Wins.** Computation: *d* quorum verifications become one, plus *O(d·log N)* hash compressions. The relying party also does not need the trust base of an earlier epoch to validate earlier proofs, and a seal from an abandoned branch cannot be substituted because its root is not in the accumulator of the chain the verifier is on.
+**Wins.** Computation: *d* quorum verifications become one, plus $O(d\log(1+N/d)+\log N)$ hashes for batched membership. The relying party needs no earlier-epoch Trust Base, and a seal from an abandoned branch cannot be substituted because its root is absent from the accepted accumulator.
 
 ---
 
@@ -248,15 +285,13 @@ Prefix consistency ties the sub-anchor to the latest, single unicity proof verif
 
 **Summary.** Membership, batched membership, and prefix-consistency queries over the accumulator, served by aggregators and/or archive nodes as an optional service.
 
-**Why.** 1) Reconciling certificates collected from several shards (spans at most `t2` of rounds), 2) Reconciling an older attestation's anchor when folding.
+**Why.** 1) Authenticate the round table collected from several shards, spanning at most `t2`; 2) prefix-reconcile an older attestation's public anchor when folding.
 
-**Wins.** No dependency on old PKI signatures; no in-circuit quorum verification to authenticate epoch changes and seals on top of folded-in attestations.
+**Wins.** The normal fold path uses only MMR hashes. The final recipient verifies one recent seal under its current Trust Base; the service is untrusted because every response is verified.
 
 ---
 
-**Alternatives.** Run no service and rely on in-circuit seal verification for every fold. Trusts the validator set of a past epoch.
-
-Reconcile certs on top of clear transactions, using batch inclusion cert queries (asynchrony is not an issue, BFT Core certifies entire IR every round anyways, entire IR must be returned though to Aggregators). No need for #7.
+**Fallback.** If no retained prefix witness exists, use the explicit old-seal fallback of #5b, or reject proof construction if the deployment disables it.
 
 **Scope.** Aggregator (or archive node) query surface; no BFT Core involvement (depends on #7). Additive, non-breaking. Recovery service to obtain long history / fill in blanks.
 
@@ -367,4 +402,3 @@ Reconcile certs on top of clear transactions, using batch inclusion cert queries
 **Alternatives.** Query the aggregator and trust the answer.
 
 **Scope.** Already specified and implemented in `rugregator` as `get_non_inclusion_proof.v1` and the Rust SDK. Additive, non-breaking.
-
