@@ -722,10 +722,10 @@ A ZK-compressed consistency proof proves successful execution of the $\mathsf{rs
 		\item $\tau$ -- reference time of the round (matches $\mathcal{IR}.t$)
 %		\item $j$ -- number of leaves in batch (matches $\ell_B$ in the Certification Request)
 	\end{itemize}
-	\item \textbf{Private inputs (witness)}: unique inserted batch and consistency proof $(B, \Pi_{CP})$
+	\item \textbf{Private inputs (witness)}: declared request batch $\widetilde B$ and a witness for the derived leaf batch $B^*$ and its consistency proof
 \end{itemize}
 
-$\tau$ is public because the batch is not. In the hash-based instantiation the BFT Core derives each leaf value as $H(h_\mathsf{tx}, \tau)$ from the batch it receives (Sec.~\ref{sec:derived-leaf-values}); here it receives no batch, so the circuit performs that derivation internally and exposes $\tau$ for the Core to check against $\mathcal{IR}.t$. Without this the ZK instantiation would leave the reference time asserted by the shard while the hash-based one enforces it, and a deployment could weaken the guarantee by changing instantiation alone.
+$\tau$ is public because the batch is not. In the hash-based instantiation the BFT Core derives each leaf value as $H(h_\mathsf{tx},\tau)$ according to Sec.~\ref{sec:derived-leaf-values}. Here it receives no batch, so the circuit performs the same derivation internally and exposes $\tau$ for the Core to check against $\mathcal{IR}.t$. Thus changing the proof instantiation does not change the certified relation.
 
 \subsubsection{Verification}
 

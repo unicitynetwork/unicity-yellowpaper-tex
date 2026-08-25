@@ -159,7 +159,7 @@ If a sender wishes to commit only to a hash of a complex predicate (hiding its s
 
 \subsection{Mint Transaction}
 
-A mint transaction is encoded as a CBOR array with six elements, ordered as
+A mint transaction has the common data
 $D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$:
 
 \begin{longtable}{clp{10cm}}
@@ -173,11 +173,13 @@ $D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}
 5 & byte string & Auxiliary Payload $\auxd'$ (optional, arbitrary length) \\
 \end{longtable}
 
+The payload is $D_\mathsf{mint}$ followed by the request timeout $\tau_Q$ at index~6, encoded as an unsigned integer, or as the CBOR simple value \texttt{null} when $\tau_Q=\bot$ (Appendix~\ref{app:encodings}). A versioned tagged envelope carries the payload.
+
 The implicit token identifier is derived as $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (Sec.~\ref{app:hash-derivations}) from the unique salt chosen by the minter.
 
 \subsection{Transfer Transaction}
 
-A transfer transaction (spending a mint or prior transaction output) is encoded as a CBOR array with five elements:
+A transfer transaction (spending a mint or prior transaction output) has five common elements:
 
 \begin{longtable}{clp{10cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
@@ -189,19 +191,22 @@ A transfer transaction (spending a mint or prior transaction output) is encoded 
 4 & byte string & Auxiliary data $\auxd'$ \\
 \end{longtable}
 
+The payload contains these common elements followed by the request timeout $\tau_Q$, encoded as an unsigned integer, or as the CBOR simple value \texttt{null} when $\tau_Q=\bot$ (Appendix~\ref{app:encodings}). A versioned tagged envelope carries the payload.
+
 
 \subsection{Certified Transaction}
 
-A certified transaction (mint or transfer) is encoded as a CBOR array with four elements:
+A certified transaction (mint or transfer) is encoded as a three-element CBOR array:
 
 \begin{longtable}{clp{8cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
 0 & CBOR array & The transaction \\
-1 & unsigned integer & Exclusive request timeout $\tau_Q$ \\
-2 & unsigned integer & Validation reference time $\tau$ \\
-3 & CBOR structure & Inclusion proof $\pi$ \\
+1 & unsigned integer & Reference time $\tau$ of the round in which the leaf was created \\
+2 & CBOR structure & Inclusion proof $\pi$ \\
 \end{longtable}
+
+The inclusion proof also carries the validation reference time, and a decoder requires it to agree with the value in the certified transaction. The request timeout $\tau_Q$ is inside the transaction at index~0.
 
 
 \subsection{Token}
@@ -259,7 +264,7 @@ For transactions:
 \txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', x, \auxd', \tau_Q))
 \]
 
-where $\tau_Q$ is carried by the certified transaction and $\mathsf{CBOR}(\ldots)$ denotes deterministic CBOR array encoding.
+Here $\mathsf{CBOR}(\ldots)$ denotes deterministic CBOR array encoding. The timeout is always present as the last element and is therefore always committed by the transaction hash; $\tau_Q=\bot$ is encoded as \texttt{null} and requires no clock.
 
 
 \section{Signature Format}\label{app:signature-format}
@@ -269,7 +274,7 @@ All standard predicates that verify digital signatures ($\predi_\mathsf{sig}$, $
 \begin{itemize}
 	\item \textbf{Public keys}: compressed format, 33 bytes (1-byte prefix $\texttt{0x02}$ or $\texttt{0x03}$, followed by 32-byte $x$-coordinate).
 	\item \textbf{Signatures}: 65 bytes ($R \mathbin{\|} S \mathbin{\|} V$), where $R$ and $S$ are 32-byte integers and $V$ is a 1-byte recovery identifier.
-	\item \textbf{Signed message}: the predicate message hash $m = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, \txhash))$, where $\txhash$ commits to the exclusive request timeout $\tau_Q$, as defined in Sec.~\ref{sec:predicate-framework}.
+	\item \textbf{Signed message}: the predicate message hash $m = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, \txhash))$, where $\txhash$ commits to the exclusive request timeout, as defined in Sec.~\ref{sec:predicate-framework}.
 \end{itemize}
 
 

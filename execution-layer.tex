@@ -55,10 +55,12 @@ A \emph{token}\index{token!structure} is a self-contained data structure carryin
 \]
 where $T_0^\mathsf{cert}$ is a certified mint transaction and $T_i^\mathsf{cert}$ for $i > 0$ are certified transfer transactions.
 
+Let $\mathbb{T}_\bot=\mathbb{T}\cup\{\bot\}$. Every transaction $T$ carries an exclusive request timeout $\tau_Q(T)\in\mathbb{T}_\bot$, where $\tau_Q(T)=\bot$ delegates the choice of deadline to the Unicity Service and requires no client clock. The timeout occupies a fixed position in the transaction encoding and is committed by the transaction hash in either case (Appendix~\ref{app:encodings}). A certified transaction carries its transaction, the reference time $\tau$ at which its leaf was created, and its inclusion proof. The concrete proof representation also carries the certification data needed to reconstruct the service request and the same reference time. Both must match. (Appendix~\ref{app:execution-layer}).
+
 \subsubsection{Mint Transaction}\label{sec:mint-tx}
 
 \index{mint transaction!structure}
-A \emph{certified mint transaction} is a tuple $(T_0, \tau_{Q,0}, \tau_0, \pi_0)$, where $T_0 = (\sthash, D_\mathsf{mint})$ and
+A \emph{certified mint transaction} is a tuple $(T_0, \tau_0, \pi_0)$, where $T_0$ consists of the source state hash, the common data
 \[
 D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd') .
 \]
@@ -73,8 +75,8 @@ D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason},
 		\item $\mathsf{reason}$ -- mint reason; content depends on the token type. Justifies minting this token, e.g., by proving minting authority
 		\item $\auxd'$ -- auxiliary payload (application-specific; e.g. asset value for fungible tokens)
 	\end{itemize}
-	\item $\tau_{Q,0}$ -- exclusive timeout of the mint certification request
-	\item $\tau_0$ -- reference time the genesis was validated under, bound by the certified leaf value as for a transfer (Sec.~\ref{sec:time-extraction})
+	\item $\tau_Q(T_0)$ -- optional explicit timeout of the mint certification request
+	\item $\tau_0\in\mathbb T$ -- reference time of the round in which the mint leaf was created
 	\item $\pi_0$ -- inclusion proof from the Unicity Service
 \end{itemize}
 
@@ -86,23 +88,23 @@ This ensures that two tokens minted on different networks cannot induce collidin
 
 $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant. The minting key pair $(\mathsf{sk}_\mathsf{mint}, \mathsf{pk}_\mathsf{mint})$ is a public constant; it serves only to provide a uniform request interface with the Unicity Service. Values: Appendix~\ref{app:el-constants}.
 
-\paragraph{Certifying a mint transaction} $T_0 = (\sthash, D_\mathsf{mint})$:
+\paragraph{Certifying a mint transaction} $T_0$:
 \begin{enumerate}
-	\item Choose request timeout $\tau_{Q,0}$
-	\item $\txhash \gets H(D_\mathsf{mint}, \tau_{Q,0})$
+	\item Choose $\tau_Q(T_0)\in\mathbb{T}_\bot$; choosing $\bot$ delegates timeout assignment to the service and requires no local clock
+	\item $\txhash \gets H(D_\mathsf{mint}, \tau_Q(T_0))$
 	\item $h_T \gets H(\sthash, \txhash)$
 	\item $\sigma \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, h_T)$
-	\item $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, \tau_{Q,0}, \sigma)$
+	\item $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, \tau_Q(T_0), \sigma)$
 	\item $\pi_0 \gets \unisrv(Q)$
 \end{enumerate}
 
-\paragraph{Verifying a certified mint transaction} $(T_0, \tau_{Q,0}, \tau_0, \pi_0)$ against trust base $\mathcal{T}$, using known, fixed mint keys:
+\paragraph{Verifying a certified mint transaction} $(T_0, \tau_0, \pi_0)$ against trust base $\mathcal{T}$, using known, fixed mint keys:
 \begin{enumerate}
 	\item require $T_0.D_\mathsf{mint}.\alpha = \pi_0.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$
 	\item derive $\mathsf{id} \gets H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha)$;\; require $T_0.\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
-	\item require $\tau_0 < \tau_{Q,0}$
-	\item $\txhash \gets H(D_\mathsf{mint}, \tau_{Q,0})$;\; require $H(\txhash, \tau_0) = \pi_0.v$
-	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), H(\txhash, \tau_0), \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
+	\item require $\tau_0=\tau(\pi_0)$; derive $\txhash=H(D_\mathsf{mint},\tau_Q(T_0))$ and $v=H(\txhash,\tau_0)$
+	\item if $\tau_Q(T_0)\ne\bot$, require $\tau_0 < \tau_Q(T_0)$
+	\item require $v = \pi_0.v$ and $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), v, \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
 	\item Token type-specific checks on $\mathsf{reason}$ and $\auxd'$ (e.g. mint reason validity and auxiliary payload format and semantics check)
 \end{enumerate}
 
@@ -112,7 +114,7 @@ Correctness of the token id derivation is enforced implicitly by step~2: $\sthas
 \subsubsection{Transfer Transaction}\label{sec:transfer-tx}
 
 \index{transfer transaction!structure}
-A \emph{certified transfer transaction} is a tuple $(T, u, \tau_Q, \tau, \pi)$, where $T = (\sthash, D)$:
+A \emph{certified transfer transaction} is a tuple $(T, \tau, \pi)$, where $T$ consists of the source state hash, the common transaction data $D$, and its request timeout:
 \begin{itemize}
 	\item $D = (\predi', x, \auxd')$ -- transaction data:
 	\begin{itemize}
@@ -120,30 +122,29 @@ A \emph{certified transfer transaction} is a tuple $(T, u, \tau_Q, \tau, \pi)$, 
 		\item $x \gets \{0,1\}^\ell$ -- random value for state hash derivation
 		\item $\auxd'$ -- auxiliary data for the next state
 	\end{itemize}
-	\item $u$ -- unlocking argument satisfying the current predicate $\predi$
-	\item $\tau_Q$ -- exclusive timeout of the certification request
-	\item $\tau$ -- reference time the transition was validated under, returned by the Unicity Service and bound by the certified leaf value (Sec.~\ref{sec:time-extraction})
-	\item $\pi$ -- inclusion proof from the Unicity Service
+	\item $\tau_Q(T)\in\mathbb{T}_\bot$ -- optional explicit timeout of the certification request
+	\item $\tau\in\mathbb T$ -- reference time of the round in which the leaf was created
+	\item $\pi$ -- inclusion proof and associated certification data, including the unlocking argument $u$
 \end{itemize}
 
-\paragraph{Certifying a transfer transaction} $T = (\sthash, D)$ in the current state $(\predi, h)$:
+\paragraph{Certifying a transfer transaction} $T$ in the current state $(\predi, h)$:
 \begin{enumerate}
-	\item Choose request timeout $\tau_Q$
-	\item $\txhash \gets H(D, \tau_Q)$
+	\item Choose $\tau_Q(T)\in\mathbb{T}_\bot$; choosing $\bot$ delegates timeout assignment to the service and requires no local clock
+	\item $\txhash \gets H(D, \tau_Q(T))$
 	\item $h_T \gets H(\sthash, \txhash)$
 	\item Create $u$ such that $\predi(\tau_\mathsf{exp}, h_T, u) = 1$ for an expected system time $\tau_\mathsf{exp}$
-	\item $Q \gets (\predi, \sthash, \txhash, \tau_Q, u)$
+	\item $Q \gets (\predi, \sthash, \txhash, \tau_Q(T), u)$
 	\item $\pi \gets \unisrv(Q)$
 \end{enumerate}
 
-\paragraph{Verifying a certified transfer transaction} $(T, u, \tau_Q, \tau, \pi)$ in state $(\predi, h)$:
+\paragraph{Verifying a certified transfer transaction} $(T, \tau, \pi)$ in state $(\predi, h)$:
 \begin{enumerate}
 	\item $T.\sthash = h$ \quad (state hash matches expected)
 	\item $\pi.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$ \quad (inclusion proof is from the same network as the trust base)
-	\item require $\tau < \tau_Q$ \quad (request was validated before its timeout)
-	\item $\txhash \gets H(T.D, \tau_Q)$;\; require $H(\txhash, \tau) = \pi.v$ \quad (transaction, timeout and reference time bind to the certified SMT leaf value)
-	\item $\predi(\tau, H(\sthash, \txhash), u) = 1$ \quad (predicate satisfied)
-	\item $\mathcal{V}(H(\predi, T.\sthash), H(\txhash, \tau), \pi, \mathcal{CD}_\beta, \mathcal{T}) = 1$ \quad (inclusion proof valid and certified by the correct shard)
+	\item require $\tau=\tau(\pi)$; derive $\txhash=H(T.D,\tau_Q(T))$ and $v=H(\txhash,\tau)$
+	\item if $\tau_Q(T)\ne\bot$, require $\tau < \tau_Q(T)$
+	\item require $\predi(\tau, H(\sthash, \txhash), u) = 1$, where $u$ is recovered from the certification data accompanying $\pi$
+	\item $\mathcal{V}(H(\predi, T.\sthash), v, \pi, \mathcal{CD}_\beta, \mathcal{T}) = 1$ \quad (inclusion proof valid and certified by the correct shard)
 	\item Additional token type-specific checks
 \end{enumerate}
 
@@ -162,14 +163,14 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
-	\State \Parse $T_0^\mathsf{cert}$ \textbf{as} $(T_0, \tau_{Q,0}, \tau_0, \pi_0)$
+	\State \Parse $T_0^\mathsf{cert}$ \textbf{as} $(T_0, \tau_0, \pi_0)$
 	\If {$T_0.D_\mathsf{mint}.\alpha \ne \mathcal{T}.\alpha$} \Return \FALSE \EndIf
-	\If {$\neg \Call{VerifyMintTransaction}{T_0, \tau_{Q,0}, \tau_0, \pi_0, \mathcal{T}}$} \Return \FALSE \EndIf
+	\If {$\neg \Call{VerifyMintTransaction}{T_0, \tau_0, \pi_0, \mathcal{T}}$} \Return \FALSE \EndIf
 	\State $\predi^0 \gets T_0.D_\mathsf{mint}.\predi'$
 	\State $h^0 \gets H(H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha), \mathsf{MINT\_SUFFIX})$
 	\For {$i \gets 1 \ldots n$}
-		\State \Parse $T_i^\mathsf{cert}$ \textbf{as} $(T_i, u_i, \tau_{Q,i}, \tau_i, \pi_i)$
-		\If {$\neg \Call{VerifyTransferTransaction}{T_i, u_i, \tau_{Q,i}, \tau_i, \pi_i, \predi^{i-1}, h^{i-1}, \mathcal{T}}$} \Return \FALSE \EndIf
+		\State \Parse $T_i^\mathsf{cert}$ \textbf{as} $(T_i, \tau_i, \pi_i)$
+		\If {$\neg \Call{VerifyTransferTransaction}{T_i, \tau_i, \pi_i, \predi^{i-1}, h^{i-1}, \mathcal{T}}$} \Return \FALSE \EndIf
 		\State $\predi^{i} \gets T_i.D.\predi'$
 		\State $h^{i} \gets H(h^{i-1}, T_i.D.x)$
 	\EndFor
@@ -191,7 +192,7 @@ A \emph{predicate} $\predi_\mathsf{name}(\mathsf{par}; \cdot)$ is a boolean func
 	\item \textbf{Parameters} $\mathsf{par}$ -- type-dependent configuration (e.g. a public key)
 	\item \textbf{Arguments} $(\tau, m, u)$:
 	\begin{itemize}
-		\item $\tau \in \mathbb{T}$ -- system time, extracted from the Unicity Seal timestamp $C^\mathsf{r}.t_r$
+		\item $\tau \in \mathbb{T}$ -- certified request-validation reference time (Sec.~\ref{sec:time-extraction})
 		\item $m \in \hashtype$ -- message hash $H(\sthash, \txhash)$, where $\txhash$ commits to the request timeout
 		\item $u$ -- unlocking argument, structure depends on predicate type
 	\end{itemize}
@@ -216,9 +217,9 @@ where $UC_-$ is the last valid Unicity Certificate of that shard (which the Aggr
 The BFT Core verifies the Aggregator's choice of reference time as part of request admission (Sec.~\ref{certification-request}, check $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta,\sigma].UC_-.C^\mathsf{r}.t_r$).
 
 \paragraph{Binding to the certified leaf.}
-$\tau$ is committed by the leaf value the Unicity Service records, $H(\txhash, \tau)$ (Sec.~\ref{sec:request-validation}), and is carried with the transition. A verifier recomputes that value from the transaction data and the carried $\tau$ and requires it to equal the certified leaf value; a mismatch rejects. This is what makes re-validation deterministic and independent of \emph{which} inclusion proof establishes the leaf.
+For every request, $\tau$ is committed by the leaf value $H(\txhash, \tau)$ (Sec.~\ref{sec:request-validation}) and is carried with the transition. A verifier recomputes that value from the transaction data and the carried $\tau$ and requires it to equal the certified leaf value; a mismatch rejects. This makes re-validation deterministic and independent of which inclusion proof establishes the leaf. The invariant applies equally when the request timeout is omitted and assigned by the service.
 
-The alternative of reading the time off the proof, as $\mathsf{time}(\pi^\mathsf{inc}) = UC.\mathcal{IR}.t$, is correct only for the proof issued in the transition's own round. The SMT is append-only, so a leaf can be certified afresh against any later root, and a later proof carries a later round's $\mathcal{IR}.t$. Reference time is therefore a property of the leaf, not of the proof: proofs are replaceable, and the leaf value is not.
+Reading the time only from $UC.\mathcal{IR}.t$ identifies the validation time for a proof issued in the transition's own round. The SMT is append-only, so a leaf can be certified afresh against any later root, whose Input Record carries another round's reference time. The carried value $\tau(\pi)$ is therefore a property of the certified leaf rather than of the replaceable certificate chain.
 
 Note that $UC.\mathcal{IR}.t \ne UC.C^\mathsf{r}.t_r$ in general: $\mathcal{IR}.t$ is the reference time of the round \emph{being} certified (taken from the prior seal), whereas $C^\mathsf{r}.t_r$ is the wall-clock time at which the new seal itself was produced. It is $\mathcal{IR}.t$ that enters the leaf value.
 
@@ -344,12 +345,12 @@ This section describes how the execution layer interacts with the Unicity Servic
 
 \subsection{Certification Request}
 
-A certification request from the execution layer is a tuple $Q = (\predi, \sthash, \txhash, \tau_Q, u)$, where:
+A certification request from the execution layer is a tuple $Q = (\predi, \sthash, \txhash, \bar\tau_Q, u)$, where:
 \begin{itemize}
 	\item $\predi$ -- spending predicate of the current owner
 	\item $\sthash$ -- current state hash
-	\item $\txhash$ -- transaction hash, committing to transaction data and $\tau_Q$
-	\item $\tau_Q$ -- exclusive request timeout
+	\item $\txhash$ -- transaction hash, committing to transaction data and the timeout when one is explicit
+	\item $\bar\tau_Q\in\mathbb{T}_\bot$ -- optional explicit, exclusive request timeout
 	\item $u$ -- unlocking argument satisfying $\predi$
 \end{itemize}
 
@@ -359,13 +360,13 @@ The Unicity Service processes the request as follows:
 \begin{enumerate}
 	\item Compute state identifier: $\mathsf{sid} \gets H(\predi, \sthash)$
 	\item Compute message hash: $m \gets H(\sthash, \txhash)$
-	\item Check timeout: verify $\tau < \tau_Q$
+	\item Assign or recover the effective timeout $\widehat\tau_Q$ and verify $\tau < \widehat\tau_Q$
 	\item Evaluate predicate: verify $\predi(\tau, m, u) = 1$
 	\item Check uniqueness: verify $R[\mathsf{sid}] = \bot$
-	\item If both checks pass: $R[\mathsf{sid}] \gets H(\txhash, \tau)$
+	\item If all checks pass: $R[\mathsf{sid}] \gets \lambda(Q,\tau)$
 \end{enumerate}
 
-The leaf value binds the reference time the request was validated under, not the transaction hash alone. The Aggregator does not choose it: the BFT Core derives every leaf value of a round from the declared batch and $\mathsf{CR}.\mathcal{IR}.t$ before verifying the consistency proof (Sec.~\ref{sec:derived-leaf-values}), so a round built under any other $\tau$ yields a root the Core does not accept.
+For every request, the leaf value binds the reference time under which the request was validated. The BFT Core derives all leaf values from the declared transaction hashes and $\mathsf{CR}.\mathcal{IR}.t$ before verifying the consistency proof (Sec.~\ref{sec:derived-leaf-values}). Timeout omission affects transaction construction and admission policy, but not this commitment.
 
 If the request is accepted, the Unicity Service returns an inclusion proof $\pinc$. If the request is expired, the state has already been spent, or the predicate evaluation fails, the request is rejected.
 
@@ -397,8 +398,8 @@ Figure~\ref{fi:exec-transaction-flow} illustrates one complete token transfer, f
                     $x \gets \{0,1\}^\ell$     \\
                     $D = (\predi', x, \auxd')$ \\
                     $T = (\sthash, D)$         \\
-                    choose $\tau_Q$ \\
-                    $\txhash \gets H(D, \tau_Q)$ \\
+                    choose $\bar\tau_Q\in\mathbb{T}_\bot$ \\
+                    $\txhash \gets H(D,\bar\tau_Q)$ \\
                     $h_T = H(\sthash, \txhash)$ \\
                     $u$ such that $\predi(\tau_\mathsf{exp}, h_T, u) = 1$
                 }
@@ -406,13 +407,13 @@ Figure~\ref{fi:exec-transaction-flow} illustrates one complete token transfer, f
             \end{call}
 
             % Sender requests certification from Unicity Service
-            \begin{messcall}{S}{$Q = (\predi, \sthash, \txhash, \tau_Q, u)$}{US}
+            \begin{messcall}{S}{$Q = (\predi, \sthash, \txhash, \bar\tau_Q, u)$}{US}
                 \postlevel
                 \begin{call}{US}{\shortstack[l]{
-                    $\tau < \tau_Q$ \\
+                    $\tau < \widehat\tau_Q$ \\
                     $\predi(\tau, H(\sthash, \txhash), u) \stackrel{?}{=} 1$ \\
                     $R[H(\predi, \sthash)] \stackrel{?}{=} \bot$ \\
-                    $R[H(\predi, \sthash)] \gets H(\txhash,\tau)$
+                    $R[H(\predi, \sthash)] \gets \lambda(Q,\tau)$
                     }}{US}{}
                 \end{call}
             \end{messcall}
@@ -421,23 +422,24 @@ Figure~\ref{fi:exec-transaction-flow} illustrates one complete token transfer, f
             \end{messcall}
 
             % Sender sends certified transaction to recipient
-            \begin{messcall}{S}{$\mathcal{L} \cup (T, u, \tau_Q, \tau, \pinc)$}{R}
+            \begin{messcall}{S}{$\mathcal{L} \cup (T, \tau, \pinc)$}{R}
                 \postlevel
                 \postlevel
                 \postlevel
                 \postlevel
                 \begin{call}{R}{\shortstack[l]{
                     $T.\sthash \stackrel{?}{=} H(h^\textsf{prev}_\mathsf{st}, x_\textsf{prev})$ \\
-                    $\tau < \tau_Q$ \\
-                    $\txhash \gets H(D,\tau_Q);\;\; H(\txhash,\tau) \stackrel{?}{=} \pinc.v$ \\
+                    $\tau \stackrel{?}{=} \tau(\pinc)$ \\
+                    derive $(\txhash,v)$ \\
+                    $v \stackrel{?}{=} \pinc.v$ \\
                     $\predi(\tau, H(\sthash, \txhash), u) \stackrel{?}{=} 1$ \\
-                    $\mathcal{V}(H(\predi, T.\sthash), H(\txhash,\tau), \pinc, \mathcal{CD}_\beta, \mathcal{T}) \stackrel{?}{=} 1$ \\
+                    $\mathcal{V}(H(\predi, T.\sthash), v, \pinc, \mathcal{CD}_\beta, \mathcal{T}) \stackrel{?}{=} 1$ \\
                     Accept if all checks pass
                     }}{R}{}
                 \end{call}
             \end{messcall}
         \end{sequencediagram}
-        \caption{One Unicity transaction. The predicate $\predi$ represents the current ownership condition, and the capability to unlock $\predi'$ defines the new owner. The request is valid only for a round whose reference time $\tau$ satisfies $\tau<\tau_Q$.}\label{fi:exec-transaction-flow}
+        \caption{One Unicity transaction. The predicate $\predi$ represents the current ownership condition, and the capability to unlock $\predi'$ defines the new owner. The request is valid only for a round whose reference time $\tau$ satisfies $\tau<\widehat\tau_Q$.}\label{fi:exec-transaction-flow}
     \end{center}
 \end{figure}
 

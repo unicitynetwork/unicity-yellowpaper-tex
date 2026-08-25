@@ -362,7 +362,7 @@ Note that a block can be without any requests; however, this does not necessaril
 
 \emph{Validating} Unicity Service Requests is performing their full verification, according to Unicity Platform Specification, section \titleref{sec:request-validation}, and performing partition specific additional checks. The requests must appear in the \emph{proposal} in the same order. Requests without interdependencies (i.e., affecting distinct state) can be executed in parallel. Invalid requests are not executed and not included into produced proposal.
 
-The expiration of a Unicity Service Request is checked against the time value $t$ obtained from the previous UC and recorded as the current round's $UC.IR.t$. A request with $t \ge Q.\tau_Q$ is invalid.
+The expiration of a Unicity Service Request is checked against its effective timeout $\widehat\tau_Q$ and the time value $t$ obtained from the previous UC and recorded as the current round's $UC.IR.t$. A request with $t \ge \widehat\tau_Q$ is invalid. When the requester omits an explicit timeout, $\widehat\tau_Q$ is service metadata derived from a consensus reference time as specified in Sec.~\ref{sec:request-validation}.
 
 Refer to Algorithm~\ref{alg:execute} for details.
 
