@@ -53,7 +53,7 @@ A token type registry entry publishes the definition manifest behind a type iden
 \textbf{Field} & \textbf{Description} \\
 \hline
 \endhead
-$\mathsf{ty}$ & token type identifier (unique registry key, never reassigned) \\
+$\mathsf{ty}$ & token type identifier ((forever) unique registry key) \\
 status & \texttt{draft} $\mid$ \texttt{active} $\mid$ \texttt{deprecated} \\
 standard & the standard token type this entry instantiates (e.g.\ UTS-1, Sec.~\ref{app:standard-types}), or a reference (URL and hash) to a frozen custom specification \\
 $\mathsf{RT}$ & admissible mint-reason format tags (Sec.~\ref{app:reason-formats}) \\
@@ -86,6 +86,8 @@ $\bot$ & absent reason & specified & admissible iff $\bot \in \mathsf{RT}$ (Sec.
 39048 & BridgeMintReason & specified & Sec.~\ref{sec:bridge-in}, Appendix~\ref{app:bridging-backing-reason} \\
 $\mathsf{ISSUER\_TAG}$ & MintReasonIssuer & draft & Sec.~\ref{app:reason-issuer} \\
 $\mathsf{SLOT\_TAG}$ & MintReasonSlot & draft & Sec.~\ref{app:reason-slot} \\
+$\mathsf{VRF\_TAG}$ & MintReasonVRF & draft & Sec.~\ref{app:reason-vrf} \\
+$\mathsf{SERIAL\_TAG}$ & MintReasonSerial & draft & Sec.~\ref{app:reason-serial} \\
 $\mathsf{SPLITREF\_TAG}$ & MintReasonSplitRef & draft & Sec.~\ref{app:reason-splitref} \\
 $\mathsf{MERGE\_TAG}$ & MintReasonMerge & draft & Sec.~\ref{app:reason-merge} \\
 $\mathsf{CONVERT\_TAG}$ & MintReasonConvert & draft & Sec.~\ref{app:reason-convert} \\
@@ -140,31 +142,36 @@ Minting is gated by an issuer's authorization. Rather than fixing a signature sc
 \begin{description}
 	\item[No replay] $m_\mathsf{mint}$ binds the authorization to one token identifier, recipient and payload (Sec.~\ref{app:genesis-commitment}).
 	\item[No retroactive revocation] A distributed, offline-verifiable token cannot be invalidated after issuance; compromised issuer keys are handled by deprecating the type and registering a successor, which stops \emph{future} issuance only.
-	\item[Supply discipline] Per-token verification is stateless: each genesis verifies independently, so this format alone cannot enforce a total-supply cap --- supply rests on issuer discipline. Where a hard, trustlessly verifiable issuance limit is required, the slot-bound format (Sec.~\ref{app:reason-slot}) is used instead.
+	\item[Supply discipline] This format alone leaves the number of authorized geneses unbounded. A type can nevertheless enforce a hard cap by additionally fixing its only permitted direct-issuance identity and amount (the singleton profile, Sec.~\ref{app:uts-singleton}). Independently issued capped series use the VRF or committed-slot formats below. The complete type policy, including every admitted reason format, determines whether issuance is bounded.
 \end{description}
 
-\subsection{Limited Issue Reason}\label{app:reason-slot}
+\subsection{Committed-Slot Reason}\label{app:reason-slot}
 
 \index{mint reason!slot-bound}\index{issuance limit}
-The issuer-signature format (Sec.~\ref{app:reason-issuer}) leaves total supply unbounded. The limited issue reason format makes an issuance limit \emph{trustlessly} verifiable by every recipient by making every issuance bound to a specific slot. The type definition pre-commits a finite set of $N$ \emph{issuance slots}, each slot deterministically fixes the certification state of its genesis, and the Unicity Service's single-spend rule (Sec.~\ref{sec:request-validation}) --- the same mechanism that prevents double spending --- guarantees that each slot is minted at most once, network-wide, forever. Recipient checks are purely local; the limit holds even against a malicious issuer, without any registry query, global view, or trusted party.
+This optional format supports independent issuance with arbitrary pre-committed denominations or NFT content (profile S, Sec.~\ref{app:uts-slots}). The type definition commits a finite set of $N$ \emph{issuance slots}; each slot fixes one genesis certification state. The Unicity Service's single-spend rule (Sec.~\ref{sec:request-validation}) then permits at most one certified genesis per slot on a given network. A recipient checks its own commitment proof locally; no query for other tokens is needed. The singleton and VRF profiles avoid constructing this table when arbitrary per-slot commitments are unnecessary (Sec.~\ref{app:uts-capped}).
 
 \subsubsection{Slot Commitment}
 
 At type creation the issuer samples independent slot salts $\mathsf{salt}_1, \ldots, \mathsf{salt}_N$, each with at least 128 bits of min-entropy (a stronger requirement than the generic salt rule of Sec.~\ref{sec:mint-tx}: here unpredictability is security-relevant, see below), and fixes per-slot payload constraints $b_1, \ldots, b_N$ with $b_j \in \bytestr \opt$: a non-$\bot$ value mandates the exact genesis payload byte string of slot $j$ (e.g.\ its denomination); $\bot$ leaves the payload to mint time. Define the ASCII domain separators $\mathsf{SLOT\_SALT} = \texttt{"UNICITY\_SLOT\_SALT"}$ and $\mathsf{SLOT\_LEAF} = \texttt{"UNICITY\_SLOT\_LEAF"}$, and derive
 \[
-h_j := \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_SALT}, \mathsf{salt}_j)),
-\qquad
-\mathsf{leaf}_j := \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_LEAF}, h_j, b_j)).
+\begin{aligned}
+h_j &:= \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_SALT}, \mathsf{salt}_j)),\\
+\mathsf{leaf}_j &:= \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_LEAF}, h_j, b_j)).
+\end{aligned}
 \]
-The \emph{slot commitment} $r_\mathsf{slots}$ is the root of a Radix Sparse Merkle Tree (Appendix~\ref{app:rsmt}) mapping, for $j = 1, \ldots, N$, the key $k_j$ --- the 256-bit big-endian encoding of $j-1$ --- to the value $\mathsf{leaf}_j$. The type manifest pins $(N, r_\mathsf{slots}, \predi_\mathsf{issue})$, with $2 \le N \le 2^{32}$.
+The type manifest pins the slot mode, $N$, $r_\mathsf{slots}$ and $\predi_\mathsf{issue}$, with $1 \le N \le 2^{32}$. Let $k_j$ be the 256-bit big-endian encoding of $j-1$. The mode fixes the tree and its interpretation; a mint cannot choose another mode:
+\begin{description}
+	\item[Count mode (NFTs)] $r_\mathsf{slots}$ is the root of an RSMT (Appendix~\ref{app:rsmt}) mapping $k_j$ to $\mathsf{leaf}_j$. The payload constraint $b_j$ is either an exact NFT payload or $\bot$.
+	\item[Value mode (fungible assets)] The manifest additionally pins one asset identifier $\mathsf{aid}$ and $1 \le X < 2^{256}$. Every $b_j$ MUST be the canonical encoding of $\{(\mathsf{aid},v_j)\}$, with $v_j \ge 1$. Build an RSMST (Appendix~\ref{app:rsmst}) with leaves $(k_j,\mathsf{leaf}_j,v_j)$; its root hash is $r_\mathsf{slots}$ and its root sum MUST equal $X$. All amounts, subtree sums and the total are strictly below $2^{256}$; overflow rejects.
+\end{description}
 
-The issuer SHOULD publish the \emph{audit table} $\langle(h_1, b_1), \ldots, (h_N, b_N)\rangle$ alongside the type definition: it reveals no salt, and it lets anyone recompute $r_\mathsf{slots}$, count the slots, and sum the committed denominations --- the issuance limit is thereby a public, independently checkable fact of the frozen type definition. The salts themselves remain secret until their slots are minted.
+The issuer SHOULD distribute the \emph{audit table} $\langle(h_1, b_1), \ldots, (h_N, b_N)\rangle$ alongside the type definition when users need to inspect the entire allocation or content set. This is an immutable file, distributable by ordinary file hosting or with the definition; it needs no public blockchain or mutable shared registry. The table reveals no salt and lets readers reconstruct the committed tree. It is \emph{not required to verify the cap}: count mode bounds the accepted indices, and value mode proves the committed total from each token's sum proof. A plain Merkle membership proof would not establish that total. The salts themselves MUST remain confidential until their mints have been certified (Sec.~\ref{app:capped-availability}).
 
 \subsubsection{Slot Uniqueness}
 
 The mint of slot $j$ MUST use $D_\mathsf{mint}.\mathsf{salt} = \mathsf{salt}_j$. The genesis certification state is then a deterministic function of the slot: $\mathsf{id} = H(\mathsf{salt}_j, \alpha)$, source state hash $\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$, minting key $\mathsf{pk}_\mathsf{mint}$ derived from $\mathsf{id}$ (Appendix~\ref{app:el-constants}), and state identifier $\mathsf{sid} = H(\mathsf{pk}_\mathsf{mint}, \sthash)$. The Unicity Service certifies at most one transaction per state identifier (Sec.~\ref{sec:request-validation}); hence at most one certified genesis per slot can ever exist on network $\alpha$ --- a second mint of slot $j$, by the issuer or anyone else, is rejected exactly as a double spend would be.
 
-Consequently, for a type whose admissible set satisfies $\mathsf{RT} \subseteq \{\mathsf{SLOT\_TAG}, 39044, \mathsf{SPLITREF\_TAG}, \mathsf{MERGE\_TAG}\}$, at most $N$ geneses are ever created by direct issuance, and every other admitted format strictly conserves value (Secs.~\ref{sec:split-verification}, \ref{app:reason-splitref}, \ref{app:reason-merge}). The total value ever issued is therefore bounded by $\sum_{j} \Call{Value}{b_j}$, and the token count of a count-capped series by $N$. Admitting any non-conserving format (e.g.\ $\mathsf{ISSUER\_TAG}$) alongside $\mathsf{SLOT\_TAG}$ voids the bound; the admissible set is part of the frozen manifest, so a verifier sees at type-registration time whether the limit is unconditional.
+Consequently, at most $N$ geneses can be created by slot issuance. In value mode the RSMST proof additionally bounds the sum of all provable denominations by $X$, including against a maliciously constructed tree (Sec.~\ref{sec:rsmst-properties}). Admitting only the slot format and the value-conserving split/merge formats bounds outstanding fungible value by $X$, but does not bound the number of split-created containers. In count mode, split and merge MUST be excluded, so at most $N$ NFT items can ever be issued. No additional direct-issuance format is admitted by this profile.
 
 \subsubsection{Reason Body}
 
@@ -175,7 +182,7 @@ CBOR array under tag $\mathsf{SLOT\_TAG}$:
 \hline
 0 & unsigned integer & format version; this specification defines version $1$ \\
 1 & unsigned integer & slot index $j$, $1 \le j \le N$ \\
-2 & Inclusion Certificate & RSMT inclusion certificate $C^\mathsf{inc}$; CBOR array \\
+2 & CBOR array & count mode: RSMT inclusion certificate; value mode: RSMST proof (Sec.~\ref{app:split-allocation-proof}) \\
 3 & byte string or \texttt{null} & the committed payload constraint $b_j$ \\
 4 & Unlocking Argument & unlocking argument $u$ for $\predi_\mathsf{issue}$ (Appendix~\ref{app:predicate-encoding}); CBOR structure \\
 \end{longtable}
@@ -185,7 +192,15 @@ CBOR array under tag $\mathsf{SLOT\_TAG}$:
 As $V_{\mathsf{SLOT\_TAG}}$ in Alg.~\ref{alg:mint-auth}:
 \begin{enumerate}
 	\item Decode $(\mathsf{ver}, j, \pi_\mathsf{slot}, b_j, u)$; ensure $\mathsf{ver} = 1$ and $1 \le j \le N$.
-	\item Recompute $h \gets \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_SALT}, D_\mathsf{mint}.\mathsf{salt}))$ and $\mathsf{leaf} \gets \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_LEAF}, h, b_j))$; ensure $\textsc{rsmt\_verify\_inclusion}(\pi_\mathsf{slot}, r_\mathsf{slots}, k_j, \mathsf{leaf}) = 1$ (Appendix~\ref{sec:rsmt-verify-inclusion}), with $k_j$ the 256-bit big-endian encoding of $j-1$.
+	\item With $s=D_\mathsf{mint}.\mathsf{salt}$, recompute
+\[
+\begin{aligned}
+h &\gets \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_SALT},s)),\\
+\mathsf{leaf} &\gets \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SLOT\_LEAF},h,b_j)).
+\end{aligned}
+\]
+Let $k_j$ be the 256-bit big-endian encoding of $j-1$.
+	\item In count mode, ensure $\textsc{rsmt\_verify\_inclusion}(\pi_\mathsf{slot}, r_\mathsf{slots}, k_j, \mathsf{leaf}) = 1$ (Sec.~\ref{sec:rsmt-verify-inclusion}). In value mode, require $b_j \ne \bot$ and decode it as exactly $\{(\mathsf{aid},v_j)\}$ for the pinned asset, with $v_j \ge 1$; verify the RSMST proof for $(k_j,\mathsf{leaf},v_j)$ against $r_\mathsf{slots}$ and require success and reconstructed root sum $X$ (Sec.~\ref{sec:rsmst-verify-inclusion}).
 	\item If $b_j \ne \bot$: ensure $D_\mathsf{mint}.\auxd' = b_j$ byte-exactly.
 	\item $m_\mathsf{mint} \gets$ genesis commitment (Sec.~\ref{app:genesis-commitment}); ensure $\predi_\mathsf{issue}(\mathsf{time}(\pi_0), m_\mathsf{mint}, u) = 1$.
 \end{enumerate}
@@ -193,14 +208,58 @@ The driver additionally validates the payload against $\Call{ParseAux}{}$ and th
 
 \paragraph{Security notes.}
 \begin{description}
-	\item[Hard limit] At most $N$ slot geneses ever, enforced by the single-spend registry; with value-committed slots, cumulative issuance never exceeds $\sum_j \Call{Value}{b_j}$, even if the issuer is malicious or its keys are compromised.
-	\item[No slot blocking] Occupying slot $j$'s certification state requires its $\mathsf{sid}$, which derives from $\mathsf{id}_j = H(\mathsf{salt}_j, \alpha)$. The audit table exposes only $h_j$ --- a domain-separated hash image unrelated to $\mathsf{id}_j$ --- and a certification request itself carries only hash images of the salt (Sec.~\ref{sec:mint-tx}), so even the certified genesis reveals $\mathsf{salt}_j$ no earlier than the token data itself does, by which time the slot is already consumed by the genuine token. Front-running therefore requires inverting SHA-256 or a leak of the issuer's salts.
-	\item[Two-factor issuance] Minting slot $j$ requires both $\mathsf{salt}_j$ (for the leaf check against $r_\mathsf{slots}$) and an unlocking of $\predi_\mathsf{issue}$. Compromise of the signing keys alone, or of the salts alone, mints nothing.
+	\item[Hard limit] At most $N$ direct slot geneses per network; in value mode their cumulative value is at most the manifest's $X$, even if the issuer is malicious or its keys are compromised. Re-minting split/merge outputs conserves that value and is not additional direct issuance.
+	\item[Protection against advance blocking] The audit table exposes $h_j$, not the salt or token identifier. Under the hash assumptions, the public commitment and certification request do not reveal the minting private key. Keeping the token data confidential until certification protects unused slots against advance blocking; the confidentiality and disclosure requirements are in Sec.~\ref{app:capped-availability}.
+	\item[Separate custody] A valid mint requires both $\mathsf{salt}_j$ and an unlocking of $\predi_\mathsf{issue}$. With independent custody, compromise of either alone cannot authorize issuance. Leaked salts nevertheless permit permanent slot blocking; issuance safety and availability are different properties (Sec.~\ref{app:capped-availability}).
 	\item[Fail-safe availability] Lost salts strand the remaining slots: value fails to be created but is never inflated or redirected. The issuer is responsible for durable, confidential storage of unused salts.
 	\item[Denomination rigidity] Committed denominations are fixed at type creation; economic flexibility comes after minting, via split and merge, which conserve the capped total.
 \end{description}
 
-\paragraph{Open (claim-drop) variant.} Publishing the salts themselves and setting $\predi_\mathsf{issue}$ to the trivially-true predicate turns the series into a first-come-first-served public claim: whoever first certifies slot $j$ owns it, uniqueness and the limit still enforced by the platform. Deployments using this variant accept that ``blocking'' and ``claiming'' coincide by design.
+\paragraph{Open (claim-drop) variant.} As an explicit exception to the salt-confidentiality requirements, a deployment MAY publish the salts and set $\predi_\mathsf{issue}$ to the trivially-true predicate to permit public claims. The first \emph{valid} mint to consume a slot creates its token, but an arbitrary certification request can consume the slot without creating any valid token. This variant preserves the cap and deliberately accepts permanent blocking; it does not guarantee that every slot yields a successful claim.
+
+\subsection{VRF Serial Reason}\label{app:reason-vrf}
+
+\index{mint reason!VRF}\index{verifiable random function}
+This format derives a unique mint salt for each serial in a frozen range, without generating or distributing a slot table. It is the default for capped NFT collections (profile V, Sec.~\ref{app:uts-vrf}) and also supports independent, equal-denomination fungible issuance. A verifiable random function (VRF) makes the derivation publicly checkable at mint time while keeping unused mint identities unpredictable to parties without the VRF secret key.
+
+\subsubsection{Parameters and Derivation}
+
+The manifest pins $(\mathsf{lo},\mathsf{hi},\mathsf{suite},\mathsf{pk}_\mathsf{vrf},\predi_\mathsf{issue})$, with $0 \le \mathsf{lo} \le \mathsf{hi} < 2^{32}$ and $N=\mathsf{hi}-\mathsf{lo}+1$. The RECOMMENDED instantiation is \texttt{ECVRF-EDWARDS25519-SHA512-ELL2} from RFC~9381, Sec.~5.5\footnote{\url{https://www.rfc-editor.org/rfc/rfc9381.html}}; this draft's version~1 fixes that suite (manifest value $\mathsf{suite}=4$, RFC suite byte \texttt{0x04}). It uses a 32-byte public key, an 80-byte proof and a 64-byte output. Implementations MUST use the RFC algorithms and encodings, including its key validation with \texttt{validate\_key = TRUE}, and SHOULD check interoperability against Appendix~B.4 of that RFC. Other suites require a separately specified format version.
+
+Define the ASCII byte strings $\mathsf{VRF\_INPUT}=\texttt{"UNICITY\_VRF\_INPUT"}$ and $\mathsf{VRF\_SALT}=\texttt{"UNICITY\_VRF\_SALT"}$. For a serial $j$ in the range, compute
+\[
+\begin{aligned}
+x_j &:= \mathsf{CBOR}(\mathsf{VRF\_INPUT},\alpha,\mathsf{ty},j),\\
+\pi_j &:= \mathsf{ECVRF\_prove}(\mathsf{sk}_\mathsf{vrf},x_j),\\
+y_j &:= \mathsf{ECVRF\_proof\_to\_hash}(\pi_j),\\
+\mathsf{salt}_j &:= \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{VRF\_SALT},x_j,y_j)).
+\end{aligned}
+\]
+Here each $\mathsf{CBOR}$ expression encodes one deterministic array; $\alpha$ and $j$ are unsigned integers, and the other terms are byte strings. The exact bytes $x_j$ are the VRF input, without an additional prehash. Salt derivation uses the \emph{verified VRF output}, never the proof bytes: different proofs for the same output MUST NOT create different mint identities. The manifest is frozen and $\mathsf{ty}$ is determined before these values are computed, so the derivation has no circular commitment. The issuer MUST NOT substitute another key, suite, range or input encoding for the same type.
+
+\subsubsection{Reason Body and Verification}
+
+The body under $\mathsf{VRF\_TAG}$ is the four-element CBOR array $[1,j,\pi_j,u]$: version and serial are unsigned integers, $\pi_j$ is an 80-byte string, and $u$ is an unlocking argument for the pinned issuance predicate. As $V_{\mathsf{VRF\_TAG}}$ in Alg.~\ref{alg:mint-auth}:
+\begin{enumerate}
+	\item Require the exact array shape, version $1$, $\mathsf{suite}=4$, the prescribed key/proof lengths, and $\mathsf{lo} \le j \le \mathsf{hi}$; reject malformed encodings.
+	\item Recompute $x_j$ from the certified mint's network and type and the reason's serial. Run $\mathsf{ECVRF\_verify}(\mathsf{pk}_\mathsf{vrf},x_j,\pi_j)$ with \texttt{validate\_key = TRUE}. Reject every RFC decoding, key-validation or proof-validation failure; take $y_j$ only from a successful verification result.
+	\item Recompute $\mathsf{salt}_j$ from $(x_j,y_j)$ and require $D_\mathsf{mint}.\mathsf{salt}=\mathsf{salt}_j$ byte-for-byte. The ordinary mint checks derive the token identifier and genesis certification state from that salt.
+	\item Require $\predi_\mathsf{issue}(\mathsf{time}(\pi_0),m_\mathsf{mint},u)=1$, using the genesis commitment of Sec.~\ref{app:genesis-commitment}. The driver also applies the profile's payload and issuance checks, including the fixed denomination for fungible deployments.
+\end{enumerate}
+
+\paragraph{Security and operation.} The required property for the cap is one verifiable output per fixed key and input, even when the issuer chooses the key maliciously. The recommended ECVRF provides this full uniqueness property; key validation additionally provides collision resistance under malicious key generation (RFC~9381, Sec.~7.1.1). A generic signature hashed into a salt is not a substitute: a signer may be able to produce multiple valid signatures for one serial.
+
+The cap survives disclosure of the VRF secret key, but unused states then become predictable and blockable. The issuer SHOULD generate and store the VRF key independently of its issuance-signing keys, and MUST keep unused salts, outputs and proofs confidential until certification. An exposed VRF proof reveals the output even without a valid issuer authorization. A public VRF-evaluation endpoint for unused serials therefore defeats the availability protection. Losing the VRF secret strands unused serials unless their proofs and salts were already backed up; changing keys requires a new type. Pseudorandomness assumes proper secret-key generation and secrecy and is not guaranteed against an issuer deliberately revealing its own key (RFC~9381, Sec.~7.1.2). These operational requirements protect availability, not the hard cap.
+
+\subsection{Public Serial Reason}\label{app:reason-serial}
+
+This optional format is for NFT collections that deliberately accept predictable mint states (profile P, Sec.~\ref{app:uts-public-serial}). The manifest pins $(\mathsf{lo},\mathsf{hi},\predi_\mathsf{issue})$ with the same range bounds as the VRF format. Define $\mathsf{SERIAL\_SALT}$ as the ASCII byte string \texttt{"UNICITY\_SERIAL\_SALT"}, and require
+\[
+\mathsf{salt}_j := \mathsf{SHA\text{-}256}\bigl(\mathsf{CBOR}(\mathsf{SERIAL\_SALT},\alpha,\mathsf{ty},j)\bigr).
+\]
+The expression encodes one deterministic array, with unsigned integer network and serial and byte-string domain separator and type. The reason body under $\mathsf{SERIAL\_TAG}$ is $[1,j,u]$. Verification requires this exact shape and version, an unsigned $j$ in the pinned range, byte-exact equality of the derived salt to the mint salt, and $\predi_\mathsf{issue}(\mathsf{time}(\pi_0),m_\mathsf{mint},u)=1$. Ordinary mint and NFT payload checks also apply. The serial is read from this verified reason; a display field cannot override it.
+
+The bounded input range and fixed derivation permit at most $N$ NFT geneses per network. This is a cryptographic uniqueness claim under the hash assumptions, not an assertion that a finite hash is mathematically injective. The derivation includes the type and network to separate collections and networks, and excludes recipient, content, signatures and user-selected randomness so they cannot create a second identity for one serial. Anyone can nevertheless pre-consume these public states with arbitrary certification requests; see Sec.~\ref{app:capped-availability}. Issuer signatures checked by recipients do not prevent that attack.
 
 \subsection{Reference-Form Split Reason}\label{app:reason-splitref}
 
@@ -419,26 +478,82 @@ The authoritative item data is the genesis payload; transfer-level auxiliary dat
 \subsection{UTS-3: Capped-Issuance Series}\label{app:uts-capped}
 
 \index{token type!capped issuance}
-The capped variants of UTS-1 and UTS-2: issuance is signature- or multisig-gated as before, but the issuance limit is enforced by the platform (slot-bound reason, Sec.~\ref{app:reason-slot}) rather than by issuer discipline, so every recipient validates it locally and trustlessly.
+UTS-3 supplies capped variants of UTS-1 and UTS-2. Every valid direct issuance consumes one of a bounded set of genesis certification states; fungible descendants additionally conserve their source value. Recipients verify these facts locally from the frozen definition and token evidence, without observing every issuance. A cap applies separately on each network $\alpha$; the same definition on several networks does not establish a combined cross-network cap.
+
+\subsubsection{Profile Selection}\label{app:capped-selection}
+
+The manifest MUST select exactly one of the following issuance profiles and its parameters. \textbf{Profile F is the default for fungible assets; profile V is the default for NFT collections.} The choice fixes the reason formats and validation rules for the lifetime of the type.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{4.9cm}>{\raggedright\arraybackslash}p{6.6cm}}
+\textbf{Profile} & \textbf{Pick when} & \textbf{Construction and cost} \\
+\hline
+\endhead
+F: Singleton genesis & Fixed fungible supply; distribute a treasury over time. & One initial token of value $X$, then split/merge. Constant-size issuance commitment; descendants share one issuance root. \\
+V: VRF serials & NFTs minted as needed, or independent fungible mints of equal denomination, without a slot table. & Frozen range and VRF key; one VRF proof per direct mint. Requires the specified VRF verifier and confidential key custody. \\
+S: Committed slots & Arbitrary pre-committed denominations or NFT contents; or a deployment needing hash-based commitments instead of a VRF. & Generate $N$ secret salts and a tree; carry a membership or sum proof per mint. Full table distribution is optional for cap verification. \\
+P: Public serials & Publicly enumerable NFT mint identities are required and permanent blocking is acceptable. & Frozen range and public hash derivation; no VRF or slot proof. Not the default for issuer-controlled issuance. \\
+\end{longtable}
+
+Independent mints (V and S) avoid spending a shared treasury state and its accumulated split ancestry. F can obtain parallel distribution by splitting the treasury into allocations beforehand; its full supply is then already issued. S adds arbitrary per-slot commitments and permits separate custody of individual salts. V fixes serial membership without an $O(N)$ commitment table. If the required VRF implementation is unavailable, choose S for NFTs; do not silently substitute P or an unchecked VRF.
+
+\subsubsection{Common Rules}
 
 \begin{itemize}
-	\item \textbf{Type parameters}: the slot commitment $(N, r_\mathsf{slots}, \predi_\mathsf{issue})$, frozen in the manifest; the published audit table makes $N$ and the committed denominations publicly checkable (Sec.~\ref{app:reason-slot}).
-	\item $\mathsf{RT} = \{\mathsf{SLOT\_TAG}\}$, optionally extended with 39044, $\mathsf{SPLITREF\_TAG}$ and $\mathsf{MERGE\_TAG}$ --- all value-conserving, so the limit remains unconditional. No other issuance format may be admitted. Compression (Secs.~\ref{sec:history-compression}, \ref{sec:provenance-compression}) is not an issuance format and never appears in $\mathsf{RT}$; it is available to capped types like any other and does not bear on the cap. A capped type's slot geneses are the issuance roots of its holders' certificates, checked in the clear by every verifier, so the cap is re-established on every verification exactly as it is for an uncompressed token.
+	\item The type identifier MUST be content-addressed (Sec.~\ref{sec:token-type}), committing to the profile, cap, admissible reasons and all issuance parameters. Cap values belong to the consensus-relevant manifest; display metadata is not evidence of a cap.
+	\item A fungible deployment pins one $\mathsf{aid}$ and uses the canonical asset payload rules of UTS-1. Its $\mathsf{RT}$ contains only its selected direct-issuance tag and a subset of $\{39044,\mathsf{SPLITREF\_TAG},\mathsf{MERGE\_TAG}\}$. It SHOULD admit and prefer the reference split form for compressible provenance. Profile F MUST admit at least one split format.
+	\item An NFT deployment uses the payload rules of UTS-2 and admits only its selected direct-issuance tag: no split, merge or conversion. Its serial is the verified reason's $j$, immutable as part of the genesis; it is not an extra, freely chosen field of the UTS-2 payload. Distinct serials do not by themselves prove distinct content.
+	\item Absent reasons and all other issuance paths are excluded. In particular, V and S MUST NOT also admit unrestricted issuer-signature mints; F admits that format only with its singleton restrictions below. Combining profiles requires a separately specified definition with a proof of the combined bound.
+	\item Compression is a representation change, not an issuance format. The original direct-issuance geneses remain the issuance roots presented in the clear and checked by recipients (Sec.~\ref{sec:provenance-compression}). A recipient of a profile-F descendant therefore sees and verifies the original singleton mint even when its split ancestry is compressed.
 \end{itemize}
 
-\paragraph{Capped fungible asset.} Payload rules as UTS-1. Each slot commits its denomination, $b_j = $ the canonical encoding of $\{(\mathsf{aid}, v_j)\}$; the maximum supply is
-\[
-X = \sum_{j=1}^{N} v_j,
-\]
-a public constant of the type: circulating supply can only reach $X$ if all slots are minted, and only decrease thereafter (burns). Typically the schedule is uniform ($v_j = X/N$) or in mixed denominations; holders obtain arbitrary amounts post-mint by split and merge. The registry metadata SHOULD state $X$.
+For fungible assets, $X$ bounds the value created by direct issuance and consequently all outstanding value, including an issuer's undistributed treasury. It does not bound the number of containers or the cumulative value of repeated split/merge mints. A release from a preminted treasury changes distribution, not total supply. Permanent burns can lower outstanding value; the cap does not guarantee that $X$ is ever issued or remains spendable.
 
-\paragraph{Capped collection (NFT series).} Payload rules as UTS-2; the series contains at most $N$ items, and each item carries a public, verifier-checked serial number: token $j$ provably is \emph{item $j$ of a series of at most $N$}. Two sub-variants, per slot:
+\subsubsection{Profile F: Singleton Genesis (Fungible Default)}\label{app:uts-singleton}
+
+The manifest pins $\mathsf{aid}$, $1 \le X < 2^{256}$, $\predi_\mathsf{issue}$ and one salt commitment $h_\mathsf{single}$. Define $\mathsf{SINGLETON\_SALT}$ as the ASCII byte string \texttt{"UNICITY\_SINGLETON\_SALT"}. Deployment and minting proceed as follows:
+\begin{enumerate}
+	\item Sample a 32-byte salt $s$ with at least 128 bits of min-entropy; keep it confidential. Compute
+\[
+h_\mathsf{single}:=\mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{SINGLETON\_SALT},s)),
+\]
+where the input is one deterministic CBOR array of byte strings. Freeze the manifest and derive $\mathsf{ty}$. The commitment omits the future mint transaction and $\mathsf{ty}$, avoiding a circular definition.
+	\item Construct the single direct mint with salt $s$, payload exactly the canonical encoding of $\{(\mathsf{aid},X)\}$, and an issuer-signature reason (Sec.~\ref{app:reason-issuer}) authorizing its complete genesis commitment and chosen first owner. Obtain certification before disclosing the salt or mint data.
+	\item Distribute amounts by ordinary transfers and value-conserving splits; merge to consolidate where admitted. The same split rules bind every output's type and allocation to the consumed source.
+\end{enumerate}
+
+For every $\mathsf{ISSUER\_TAG}$ genesis, $\Call{VerifyIssuance}{}$ MUST recompute the salt commitment and require equality to $h_\mathsf{single}$, require the exact pinned asset and amount $X$, and enforce the pinned issuance predicate through the reason verifier. These singleton checks apply to \emph{direct issuance only}; split and merge outputs are checked by their conservation verifiers and may have different salts and amounts.
+
+Under the hash assumptions, a fixed salt commitment permits one salt, hence one genesis certification state per network. The Service's uniqueness rule permits at most one direct mint even if the issuer signs alternatives. Every admitted descendant conserves that initial value, establishing the cap without a table, supply query or issuer promise. Merely minting a large UTS-1 token without these additional restrictions would not enforce a cap. All $X$ units are issued at genesis; protecting an undistributed balance is ordinary ownership-key custody, and a timed release policy requires additional spending rules.
+
+\subsubsection{Profile V: VRF Serials (NFT Default)}\label{app:uts-vrf}
+
+Use the parameters, derivation and reason verification of Sec.~\ref{app:reason-vrf}, with $\mathsf{VRF\_TAG}$ as the sole direct-issuance tag. Generate an independent VRF key pair, freeze its public key and the serial range in the manifest, and compute each proof and salt only when needed (or retain precomputed values confidentially). Authorize and certify that serial's mint before delivering its data and proof. Each NFT proves that its serial belongs to the range and has only one permitted mint identity; its content is chosen at mint time under the issuer's authorization. Pick S when arbitrary content must instead be committed before issuance.
+
+For an independently issued fungible series, the manifest additionally pins a positive denomination $v$ and $X=Nv<2^{256}$. Type registration MUST check this equality without overflow, and $\Call{VerifyIssuance}{}$ MUST require every direct mint's payload to be exactly $\{(\mathsf{aid},v)\}$. At most $N$ direct mints can then issue at most $X$ units; later splits and merges conserve value. Choose this variant when parallel or staged direct issuance matters and a uniform denomination is sufficient; choose F for ordinary treasury distribution or S for arbitrary denominations. Free choice of the amount at mint time is not permitted by this profile.
+
+\subsubsection{Profile S: Pre-Committed Slots}\label{app:uts-slots}
+
+Use $\mathsf{SLOT\_TAG}$ as the sole direct-issuance tag and construct the commitments of Sec.~\ref{app:reason-slot}. Generate and back up the secret salts, fix the per-slot constraints, build the tree and freeze its root and mode in the manifest. Retain the tree data needed to construct proofs. For each mint, open one commitment with its salt and proof, obtain issuer authorization and certification, and only then disclose the token. A recipient verifies its own proof; it does not need the rest of the table.
+
+Fungible deployments MUST use value mode and pin $\mathsf{aid}$ and $X$: each proof authenticates both the slot's exact denomination and a reconstructed total equal to $X$. The full audit table is optional even for heterogeneous denominations. NFT deployments MUST use count mode, with serials $1,\ldots,N$ and either of the following constraints per slot:
 \begin{description}
-	\item[Pre-committed content] $b_j$ fixes the exact payload $[\mathsf{ver}, h_{\mathsf{content},j}, \mathsf{uri}_j]$ at type creation: the entire series --- membership, order and content --- is frozen before the first mint, and no two committed items need trust to be distinct (their content hashes are in the public audit table).
-	\item[Open content] $b_j = \bot$: only the count and serial numbers are capped; content is chosen at mint time under the issuer's authorization.
+	\item[Pre-committed content] $b_j$ fixes the exact UTS-2 payload, including its content hash and optional URI. A disclosed table lets readers audit the entire collection before issuance. Commitment alone does not establish that content hashes are pairwise distinct: any claim of distinct committed contents requires checking the complete authenticated table for duplicates.
+	\item[Open content] $b_j=\bot$ leaves content to mint time while fixing the serial and mint identity. Choose this when hash-based slot proofs or individual salt custody are preferred to the VRF profile.
 \end{description}
 
-The type identifier SHOULD be content-addressed (Sec.~\ref{sec:token-type}), making $\mathsf{ty}$ itself a commitment to $(N, r_\mathsf{slots}, \predi_\mathsf{issue})$: the cap is then bound into every token of the type by construction.
+\subsubsection{Profile P: Public NFT Serials}\label{app:uts-public-serial}
+
+Use $\mathsf{SERIAL\_TAG}$ as the only admissible reason and the range and derivation of Sec.~\ref{app:reason-serial}. Freeze the definition, derive the public mint salt for a serial, then authorize and certify its mint. This is the least complex serial construction, but any observer can derive every unused certification state as soon as the definition is available. Select it only when that public enumerability is intentional and the application accepts that some or all serials may be permanently blocked. A trivially-true issuance predicate permits public claims, with the same limitation; it does not guarantee a valid token for every serial.
+
+\subsubsection{Availability and Issuance Audits}\label{app:capped-availability}
+
+\paragraph{Predictable mint states can be blocked.} The minting private key is publicly derivable from the token identifier (Appendix~\ref{app:el-constants}). An attacker who learns an unused identifier can submit a signed request for its genesis state with an arbitrary transaction hash. The Service checks the request predicate and state uniqueness, not the token type's mint reason or payload (Sec.~\ref{sec:request-validation}). Such a request can therefore consume the state forever without creating a token any recipient accepts. An issuer signature in the reason does not prevent this denial of issuance. It does prevent acceptance of unauthorized tokens; the cap still holds.
+
+F and S hide unused identities behind high-entropy salt commitments; V derives them using a confidential VRF key. For these protections to apply, the issuer MUST obtain mint certification before exposing the salt, identifier, VRF output or proof to untrusted parties, including an intended recipient. Certification requests expose only the required hash images and mint public key, not those preimages. Disclosure of the completed token is safe because its genesis state is already consumed. Secret loss or premature disclosure can destroy availability but cannot increase the cap. P deliberately gives up this protection. Fixing public-state blocking at the Service would require a separately specified authorization mechanism; it is not assumed here.
+
+\paragraph{A cap is not a public issuance history.} A frozen definition and local proofs establish an upper bound without a shared public blockchain. A disclosed mint's certificate establishes its certification time, but unused-looking private slots or serials may already have been minted without public disclosure. Neither an audit table nor a VRF proves the complete current issued count, circulating supply, or absence of undisclosed mints.
+
+Applications requiring an enforced issuance schedule MUST freeze deterministic serial-specific time windows or release rules in $\Call{VerifyIssuance}{}$ and check each direct mint against $\mathsf{time}(\pi_0)$. These checks must apply independently of issuer discretion; an ordinary signature alone is not a schedule. V and S support such checks without sharing a spendable treasury state. F instead separates the time of initial issuance from later treasury distribution. A publicly auditable \emph{complete} history additionally needs a publication and completeness mechanism, which these profiles do not specify. Do not infer such a history from the cap or the timestamps of a subset of tokens.
 
 \subsection{UTS-4: Pooled Assets}\label{app:uts-pool}
 
@@ -464,7 +579,7 @@ An \emph{autonomous pool} aggregates value of one fungible asset under no party'
 
 Three token types cooperate; all three must be registered in a verifier's $\Gamma.\mathcal{TD}$ for pool-derived tokens to verify (fail-shut otherwise):
 \begin{description}
-	\item[Underlying asset $\mathsf{ty}_\mathsf{A}$] a fungible type (UTS-1 or UTS-3) whose manifest admits $\mathsf{CONVERT\_TAG}$ with $\mathsf{ty}_\mathsf{P} \in \mathcal{CS}$ --- the asset type opts in to the pool by its frozen definition, since its own verifiers must be able to re-check the pool's conservation.
+	\item[Underlying asset $\mathsf{ty}_\mathsf{A}$] a fungible type with UTS-1 payload rules whose manifest admits $\mathsf{CONVERT\_TAG}$ with $\mathsf{ty}_\mathsf{P} \in \mathcal{CS}$ --- the asset type opts in to the pool by its frozen definition, since its own verifiers must be able to re-check the pool's conservation. For a capped asset, this requires a separately specified extension of UTS-3: the standard profiles exclude conversion, and the extension must preserve the cap across plain and pooled value using the conservation argument below.
 	\item[Pool type $\mathsf{ty}_\mathsf{P}$] the state machine defined below. One \emph{pool instance} is one token of this type; instances are distinguished by their token identifiers $\mathsf{id}_\mathsf{P}$, and anyone may open one ($\mathsf{RT} = \{\bot\}$).
 	\item[Share type $\mathsf{ty}_\mathsf{S}$] a fungible type with $\mathsf{RT} = \{\mathsf{CONVERT\_TAG}, 39044, \mathsf{MERGE\_TAG}\}$ and $\mathcal{CS} = \{\mathsf{ty}_\mathsf{P}\}$. Shares use the asset framework (Sec.~\ref{sec:asset-structure}) with \emph{asset identifier $\mathsf{aid} = \mathsf{id}_\mathsf{P}$}: shares of different pool instances are distinct assets, so split and merge conservation automatically prevents mixing them. Shares are ordinary bearer tokens --- transferable, splittable, mergeable.
 \end{description}
@@ -593,7 +708,8 @@ Mint authorization flow, verifier registry, fail-shut policy (Sec.~\ref{sec:toke
 Split reason, bridge backing reason (Appendices~\ref{app:split-proof-encoding}, \ref{app:bridging}) & specified & --- \\
 Registries and record schemas (Sec.~\ref{app:registries}--\ref{app:type-registry}) & draft & freeze record schema after review \\
 Genesis commitment, issuer-signature reason (Sec.~\ref{app:genesis-commitment}, \ref{app:reason-issuer}) & draft & review; allocate tags \\
-Slot-bound issuance reason (Sec.~\ref{app:reason-slot}) & draft & review; allocate tags \\
+Committed-slot reason: count and value modes (Sec.~\ref{app:reason-slot}) & draft & review; allocate tag \\
+VRF and public serial reasons (Secs.~\ref{app:reason-vrf}, \ref{app:reason-serial}) & draft & review; allocate tags; interoperability vectors for serial derivation \\
 Merge reason (Sec.~\ref{app:reason-merge}) & draft & review; allocate tags \\
 Conversion reason (Sec.~\ref{app:reason-convert}) & draft & review; allocate tags \\
 Proof-carrying reason (Sec.~\ref{app:reason-proof}) & draft & select proof-system profile \\
@@ -601,7 +717,7 @@ History compression (Sec.~\ref{sec:history-compression}) & draft & select proof-
 Provenance compression: token evidence, certificates, $\mathfrak{R}_\mathsf{lin}$ (Sec.~\ref{sec:provenance-compression}) & draft & review; encode $\mathcal{K}$ and the evidence set; reference form for conversion and pool records \\
 Reference-form split reason (Sec.~\ref{app:reason-splitref}) & draft & review; allocate tag \\
 UTS-0, UTS-1, UTS-2 (Sec.~\ref{app:uts-blank}--\ref{app:uts-nft}) & draft & review \\
-UTS-3 capped-issuance series (Sec.~\ref{app:uts-capped}) & draft & review \\
+UTS-3 capped issuance: singleton, VRF, committed-slot and public-serial profiles (Sec.~\ref{app:uts-capped}) & draft & review profile policies and cap/availability separation \\
 UTS-4 pooled assets: committee profile (Sec.~\ref{app:uts-pool}) & draft & review \\
 Autonomous pools, incl.\ two-asset swaps (Sec.~\ref{app:autonomous-pools}) & draft & review; freeze record encodings \\
 \end{longtable}
