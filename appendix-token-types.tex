@@ -1,6 +1,6 @@
 \chapter{Token Type Registry and Standard Token Types}\label{app:token-registry}
 
-This appendix specifies the registries that bind token type identifiers (Sec.~\ref{sec:token-types}) to their definitions, and catalogues the standard mint-reason formats and standard token types. The appendix is developed iteratively: items advance from outline through draft to specified across document revisions, with review feedback in between. The specification roadmap and status is in Sec.~\ref{app:staging}.
+This appendix specifies the registries that bind token type identifiers (Sec.~\ref{sec:token-types}) to their definitions, and catalogues the standard mint-reason formats, the issuance policies composed from them, and the standard token types. The appendix is developed iteratively: items advance from outline through draft to specified across document revisions, with review feedback in between. The specification roadmap and status is in Sec.~\ref{app:staging}.
 
 \section{Registries}\label{app:registries}
 
@@ -56,6 +56,7 @@ A token type registry entry publishes the definition manifest behind a type iden
 $\mathsf{ty}$ & token type identifier ((forever) unique registry key) \\
 status & \texttt{draft} $\mid$ \texttt{active} $\mid$ \texttt{deprecated} \\
 standard & the standard token type this entry instantiates (e.g.\ UTS-1, Sec.~\ref{app:standard-types}), or a reference (URL and hash) to a frozen custom specification \\
+issuance policy & the policy of Sec.~\ref{app:issuance-policies} and, for capped issuance, its profile \\
 $\mathsf{RT}$ & admissible mint-reason format tags (Sec.~\ref{app:reason-formats}) \\
 payload rules & parameters of $\Call{ParseAux}{}$, e.g.\ the permitted asset identifiers of a fungible type \\
 issuance parameters & parameters of $\Call{VerifyIssuance}{}$, e.g.\ the issuer predicate hash $H(\mathsf{CBOR}(\predi_\mathsf{issue}))$, a bridge configuration hash $h_\mathsf{cfg}$ (Appendix~\ref{app:bridging-config}), or a proof-system verification key hash $h_\mathsf{vk}$ (Sec.~\ref{app:reason-proof}) \\
@@ -427,58 +428,52 @@ Minting is gated by a succinct (optionally zero-knowledge) proof of an arbitrary
 
 \paragraph{Security notes.} Soundness reduces to the proof system's knowledge soundness and the immutability of $h_\mathsf{vk}$; the upgrade discipline is that of Sec.~\ref{sec:bridge-security}: a relation is never swapped in place, a new relation is a new type. The semantics of the proven statement is part of the frozen definition --- a recipient who cannot obtain and understand the statement's specification MUST NOT register the type (fail-shut). Proof verification cost is constant for SNARKs and is charged against the budget $\Lambda$.
 
-\section{Standard Token Types}\label{app:standard-types}
+\section{Issuance Policies}\label{app:issuance-policies}
 
-\index{token type!standard}
-Standard token types are identified as \emph{UTS-$n$} (Unicity Token Standard); numbers are assigned in the registry. A standard fixes $\mathsf{RT}$, $\Call{ParseAux}{}$ and the shape of $\Call{VerifyIssuance}{}$; a concrete deployed type is an instance of a standard with concrete parameters and its own type identifier.
+\index{issuance policy}\index{issuance!direct}\index{issuance!derived}
+A certified genesis is either a \emph{direct issuance} or a \emph{derived issuance}. A direct issuance creates an item or an amount of value that no certified token of the type held before. A derived issuance re-mints value that certified tokens already hold: a split, reference-form split or merge of tokens of the same type, or a conversion from a declared source type (Sec.~\ref{app:reason-convert}). The conservation checks of its reason format bound a derived issuance by its sources. The admissible reason set of a type accordingly decomposes as
+\[
+\mathsf{RT} = \mathsf{RT}_\mathsf{iss} \cup \mathsf{RT}_\mathsf{der},
+\qquad
+\mathsf{RT}_\mathsf{iss} \cap \mathsf{RT}_\mathsf{der} = \emptyset .
+\]
+The usage standard of the type (Sec.~\ref{app:standard-types}) fixes $\mathsf{RT}_\mathsf{der}$. The \emph{issuance policy} fixes $\mathsf{RT}_\mathsf{iss}$ together with the checks that $\Call{VerifyIssuance}{}$ applies to direct geneses. The two choices are independent. The standard determines what a token is and which operations preserve it; the policy determines who may create tokens and how many can exist. A deployed type freezes one standard, one policy and the parameters of both in its manifest (Sec.~\ref{app:type-registry}).
 
-\subsection{UTS-0: Blank Container}\label{app:uts-blank}
+\begin{longtable}{>{\raggedright\arraybackslash}p{1.9cm}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{3.4cm}}
+\textbf{Policy} & $\mathsf{RT}_\mathsf{iss}$ & \textbf{Parameters} & \textbf{Bound on direct issuance} & \textbf{Ethereum practice} \\
+\hline
+\endhead
+Open & $\{\bot\}$ & none & none & public mint function \\
+Authorized & $\{\mathsf{ISSUER\_TAG}\}$ & $\predi_\mathsf{issue}$ & at the issuer's discretion & owner- or role-restricted mint \\
+Capped & one tag of the selected profile & profile parameters, $\predi_\mathsf{issue}$ & at most $N$ items or $X$ units per network & capped supply (e.g.\ \texttt{ERC20Capped}, fixed-size collections) \\
+Bridged & $\{39048\}$ & $h_\mathsf{cfg}$ & value locked on the external chain & lock-and-mint bridge \\
+Proof-gated & $\{\mathsf{PROOF\_TAG}\}$ & $\mathsf{PS}$, $h_\mathsf{vk}$, schema & as defined by the proven statement & mint guarded by a verifier contract \\
+\end{longtable}
 
-A type reserved for arbitrary, potentially absent payload, with unrestricted minting.
+On Ethereum these restrictions are code in the token contract and are enforced once, when the minting transaction executes. Here every recipient enforces them again, by verifying the genesis of each token it accepts against the frozen definition (Alg.~\ref{alg:mint-auth}). No party keeps a supply counter, so a bound on direct issuance is a property that each token proves about itself and its type, not a figure that anyone can query (Sec.~\ref{app:capped-availability}).
 
-\begin{itemize}
-	\item \textbf{Type identifier}: a single well-known value: the content-addressed identifier (Sec.~\ref{sec:token-type}) of the canonical UTS-0 definition manifest, recorded in the registry.
-	\item $\mathsf{RT} = \{\bot\}$ -- no mint reason; anyone may mint.
-	\item $\Call{ParseAux}{}$ -- accepts any byte string, including absent.
-	\item $\Call{VerifyIssuance}{} \equiv 1$.
-\end{itemize}
+\subsection{Open Issuance}\label{app:policy-open}
 
-A blank token still inherits the platform guarantees: a unique identifier, a certified ownership chain, and double-spend protection. What it lacks is any issuance semantics --- it proves that \emph{someone} minted it, nothing more. It suits application-defined artifacts (tickets, attestations, session tokens, testing) where the application layer assigns and validates its own $\auxd'$ semantics. Generic wallets MUST NOT present UTS-0 tokens as carrying value.
+$\mathsf{RT}_\mathsf{iss} = \{\bot\}$, and $\Call{VerifyIssuance}{}$ imposes no condition on direct geneses beyond the rules of the standard. Anyone can mint any payload that $\Call{ParseAux}{}$ accepts. A token of an open type proves that its identifier was fresh and that its ownership chain is certified; it proves nothing about who minted it. Byte-identical payloads can be minted any number of times under distinct identifiers, so authenticity claims must be carried inside the payload and assessed by the application, for example the creator attribution of UTS-2 (Sec.~\ref{app:nft-attribution}). Where two tokens carry the same content, the certification times $\mathsf{time}(\pi_0)$ of their geneses establish which was minted first.
 
-\subsection{UTS-1: Issued Fungible Asset}\label{app:uts-fungible}
+Open issuance of a fungible asset allows anyone to inflate its supply without limit. Such a type has no value semantics, and wallets MUST NOT present its tokens as carrying value; it is admissible only for testing (e.g.\ a test-network faucet).
 
-The fungible asset standard (the ERC-20 analogue): a divisible, issuer-gated container of assets.
+\subsection{Authorized Issuance}\label{app:policy-authorized}
 
-\begin{itemize}
-	\item $\Call{ParseAux}{}$ -- the canonical asset collection decoding $\Call{Assets}{}$ (Sec.~\ref{sec:asset-structure}, canonical rules of Appendix~\ref{app:split-proof-encoding}); the payload rules pin the permitted asset identifiers.
-	\item $\mathsf{RT} = \{\mathsf{ISSUER\_TAG}, 39044\}$ -- primary issuance by issuer authorization (Sec.~\ref{app:reason-issuer}); change-making by split (Sec.~\ref{sec:token-splitting}). The set MAY additionally include $\mathsf{MERGE\_TAG}$ to permit consolidation (Sec.~\ref{app:reason-merge}) and $\mathsf{SPLITREF\_TAG}$ (Sec.~\ref{app:reason-splitref}) to make split-minted tokens' provenance compressible; a type intended for high circulation SHOULD admit the reference form and its wallets SHOULD prefer it. A \emph{bridged} fungible asset is the variant with $\mathsf{RT} = \{39048, 39044\}$ and the bridge configuration $h_\mathsf{cfg}$ as issuance parameter (Sec.~\ref{sec:bridged-assets}).
-	\item $\Call{VerifyIssuance}{}$ -- for $\mathsf{ISSUER\_TAG}$ geneses, checks the pinned issuer predicate and any per-mint payload constraints (e.g.\ permitted asset identifiers); split geneses are constrained by the split verifier itself (type and value conservation, Sec.~\ref{sec:split-verification}).
-	\item \textbf{Metadata}: a registry entry with $\texttt{assetKind} = \texttt{"fungible"}$, carrying name, symbol, decimals and icons (Sec.~\ref{app:asset-metadata}).
-\end{itemize}
+$\mathsf{RT}_\mathsf{iss} = \{\mathsf{ISSUER\_TAG}\}$. The manifest pins the issuance predicate $\predi_\mathsf{issue}$, and each direct genesis carries the issuer's unlocking argument over its genesis commitment (Sec.~\ref{app:reason-issuer}). The standard may add per-mint payload constraints, e.g.\ the permitted asset identifiers of a fungible type. The number and amount of direct issuances are unbounded: recipients rely on the issuer's discipline, as holders of an Ethereum token rely on the owner of a restricted mint function. Because $\predi_\mathsf{issue}$ is an arbitrary predicate, the issuer may be a single key, a $k$-of-$n$ committee or a time-limited authorization. A compromised issuance key cannot be revoked retroactively (Sec.~\ref{app:reason-issuer}).
 
-A variant with a trustlessly verifiable maximum supply is UTS-3 (Sec.~\ref{app:uts-capped}).
+\subsection{Bridged Issuance}\label{app:policy-bridged}
 
-\subsection{UTS-2: Non-Fungible Token}\label{app:uts-nft}
+$\mathsf{RT}_\mathsf{iss} = \{39048\}$ with the bridge configuration hash $h_\mathsf{cfg}$ as parameter. Each direct genesis proves a lock of the same value on an external chain (Sec.~\ref{sec:bridged-assets}), so outstanding value is bounded by the locked value under the bridge's security assumptions. The bridge specification covers fungible assets only; bridging of non-fungible items is not specified.
 
-The non-fungible token standard (the ERC-721 analogue): each token is one unique item, identified by its token identifier $\mathsf{id}$ (Sec.~\ref{sec:mint-tx}).
+\subsection{Proof-Gated Issuance}\label{app:policy-proof}
 
-\begin{itemize}
-	\item $\Call{ParseAux}{}$ -- the genesis payload is a CBOR array $[\mathsf{ver}, h_\mathsf{content}, \mathsf{uri}]$: format version ($1$); the 32-byte hash of the immutable content; and an optional locator hint ($\bot$ allowed). The content is authenticated by $h_\mathsf{content}$ alone; the URI is a non-authoritative convenience.
-	\item Not splittable: $\mathsf{RT}$ excludes 39044, and the payload is not an asset collection.
-	\item Two deployment profiles:
-	\begin{description}
-		\item[Curated collection] $\mathsf{RT} = \{\mathsf{ISSUER\_TAG}\}$; the type is the collection, and the collection issuer authorizes each mint. The issuer is responsible for not authorizing duplicate content.
-		\item[Open collection] $\mathsf{RT} = \{\bot\}$; anyone mints. Token identifiers remain unique, but nothing prevents two tokens referencing the same content --- provenance must then be established at the application layer (e.g.\ the earlier certified genesis wins, or content signed by its creator).
-	\end{description}
-	\item \textbf{Metadata}: a registry entry with $\texttt{assetKind} = \texttt{"non-fungible"}$ describes the collection; per-item metadata lives in the content addressed by $h_\mathsf{content}$.
-\end{itemize}
+$\mathsf{RT}_\mathsf{iss} = \{\mathsf{PROOF\_TAG}\}$. Each direct genesis carries a succinct proof of a type-defined statement over its genesis commitment (Sec.~\ref{app:reason-proof}). Any bound on issuance is a property of that statement, and a recipient who registers the type accepts the statement's specification as part of the frozen definition.
 
-The authoritative item data is the genesis payload; transfer-level auxiliary data is free-form transport (Sec.~\ref{sec:mint-authorization}) and never redefines the item. A collection with a trustlessly verifiable maximum size is UTS-3 (Sec.~\ref{app:uts-capped}).
+\subsection{Capped Issuance}\label{app:uts-capped}
 
-\subsection{UTS-3: Capped-Issuance Series}\label{app:uts-capped}
-
-\index{token type!capped issuance}
-UTS-3 supplies capped variants of UTS-1 and UTS-2. Every valid direct issuance consumes one of a bounded set of genesis certification states; fungible descendants additionally conserve their source value. Recipients verify these facts locally from the frozen definition and token evidence, without observing every issuance. A cap applies separately on each network $\alpha$; the same definition on several networks does not establish a combined cross-network cap.
+\index{token type!capped issuance}\index{issuance limit}
+The capped policy bounds direct issuance of fungible (UTS-1) and non-fungible (UTS-2) types. Every valid direct issuance consumes one of a bounded set of genesis certification states; fungible descendants additionally conserve their source value. Recipients verify these facts locally from the frozen definition and token evidence, without observing every issuance. A cap applies separately on each network $\alpha$; the same definition on several networks does not establish a combined cross-network cap.
 
 \subsubsection{Profile Selection}\label{app:capped-selection}
 
@@ -501,7 +496,7 @@ Independent mints (V and S) avoid spending a shared treasury state and its accum
 \begin{itemize}
 	\item The type identifier MUST be content-addressed (Sec.~\ref{sec:token-type}), committing to the profile, cap, admissible reasons and all issuance parameters. Cap values belong to the consensus-relevant manifest; display metadata is not evidence of a cap.
 	\item A fungible deployment pins one $\mathsf{aid}$ and uses the canonical asset payload rules of UTS-1. Its $\mathsf{RT}$ contains only its selected direct-issuance tag and a subset of $\{39044,\mathsf{SPLITREF\_TAG},\mathsf{MERGE\_TAG}\}$. It SHOULD admit and prefer the reference split form for compressible provenance. Profile F MUST admit at least one split format.
-	\item An NFT deployment uses the payload rules of UTS-2 and admits only its selected direct-issuance tag: no split, merge or conversion. Its serial is the verified reason's $j$, immutable as part of the genesis; it is not an extra, freely chosen field of the UTS-2 payload. Distinct serials do not by themselves prove distinct content.
+	\item An NFT deployment uses the payload rules of UTS-2 and admits only its selected direct-issuance tag: no split, merge or conversion. Its serial is the verified reason's $j$, immutable as part of the genesis; it is not a field of the UTS-2 payload (Sec.~\ref{app:nft-collection}). Distinct serials do not by themselves prove distinct content.
 	\item Absent reasons and all other issuance paths are excluded. In particular, V and S MUST NOT also admit unrestricted issuer-signature mints; F admits that format only with its singleton restrictions below. Combining profiles requires a separately specified definition with a proof of the combined bound.
 	\item Compression is a representation change, not an issuance format. The original direct-issuance geneses remain the issuance roots presented in the clear and checked by recipients (Sec.~\ref{sec:provenance-compression}). A recipient of a profile-F descendant therefore sees and verifies the original singleton mint even when its split ancestry is compressed.
 \end{itemize}
@@ -537,7 +532,7 @@ Use $\mathsf{SLOT\_TAG}$ as the sole direct-issuance tag and construct the commi
 
 Fungible deployments MUST use value mode and pin $\mathsf{aid}$ and $X$: each proof authenticates both the slot's exact denomination and a reconstructed total equal to $X$. The full audit table is optional even for heterogeneous denominations. NFT deployments MUST use count mode, with serials $1,\ldots,N$ and either of the following constraints per slot:
 \begin{description}
-	\item[Pre-committed content] $b_j$ fixes the exact UTS-2 payload, including its content hash and optional URI. A disclosed table lets readers audit the entire collection before issuance. Commitment alone does not establish that content hashes are pairwise distinct: any claim of distinct committed contents requires checking the complete authenticated table for duplicates.
+	\item[Pre-committed content] $b_j$ fixes the exact UTS-2 payload bytes, e.g.\ a metadata item with inline media or a document link with its content digest (Sec.~\ref{app:nft-items}). A disclosed table lets readers audit the entire collection before issuance. Commitment alone does not establish that content hashes are pairwise distinct: any claim of distinct committed contents requires checking the complete authenticated table for duplicates.
 	\item[Open content] $b_j=\bot$ leaves content to mint time while fixing the serial and mint identity. Choose this when hash-based slot proofs or individual salt custody are preferred to the VRF profile.
 \end{description}
 
@@ -555,7 +550,217 @@ F and S hide unused identities behind high-entropy salt commitments; V derives t
 
 Applications requiring an enforced issuance schedule MUST freeze deterministic serial-specific time windows or release rules in $\Call{VerifyIssuance}{}$ and check each direct mint against $\mathsf{time}(\pi_0)$. These checks must apply independently of issuer discretion; an ordinary signature alone is not a schedule. V and S support such checks without sharing a spendable treasury state. F instead separates the time of initial issuance from later treasury distribution. A publicly auditable \emph{complete} history additionally needs a publication and completeness mechanism, which these profiles do not specify. Do not infer such a history from the cap or the timestamps of a subset of tokens.
 
-\subsection{UTS-4: Pooled Assets}\label{app:uts-pool}
+\section{Standard Token Types}\label{app:standard-types}
+
+\index{token type!standard}
+Standard token types are identified as \emph{UTS-$n$} (Unicity Token Standard); numbers are assigned in the registry. A standard is defined by \emph{usage}. It fixes the payload decoder $\Call{ParseAux}{}$, the derived-issuance formats $\mathsf{RT}_\mathsf{der}$ that the usage requires, any per-transfer checks, and the metadata conventions. It leaves the issuance policy open (Sec.~\ref{app:issuance-policies}), restricted only to the policies that are meaningful for the usage. A deployed type instantiates one standard and one policy with concrete parameters and has its own type identifier. We write, e.g., UTS-1/capped-F for a fungible type under the singleton profile of capped issuance.
+
+The standards aim at functional parity with the corresponding Ethereum token standards, so that their concepts and field names are familiar. They are not interface-compatible. An Ethereum token is an entry in the ledger of a contract; a Unicity token is a bearer object that its recipient verifies. Operations that read or modify a shared ledger (balance queries, total supply, allowances) have no direct counterpart. The correspondence tables below give the substitute where one exists.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{1.1cm}>{\raggedright\arraybackslash}p{1.9cm}>{\raggedright\arraybackslash}p{2.3cm}>{\raggedright\arraybackslash}p{2.3cm}>{\raggedright\arraybackslash}p{2.3cm}>{\raggedright\arraybackslash}p{3.0cm}}
+\textbf{Std.} & \textbf{Usage} & \textbf{Ethereum counterpart} & $\Call{ParseAux}{}$ & $\mathsf{RT}_\mathsf{der}$ & \textbf{Issuance policies} \\
+\hline
+\endhead
+UTS-0 & open container & none & any byte string & $\emptyset$ & open (canonical instance), authorized \\
+UTS-1 & fungible token & ERC-20; fungible part of ERC-1155 & canonical asset collection & split formats, optionally merge and conversion & authorized, capped (F, V, S), bridged, proof-gated \\
+UTS-2 & non-fungible token & ERC-721 and its metadata schema & NFT item & $\emptyset$ & open, authorized, capped (V, S, P), proof-gated \\
+UTS-3 & pooled assets & liquidity pools and their share tokens & UTS-1 collections; pool state & conversion & see Sec.~\ref{app:uts-pool} \\
+\end{longtable}
+
+\subsection{UTS-0: Open Container}\label{app:uts-blank}
+
+A type for arbitrary, possibly absent payload.
+
+\begin{itemize}
+	\item $\Call{ParseAux}{}$ accepts any byte string, including an absent payload.
+	\item $\mathsf{RT}_\mathsf{der} = \emptyset$.
+	\item \textbf{Canonical instance}: open issuance, $\mathsf{RT} = \{\bot\}$ and $\Call{VerifyIssuance}{} \equiv 1$. Its identifier is a single well-known value: the content-addressed identifier (Sec.~\ref{sec:token-type}) of the canonical UTS-0 definition manifest, recorded in the registry. Other instances MAY use authorized issuance; the type then proves which issuer authorized a payload but still assigns the payload no meaning.
+\end{itemize}
+
+An open-payload token inherits the platform guarantees: a unique identifier, a certified ownership chain and double-spend protection. It has no issuance semantics beyond those of its policy. It suits application-defined artifacts (tickets, attestations, session tokens, testing) where the application assigns and validates the meaning of $\auxd'$. Generic wallets MUST NOT present UTS-0 tokens as carrying value.
+
+A wallet MAY display an open token whose payload is a recognized UTS-2 item (Sec.~\ref{app:nft-validity}) as an NFT. That interpretation is presentation only. A payload that fails recognition does not make the token invalid, and a recognized payload in a UTS-0 type carries none of the type-level guarantees of UTS-2.
+
+\subsection{UTS-1: Fungible Token}\label{app:uts-fungible}
+
+The fungible token standard, the analogue of ERC-20: a divisible container of amounts of one or more assets.
+
+\begin{itemize}
+	\item $\Call{ParseAux}{}$ is the canonical asset-collection decoding $\Call{Assets}{}$ (Sec.~\ref{sec:asset-structure}, canonical rules of Appendix~\ref{app:split-proof-encoding}). The payload rules pin the set $\mathcal{AID}_\mathsf{ty}$ of permitted asset identifiers; a collection with any other identifier rejects.
+	\item $\mathsf{RT}_\mathsf{der} \subseteq \{39044, \mathsf{SPLITREF\_TAG}, \mathsf{MERGE\_TAG}, \mathsf{CONVERT\_TAG}\}$ and contains at least one split format. Divisibility is the defining property of the usage: an owner must be able to pay any amount up to the value of a token (Sec.~\ref{sec:token-splitting}). A type SHOULD admit $\mathsf{MERGE\_TAG}$ for consolidating change (Sec.~\ref{app:reason-merge}). A type intended for high circulation SHOULD admit the reference split form $\mathsf{SPLITREF\_TAG}$ (Sec.~\ref{app:reason-splitref}), and its wallets SHOULD prefer it, so that split-minted provenance is compressible. $\mathsf{CONVERT\_TAG}$ is admitted only by types that participate in pools (Sec.~\ref{app:autonomous-pools}).
+	\item $\Call{VerifyIssuance}{}$ applies the checks of the issuance policy to direct geneses and requires their asset identifiers to lie in $\mathcal{AID}_\mathsf{ty}$. Derived geneses are constrained by their reason verifiers: the output type equals the source type, and value is conserved per asset identifier (Sec.~\ref{sec:split-verification}).
+	\item \textbf{Issuance policies}: authorized issuance for assets issued on demand; capped profile F for a fixed supply distributed from a treasury, profile V for independently minted equal denominations, profile S in value mode for pre-committed denominations; bridged issuance for assets locked on an external chain; proof-gated issuance for type-defined rules. Open issuance is admissible only for testing (Sec.~\ref{app:policy-open}).
+	\item \textbf{Metadata}: a registry entry with $\texttt{assetKind} = \texttt{"fungible"}$, carrying name, symbol, decimals and icons (Sec.~\ref{app:asset-metadata}).
+\end{itemize}
+
+Amounts are integers in minimal units; $\texttt{decimals}$ scales the display only, as in ERC-20. A type that permits several asset identifiers lets one token carry a vector of balances, one per asset, and split and merge conserve each component separately. This corresponds to the fungible part of ERC-1155, in which one contract manages several fungible token identifiers.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{4.2cm}>{\raggedright\arraybackslash}p{10.0cm}}
+\textbf{ERC-20} & \textbf{UTS-1} \\
+\hline
+\endhead
+\texttt{name}, \texttt{symbol}, \texttt{decimals} & registry metadata of the type (Sec.~\ref{app:asset-metadata}); presentation only \\
+\texttt{totalSupply} & no global counter; capped issuance proves an upper bound $X$, not the outstanding amount (Sec.~\ref{app:capped-availability}) \\
+\texttt{balanceOf} & sum of $\Call{Assets}{}$ over the tokens a wallet holds, computed by the holder; not observable by others \\
+\texttt{transfer} & transfer of a token carrying exactly the amount, if necessary after splitting off the amount and change (Sec.~\ref{sec:token-splitting}) \\
+\texttt{approve}, \texttt{allowance}, \texttt{transferFrom} & no allowance ledger; delegated and conditional spending is expressed by the owner predicate: multi-signature, threshold, time lock, hash lock or P2SH (Sec.~\ref{sec:standard-predicates}) \\
+\texttt{Transfer} event & certified transaction, visible to the parties that hold the token; nothing is published \\
+mint (extension) & direct issuance under the type's policy \\
+burn (\texttt{ERC20Burnable}) & burn transaction (Sec.~\ref{sec:burn-transaction}) \\
+\end{longtable}
+
+\subsection{UTS-2: Non-Fungible Token}\label{app:uts-nft}
+
+The non-fungible token standard, the analogue of ERC-721. Each token is one unique item. Its identity is the token identifier $\mathsf{id}$ (Sec.~\ref{sec:mint-tx}), which is unique on the network; its description is the genesis payload $\auxd'_0$, which is immutable. The payload format is the Sphere NFT metadata format\footnote{\url{https://github.com/unicity-sphere/sphere-sdk/blob/main/docs/NFT-METADATA.md}; it contains the byte-level grammars and test vectors that this section omits.}, version~1. Its fields follow the ERC-721 metadata JSON schema, encoded as tagged deterministic CBOR arrays.
+
+\begin{itemize}
+	\item $\Call{ParseAux}{}$ is recognition of an NFT item together with the collection-identity rule (Secs.~\ref{app:nft-validity}, \ref{app:nft-collection}).
+	\item $\mathsf{RT}_\mathsf{der} = \emptyset$. An item is not divisible and cannot be merged or converted.
+	\item \textbf{Issuance policies}: open issuance for a network-wide type in which anyone mints; authorized issuance for a curated collection, in which the type is the collection and its issuer authorizes each item; capped profiles V (default), S (count mode) or P for a collection of bounded size; proof-gated issuance for type-defined rules.
+	\item \textbf{Metadata}: for a collection type, a registry entry with $\texttt{assetKind} = \texttt{"non-fungible"}$ describes the collection (Sec.~\ref{app:asset-metadata}); per-item metadata is the payload.
+\end{itemize}
+
+Transfer-level auxiliary data is free-form transport (Sec.~\ref{sec:mint-authorization}) and never redefines the item.
+
+\subsubsection{Item Structures}\label{app:nft-items}
+
+\index{NFT item}
+An \emph{NFT item} is one of four structures, each a CBOR array under its own semantic tag. The first element is the format version, $1$; the arity is fixed per version, so adding a field requires a new version.
+
+\begin{longtable}{llp{9.2cm}}
+\textbf{Tag} & \textbf{Name} & \textbf{Structure} \\
+\hline
+\endhead
+39052 & NftMetadata & $(1, \mathsf{name}, \mathsf{description}, \mathsf{image}, \mathsf{animation},$\newline\hspace*{1em}$\mathsf{url}, \mathsf{attributes}, \mathsf{collection}, \mathsf{cid})$: item description \\
+39053 & NftMedia & $(1, \mathsf{mt}, b)$: a file $b$ of media type $\mathsf{mt}$, carried inline \\
+39054 & NftLink & $(1, \mathsf{mt}, \mathsf{uri}, h)$: a file of media type $\mathsf{mt}$, hosted at $\mathsf{uri}$, with SHA-256 digest $h$ \\
+39055 & NftSigned & $(1, \mathsf{pk}_\mathsf{c}, c, \sigma)$: an item $c$ with the creator's key and signature \\
+\end{longtable}
+
+NftMetadata fields:
+
+\begin{longtable}{c>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}p{5.6cm}l}
+\textbf{Index} & \textbf{Type} & \textbf{Description} & \textbf{ERC-721} \\
+\hline
+\endhead
+0 & unsigned integer & format version, $1$ & \\
+1 & text & item name; required & \texttt{name} \\
+2 & text or \texttt{null} & description & \texttt{description} \\
+3 & media reference or \texttt{null} & image & \texttt{image} \\
+4 & media reference or \texttt{null} & video, audio or 3D content & \texttt{animation\_url} \\
+5 & text or \texttt{null} & external web page of the item & \texttt{external\_url} \\
+6 & array & traits: pairs $(\mathsf{trait\_type}, \mathsf{value})$, with text $\mathsf{trait\_type}$ and text or integer $\mathsf{value}$; empty when there are none & \texttt{attributes} \\
+7 & text or \texttt{null} & collection display name (Sec.~\ref{app:nft-collection}) & contract \texttt{name} \\
+8 & byte string or \texttt{null} & claimed collection identifier $\mathsf{cid}$, $1 \le \len{\mathsf{cid}} \le 64$ (Sec.~\ref{app:nft-collection}) & contract address \\
+\end{longtable}
+
+\noindent A \emph{media reference} is an NftMedia item or an NftLink item that is not a document link (below). The remaining structures carry:
+\begin{description}
+	\item[NftMedia] $\mathsf{mt}$, a media type in the sense of RFC~6838 (\texttt{type/subtype}, lower case, without parameters); $b$, the non-empty file.
+	\item[NftLink] $\mathsf{mt}$, the media type of the linked file; $\mathsf{uri}$, a locator with scheme \texttt{https}, \texttt{ipfs} or \texttt{ar}; $h$, the 32-byte SHA-256 digest of the file's bytes. The digest authenticates the content and the locator is a non-authoritative hint. An IPFS content identifier is not a substitute for $h$, since for most files it is not a hash of the raw bytes.
+	\item[NftSigned] $\mathsf{pk}_\mathsf{c}$, a 33-byte compressed secp256k1 public key; $c$, an embedded item (a CBOR item, not a byte string); $\sigma$, a 65-byte signature $R \mathbin{\|} S \mathbin{\|} V$ in the format of Appendix~\ref{app:signature-format}.
+\end{description}
+
+Items are encoded in deterministic CBOR (Appendix~\ref{app:encodings}) with definite lengths. Maps, floating-point numbers, booleans and simple values other than \texttt{null} do not occur. Text is valid UTF-8. An optional text field is either \texttt{null} or non-empty, so absence has a single encoding. Integer trait values $v$ satisfy $\len{v} \le 2^{53}-1$; fractional or larger numbers are written as text. The integer range is the range that common client languages represent exactly. The ERC-721 fields \texttt{background\_color} and \texttt{youtube\_url} and the trait fields \texttt{display\_type} and \texttt{max\_value} are omitted.
+
+\paragraph{Document links.} An NftLink with $\mathsf{mt} = \texttt{application/vnd.unicity.nft+cbor}$ is a \emph{document link}. It references an NftMetadata or NftMedia item hosted outside the token, in place of a media file; it is the analogue of an ERC-721 \texttt{tokenURI} that points at a metadata document. The linked file is exactly one encoded item. It is never a link, so links do not chain, and it is never an NftSigned item, since a signature binds one token and therefore stays in the token.
+
+\paragraph{Placement.} Items nest as follows; an item in any other position makes the enclosing payload or document unrecognized.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{5.4cm}>{\raggedright\arraybackslash}p{8.8cm}}
+\textbf{Position} & \textbf{Admissible items} \\
+\hline
+\endhead
+genesis payload $\auxd'_0$ & NftMetadata, NftMedia, NftLink (including a document link), NftSigned \\
+the item $c$ of an NftSigned & NftMetadata, NftMedia, NftLink (including a document link) \\
+$\mathsf{image}$, $\mathsf{animation}$ & media reference or \texttt{null} \\
+file referenced by a document link & NftMetadata, NftMedia \\
+\end{longtable}
+
+\subsubsection{Recognition and Validity}\label{app:nft-validity}
+
+Let $\mathcal{N}$ be the set of well-formed items admissible at the top level. The \emph{recognition} function $\Call{RecognizeNFT}{b} \in \mathcal{N} \opt$ returns $c$ if the byte string $b$ is the complete encoding of one item $c \in \mathcal{N}$ satisfying the rules of Sec.~\ref{app:nft-items}, and $\bot$ otherwise. An absent payload, raw file bytes, an untagged array, an unknown tag or version, a wrong arity or field type, a non-deterministic encoding and trailing bytes all yield $\bot$. For a UTS-2 type, $\Call{ParseAux}{\mathsf{ty}, \auxd'}$ returns $c = \Call{RecognizeNFT}{\auxd'}$ if $c \ne \bot$ and $c$ satisfies the collection rule of Sec.~\ref{app:nft-collection}, and $\bot$ otherwise.
+
+In a UTS-2 type the item format is therefore a validity condition, checked by Alg.~\ref{alg:mint-auth} like any other type rule: a token whose payload is not a recognized item is rejected. This differentiates UTS-2 from an open container, whose wallets display recognized items (Sec.~\ref{app:uts-blank}) without specific validation.
+
+Validity depends only on verifier-held data. none of the following will invalidate a UTS-2 token:
+\begin{itemize}
+	\item \emph{Linked content.} A reader fetches a linked file, requires its SHA-256 digest to equal $h$ before rendering it, and for a document link additionally requires the file to be a recognized item. A file that is unavailable, fails the digest check or does not parse is not displayed. The token remains valid and transferable.
+	\item \emph{Creator attribution.} The attribution status of Sec.~\ref{app:nft-attribution} is computable from the token, but it is a statement about authorship, not about authorization to issue. A type that requires a particular signer expresses that requirement as its issuance policy.
+	\item \emph{Presentation policy.} Wallets render text as plain text, render only media types on an allowlist, and may limit the size of inline media. These are presentation rules.
+\end{itemize}
+
+The genesis payload of a token does not change, thus a recognition result, including $\bot$, may be cached for its token identifier indefinitely. Inline media is part of token and stored, transferred together; hosted media helps to reduce token size.
+
+\subsubsection{Creator Attribution}\label{app:nft-attribution}
+
+\index{NFT item!creator attribution}
+An NftSigned item binds its embedded item $c$ to one token and one first owner. Define $\mathsf{NFT\_SIGNED}$ as the ASCII byte string \texttt{"UNICITY\_NFT\_SIGNED"}. For mint data $D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$ whose payload is an NftSigned item $(1, \mathsf{pk}_\mathsf{c}, c, \sigma)$, let $b_c$ be the bytes of $c$ exactly as they occur in $\auxd'$, tag included. The \emph{attribution digest} is
+\[
+m_\mathsf{nft} := \mathsf{SHA\text{-}256}\bigl(\mathsf{CBOR}(
+	\mathsf{NFT\_SIGNED},\;
+	1,\;
+	\alpha,\;
+	\encpred(\predi'),\;
+	\mathsf{id},\;
+	\mathsf{ty},\;
+	b_c
+)\bigr),
+\]
+with $\mathsf{id} = H(\mathsf{salt}, \alpha)$. The format version and $\alpha$ are unsigned integers and every other term is a byte string, following the layout of the genesis commitment (Sec.~\ref{app:genesis-commitment}). The signature $\sigma$ lies outside $b_c$, so the digest does not cover itself. A verifier hashes the bytes it received and does not re-encode the decoded item. The \emph{attribution status} $\mathsf{attr}(T_0) \in \{\mathsf{unsigned}, \mathsf{valid}, \mathsf{invalid}\}$ of a genesis is $\mathsf{unsigned}$ if its payload is not an NftSigned item. Otherwise it is $\mathsf{valid}$ if all of the following hold, and $\mathsf{invalid}$ if any fails:
+\begin{enumerate}
+	\item $\mathsf{pk}_\mathsf{c}$ is a valid compressed secp256k1 point;
+	\item $\sigma = R \mathbin{\|} S \mathbin{\|} V$ with $1 \le S \le n/2$, where $n$ is the order of the secp256k1 group, and $V \in \{0, \ldots, 3\}$;
+	\item public-key recovery from $(R, S, V)$ over $m_\mathsf{nft}$ yields $\mathsf{pk}_\mathsf{c}$.
+\end{enumerate}
+The recovery identifier is bound, so the same $(R, S)$ under a different $V$ is invalid, and the low-$S$ requirement excludes the second, malleated form of a valid signature. The digest uses the genesis recipient $\predi'$, not the current owner, so the status of a token does not change under transfer.
+
+The terms of $m_\mathsf{nft}$ exclude the following misuses:
+\begin{description}
+	\item[Domain separator and version] reuse of the signature in any other protocol. $\mathsf{pk}_\mathsf{c}$ is typically a wallet key that also signs transactions and messages.
+	\item[Token identifier] copying a signed item onto another token.
+	\item[Genesis recipient] theft by front-running. An observer of the mint request can resubmit it with the same salt, hence the same identifier, and itself as recipient; the resulting token's status is $\mathsf{invalid}$. The observer can still consume the identifier first and block the creator's mint. That is denial of issuance, not theft: the creator mints again with a fresh salt.
+	\item[Token type] minting the signed item under another type. The identifier $H(\mathsf{salt}, \alpha)$ does not commit to $\mathsf{ty}$, so the same salt yields the same identifier under every type.
+	\item[Network identifier] leaving the network implicit. The identifier already commits to $\alpha$, so this term states the network explicitly rather than adding a replay defense.
+\end{description}
+
+\paragraph{Attribution is not authorization.} A $\mathsf{valid}$ status establishes that the holder of the secret key of $\mathsf{pk}_\mathsf{c}$ signed $c$ for this token and this first owner. It establishes neither that $\mathsf{pk}_\mathsf{c}$ belongs to a recognized creator, which is a presentation-level lookup (e.g.\ to a name tag), nor that issuance was authorized. Authorization is the mint reason, verified under the type's issuance policy. The two statements differ even when one party makes both, and they are signed over different digests with different domain separators ($m_\mathsf{mint}$ and $m_\mathsf{nft}$). Under open issuance anyone can mint an item that names a well-known key together with an arbitrary signature. A wallet therefore MUST NOT attribute a token to $\mathsf{pk}_\mathsf{c}$ unless the status is $\mathsf{valid}$, and SHOULD present a valid status as \emph{signed}, not as verified. It SHOULD keep three claims apart: that the signature is valid, that the signer is a key the wallet recognizes, and that the item belongs to a collection.
+
+An NftSigned item over a document link signs the link including $h$, and therefore the document. A payload that is pre-committed before its mint (profile S, Sec.~\ref{app:uts-slots}) can carry an attribution only if the first owner is fixed at commitment time, since $m_\mathsf{nft}$ binds $\predi'$.
+
+\subsubsection{Collection Identity}\label{app:nft-collection}
+
+\index{NFT collection}
+ERC-721 identifies a collection by the address of its contract, and the contract holds the authority to mint. Here the analogue of the contract is the token type. Under authorized, capped or proof-gated issuance, $\mathsf{ty}$ is the collection: its manifest fixes the issuance rules, and a valid token proves membership by its verified reason. Under open issuance the type is shared by unrelated minters and identifies no collection.
+
+The payload fields $\mathsf{collection}$ and $\mathsf{cid}$ are claims of the minter:
+\begin{itemize}
+	\item $\mathsf{collection}$ is a display name. Names collide and never identify a collection.
+	\item For a type under any policy other than open issuance, $\Call{ParseAux}{}$ requires $\mathsf{cid} \in \{\bot, \mathsf{ty}\}$, so the claimed identity cannot contradict the authenticated one. A payload committed in the manifest itself (profile S) cannot contain $\mathsf{ty}$ and uses $\bot$. A wallet takes the collection of such a token from $\mathsf{ty}$.
+	\item Under open issuance, $\mathsf{cid}$ is unrestricted, e.g.\ the type identifier of a collection or the hash of a collection manifest. It is not verified, and a wallet MUST NOT present it as verified membership, whether or not the item is signed.
+\end{itemize}
+
+Collection-level metadata (name, description, icon) is the registry entry of the collection type, the analogue of contract-level metadata. The item format defines no supply limit, and no field limits the number of items. A bound on the size of a collection is a property of the type's issuance policy (Sec.~\ref{app:uts-capped}). Tokens with distinct identifiers may carry byte-identical items. Under authorized issuance the issuer is responsible for not authorizing duplicates; under open issuance nothing prevents them (Sec.~\ref{app:policy-open}).
+
+\paragraph{Serial numbers.} An ERC-721 contract chooses each \texttt{tokenId}, often sequentially. Here the item's identity is $\mathsf{id}$, derived from the minter's salt. The capped profiles V, S and P additionally fix a serial $j$ in the verified reason, and that serial, not any payload field, is the item's position in the collection. Open and authorized issuance define no serials; a name such as ``Cool Cat \#1'' is display data.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{4.6cm}>{\raggedright\arraybackslash}p{9.6cm}}
+\textbf{ERC-721} & \textbf{UTS-2} \\
+\hline
+\endhead
+contract address & token type $\mathsf{ty}$ of a collection type; none under open issuance \\
+\texttt{tokenId} & token identifier $\mathsf{id}$; the serial $j$ under a capped profile \\
+\texttt{ownerOf} & current owner predicate, known to the holder; no public lookup \\
+\texttt{balanceOf} & number of items a wallet holds, computed by the holder \\
+\texttt{transferFrom}, \texttt{safeTransferFrom} & transfer transaction; the receiver-side check of \texttt{safeTransferFrom} corresponds to the recipient's verification of the token before acceptance \\
+\texttt{approve}, \texttt{setApprovalForAll} & no approval registry; delegation is expressed by the owner predicate (Sec.~\ref{sec:standard-predicates}) \\
+\texttt{name}, \texttt{symbol} & registry metadata of the collection type \\
+\texttt{tokenURI} and metadata document & genesis payload item; a document link for hosted metadata \\
+\texttt{totalSupply}, \texttt{tokenByIndex} (enumeration extension) & no enumeration; capped issuance bounds the number of items, not the number issued (Sec.~\ref{app:capped-availability}) \\
+mint and burn & direct issuance under the type's policy; burn transaction (Sec.~\ref{sec:burn-transaction}) \\
+\end{longtable}
+
+\subsection{UTS-3: Pooled Assets}\label{app:uts-pool}
 
 \index{token pool}
 A \emph{pool} aggregates value of one fungible asset type into a single token under shared control. With the merge reason (Sec.~\ref{app:reason-merge}) as the aggregation primitive, two profiles are distinguished by where the pool's accounting logic runs.
@@ -564,7 +769,7 @@ A \emph{pool} aggregates value of one fungible asset type into a single token un
 \begin{itemize}
 	\item The \emph{pool token} is an ordinary UTS-1 token whose owner predicate is a multi-party condition: $\predi_\mathsf{msig}$, $\predi_\mathsf{tsig}$ ($k$-of-$n$), or a P2SH-wrapped governance predicate (Sec.~\ref{sec:standard-predicates}). The underlying asset type includes $\mathsf{MERGE\_TAG}$ and 39044 in $\mathsf{RT}$.
 	\item \emph{Deposit}: the depositor transfers a token of the pooled type to the pool predicate; the committee merges it into the pool token. \emph{Withdrawal}: the committee splits the pool token, sending one output to the withdrawer and the remainder back to the pool predicate.
-	\item \emph{Shares}, where needed, are a separate UTS-1 asset whose issuance predicate is the same committee: deposits are acknowledged by share issuance, withdrawals demand share burn.
+	\item \emph{Shares}, where needed, are a separate UTS-1 type under authorized issuance whose issuance predicate is the same committee: deposits are acknowledged by share issuance, withdrawals demand share burn.
 \end{itemize}
 Custody of the pooled value is protected cryptographically by the threshold predicate and by value conservation of merge and split --- the committee cannot inflate the pool. What rests on the committee's honesty is \emph{share accounting}: issuing shares consistently with deposits and honoring redemptions. This profile therefore suits treasuries, escrow and OTC pools where the committee is the counterparty anyway.
 
@@ -579,7 +784,7 @@ An \emph{autonomous pool} aggregates value of one fungible asset under no party'
 
 Three token types cooperate; all three must be registered in a verifier's $\Gamma.\mathcal{TD}$ for pool-derived tokens to verify (fail-shut otherwise):
 \begin{description}
-	\item[Underlying asset $\mathsf{ty}_\mathsf{A}$] a fungible type with UTS-1 payload rules whose manifest admits $\mathsf{CONVERT\_TAG}$ with $\mathsf{ty}_\mathsf{P} \in \mathcal{CS}$ --- the asset type opts in to the pool by its frozen definition, since its own verifiers must be able to re-check the pool's conservation. For a capped asset, this requires a separately specified extension of UTS-3: the standard profiles exclude conversion, and the extension must preserve the cap across plain and pooled value using the conservation argument below.
+	\item[Underlying asset $\mathsf{ty}_\mathsf{A}$] a fungible type with UTS-1 payload rules whose manifest admits $\mathsf{CONVERT\_TAG}$ with $\mathsf{ty}_\mathsf{P} \in \mathcal{CS}$. The asset type opts in to the pool by its frozen definition, since its own verifiers must be able to re-check the pool's conservation. For a capped asset, this requires a separately specified extension of capped issuance (Sec.~\ref{app:uts-capped}): the standard profiles exclude conversion, and the extension must preserve the cap across plain and pooled value using the conservation argument below.
 	\item[Pool type $\mathsf{ty}_\mathsf{P}$] the state machine defined below. One \emph{pool instance} is one token of this type; instances are distinguished by their token identifiers $\mathsf{id}_\mathsf{P}$, and anyone may open one ($\mathsf{RT} = \{\bot\}$).
 	\item[Share type $\mathsf{ty}_\mathsf{S}$] a fungible type with $\mathsf{RT} = \{\mathsf{CONVERT\_TAG}, 39044, \mathsf{MERGE\_TAG}\}$ and $\mathcal{CS} = \{\mathsf{ty}_\mathsf{P}\}$. Shares use the asset framework (Sec.~\ref{sec:asset-structure}) with \emph{asset identifier $\mathsf{aid} = \mathsf{id}_\mathsf{P}$}: shares of different pool instances are distinct assets, so split and merge conservation automatically prevents mixing them. Shares are ordinary bearer tokens --- transferable, splittable, mergeable.
 \end{description}
@@ -716,9 +921,11 @@ Proof-carrying reason (Sec.~\ref{app:reason-proof}) & draft & select proof-syste
 History compression (Sec.~\ref{sec:history-compression}) & draft & select proof-system profile; encode $\mathcal{H}$; relation variant for per-transfer type checks \\
 Provenance compression: token evidence, certificates, $\mathfrak{R}_\mathsf{lin}$ (Sec.~\ref{sec:provenance-compression}) & draft & review; encode $\mathcal{K}$ and the evidence set; reference form for conversion and pool records \\
 Reference-form split reason (Sec.~\ref{app:reason-splitref}) & draft & review; allocate tag \\
-UTS-0, UTS-1, UTS-2 (Sec.~\ref{app:uts-blank}--\ref{app:uts-nft}) & draft & review \\
-UTS-3 capped issuance: singleton, VRF, committed-slot and public-serial profiles (Sec.~\ref{app:uts-capped}) & draft & review profile policies and cap/availability separation \\
-UTS-4 pooled assets: committee profile (Sec.~\ref{app:uts-pool}) & draft & review \\
+Issuance policies: open, authorized, bridged, proof-gated (Sec.~\ref{app:issuance-policies}) & draft & review \\
+UTS-0, UTS-1 (Secs.~\ref{app:uts-blank}, \ref{app:uts-fungible}) & draft & review \\
+UTS-2 item format, recognition, creator attribution, collection identity (Sec.~\ref{app:uts-nft}) & draft & review; reconcile $\encpred$ with the tagged predicate encoding (tag 39032) used by the implementation, which affects the genesis, split and attribution commitments \\
+Capped issuance: singleton, VRF, committed-slot and public-serial profiles (Sec.~\ref{app:uts-capped}) & draft & review profile policies and cap/availability separation \\
+UTS-3 pooled assets: committee profile (Sec.~\ref{app:uts-pool}) & draft & review \\
 Autonomous pools, incl.\ two-asset swaps (Sec.~\ref{app:autonomous-pools}) & draft & review; freeze record encodings \\
 \end{longtable}
 
