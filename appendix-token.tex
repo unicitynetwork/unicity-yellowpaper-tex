@@ -175,7 +175,7 @@ $D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}
 
 The payload is $D_\mathsf{mint}$ followed by the request timeout $\tau_Q$ at index~6, encoded as an unsigned integer, or as the CBOR simple value \texttt{null} when $\tau_Q=\bot$ (Appendix~\ref{app:encodings}). A versioned tagged envelope carries the payload.
 
-The implicit token identifier is derived as $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (Sec.~\ref{app:hash-derivations}) from the unique salt chosen by the minter.
+The implicit token identifier is $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (Sec.~\ref{app:hash-derivations}); salts MUST be unique across all minters on $\alpha$ (Sec.~\ref{sec:mint-tx}).
 
 \subsection{Transfer Transaction}
 
