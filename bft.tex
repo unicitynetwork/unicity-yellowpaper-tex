@@ -1175,7 +1175,7 @@ Next, if a particular IR has not been changed during \texttt{t2} timeout for thi
 
 In a proposal there can be up to one change request per shard.
 
-Due to the pipe-lined finality, a proposal should not include IR change requests for slots with a valid IR change request in immediately preceding round. % should: proposal would be rejected, does not break anything.
+Due to the pipe-lined finality, a proposal $B$ should not include an IR change request for a slot with a valid IR change request in an uncommitted block $B' \prec B$ (see Sec.~\ref{sec:atomic-broadcast}). % should: proposal would be rejected, does not break anything.
 
 Finally, the leader signs the proposal and broadcasts it to other BFT Core validators.
 
@@ -1223,7 +1223,7 @@ The state includes necessary meta-data like the round number. This is provided b
 State may include atomic broadcast module specific data, e.g. uncommitted round information.
 
 
-\subsection{Atomic Broadcast Primitive}
+\subsection{Atomic Broadcast Primitive}\label{sec:atomic-broadcast}
 
 The Atomic Broadcast primitive is instantiated using an adaptation of HotStuff consensus protocol. The adaptation is optimized towards better latency on good conditions. Therefore, a ``2-chain commit rule'' is used. Changes and tweaks wrt. the original HotStuff paper are:
 
@@ -1236,7 +1236,7 @@ The Atomic Broadcast primitive is instantiated using an adaptation of HotStuff c
 
 More formally, critical elements of the operation of a HotStuff-derived algorithm are specified by the following rules.
 
-Let $n$ denote round number, $B$ -- block of inputs, $QC$ -- Quorum Certificate, $TC$ -- Timeout Certificate.
+Let $n$ denote round number, $B$ -- block of inputs, $QC$ -- Quorum Certificate, $TC$ -- Timeout Certificate. Let $B' \prec B$ denote that $B'$ is an ancestor of $B$, i.e., $B'$ is certified by $B.QC$ or $B' \prec B''$ where $B''$ is certified by $B.QC$; and $B' \preceq B$ that $B' = B$ or $B' \prec B$.
 
 \begin{ruledef}{Voting Rule} \\
   $B.n > $ last vote round \\
@@ -1250,6 +1250,11 @@ Let $n$ denote round number, $B$ -- block of inputs, $QC$ -- Quorum Certificate,
 
 \begin{ruledef}{Commit Rule} \\
     It is safe to commit block $B$ if there exist a sequential 2-chain $B \leftarrow QC \leftarrow B' \leftarrow QC$ such that $B'.n = B.n + 1$.
+\end{ruledef}
+
+\begin{ruledef}{Retention Rule} \\
+    Both $QC$ and $TC$ with $QC.n = TC.n$ may exist. \\
+    Block $B$ may be discarded only if there exists a committed block $B'$ such that $B' \not\preceq B$.
 \end{ruledef}
 
 Please refer to the following papers for more details:
