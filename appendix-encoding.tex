@@ -88,3 +88,12 @@ In the distributed implementation, the field named \texttt{PreviousHash}, denote
 \subsection{Recoverable Signatures}\label{sec:recoverable-signatures}
 
 The seal and standard predicate signature profile is exactly 65 bytes $R\|S\|V$, with big-endian 32-byte scalars. For secp256k1 group order $q$, require $1\le R<q$, $1\le S\le\lfloor q/2\rfloor$ and $V\in\{0,1,2,3\}$. Verification must recover the independently expected public key using $V$. Values 27/28, chain-ID conversions and compact 64-byte signatures are not accepted by this profile. A signature failing these checks contributes no vote to a seal quorum.
+
+
+\section{Inclusion Proof Encoding}\label{sec:inclusion-encoding}
+
+An inclusion proof is tag 39033 over
+\[
+[1,Q,\tau,\mathsf{bstr}(C^\mathsf{inc}),UC],
+\]
+where $Q$ is the tagged certification data, $\tau$ is the original leaf reference time, and the certificate byte string is specified in Appendix~\ref{app:rsmt}. The state identifier and $\lambda(Q,\tau)=\mathsf{SHA256}(\mathsf{CBOR}([\txhash,\tau]))$ are derived verification inputs, not additional array elements. A later UC does not change $\tau$.

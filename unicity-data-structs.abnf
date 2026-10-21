@@ -95,8 +95,8 @@
 ; Keys are read as 256-bit big-endian bit strings; depth $d$ addresses bit $d$.
 
   StateIdentifier = Bytes32  ;~$\mathsf{sid} = H(\mathsf{CBOR}(\nu, h_{\mathsf{st}}))$ -- SMT leaf key
-  LeafData = TransactionHash    ;~$h_{\mathsf{tx}}$ -- SMT leaf value
-  SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, h_{\mathsf{tx}})$
+  LeafData = Bytes32  ;~$v=\mathsf{SHA256}(\mathsf{CBOR}([h_{\mathsf{tx}},\tau]))$
+  SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, v)$
 
   CertificatePath = Bitmap *SiblingHash  ;~$(\mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$ -- shared by both certificate types
       ;~bitmap: 32 bytes; bit $d$ is the $(d \bmod 8)$-th most significant bit of byte $\lfloor d/8 \rfloor$
@@ -115,8 +115,12 @@
       ;~empty (zero-length): admissible only for an empty tree
       ;~Wire: $\mathit{bitmap}[32]\,\|\,s_1[32]\,\|\cdots\|\,s_n[32]\,\|\,k'[32]\,\|\,v'$
 
-  InclusionProof = StateIdentifier LeafData InclusionCertificate UC  ;~$\pi^\mathsf{inc} = (\mathsf{sid}, h_{\mathsf{tx}}, C^\mathsf{inc}, UC)$
-      ;~Proves that $\mathsf{sid}$ EXISTS in the SMT with value $h_{\mathsf{tx}}$
+  InclusionProof = Version CertificationData ReferenceTime InclusionCertificateBytes UC
+      ; Tag 39033, array[5]; the query and leaf value are verifier inputs.
+      ; The original reference time is not replaced by a later UC timestamp.
+  ReferenceTime = Timestamp
+  InclusionCertificateBytes = Bytes
+      ; Byte-string encoding of InclusionCertificate.
 
   NonInclusionProof = NonInclusionCertificate UC  ;~$\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$
       ;~Proves that a queried $\mathsf{sid}$ does NOT exist in the SMT; the queried
@@ -166,18 +170,19 @@
   ;   htlc        : CBOR array[2]: [x (bstr), s (65-byte bstr)]
 
 ; --- Transactions ---
-  MintTransaction = NetworkIdentifier Recipient Salt TokenType MintReason Data
-      ;~$T\_0 = (\alpha, \nu', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$ -- CBOR array[6]
-      ;~Token identifier is derived: $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (see Hash Derivations)
+  MintTransaction = Version NetworkIdentifier Recipient Salt TokenType NullableBytes NullableBytes ExpiresAt
+      ; Tag 39041, array[8], version 2; reason, data and timeout keep their positions.
+      ; Token identifier is derived from salt and network.
 
-  TransferTransaction = SourceStateHash UnlockingArgument Recipient StateMask Data
-      ;~$T = (h_\mathsf{st}, u, \nu', x, \auxd')$ -- CBOR array[5]
+  TransferTransaction = Version Recipient StateMask NullableBytes ExpiresAt
+      ; Tag 39045, array[5], version 2.
+      ; Source state and unlocking argument are checked through certification data.
 
   CertifiedMintTransaction = MintTransaction InclusionProof  ;~$(T_0, \pi)$ -- CBOR array[2]
   CertifiedTransferTransaction = TransferTransaction InclusionProof  ;~$(T, \pi)$ -- CBOR array[2]
 
-  Token = CertifiedMintTransaction *CertifiedTransferTransaction
-      ;~$\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$ -- CBOR array[2]: [genesis, [transfers...]]
+  Token = Version CertifiedMintTransaction *CertifiedTransferTransaction
+      ;~$\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$ -- tag 39040, array[3]: [2, genesis, [transfers...]]
 
 ; --- Fields ---
   Salt = Bytes32  ;~$\mathsf{salt}$ -- 32-byte minter-chosen salt, required to be unique among the minter's choices
@@ -190,7 +195,7 @@
                     ;~(use $\predi_\mathsf{p2sh}$ to commit only to a hash)
   StateMask = Bytes32  ;~$x \overset{\$}{\leftarrow}  \{0,1\}^{256}$ -- random value for state derivation
   Data = Bytes  ;~$\auxd'$ -- auxiliary payload (optional, arbitrary length)
-  TransactionHash = Hash  ;~$h_\mathsf{tx} = H(D)$ -- hash of transaction data
+  TransactionHash = Hash  ;~$h_\mathsf{tx}$ -- SHA-256 of the complete tagged native transaction, including timeout
   UnlockScript = Bytes  ;~$u$ -- unlocking argument (e.g. signature)
 
 ; --- State ---
@@ -207,8 +212,6 @@
   ; $\mathsf{id} = H(\mathsf{salt}, \alpha)$~-- token identifier (derived; globally unique across networks)
   ; $h_\mathsf{st} = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$~-- mint source state hash
   ; $h_\mathsf{st}' = H(h_\mathsf{st}, x)$~-- next state hash
-  ; $h_\mathsf{tx} = H(\alpha, \mathsf{recipient}, \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd', \bar\tau_Q)$~-- mint transaction hash
-  ; $h_\mathsf{tx} = H(\mathsf{recipient}, x, \auxd', \bar\tau_Q)$~-- transfer transaction hash
 
 ; --- Fungible Token Structures ---
   Asset = AssetId Value  ;~$(\mathsf{aid}, v)$ -- CBOR array[2]

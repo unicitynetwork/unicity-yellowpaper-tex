@@ -173,51 +173,43 @@ $D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}
 5 & byte string & Auxiliary Payload $\auxd'$ (optional, arbitrary length) \\
 \end{longtable}
 
-The payload is $D_\mathsf{mint}$ followed by the request timeout $\tau_Q$ at index~6, encoded as an unsigned integer, or as the CBOR simple value \texttt{null} when $\tau_Q=\bot$ (Appendix~\ref{app:encodings}). A versioned tagged envelope carries the payload.
+The payload is $D_\mathsf{mint}$ followed by the request timeout $\tau_Q$ at index~6, encoded as an unsigned integer, or as the CBOR simple value \texttt{null} when $\tau_Q=\bot$ (Appendix~\ref{app:encodings}). The native envelope is tag 39041 over $[2,\alpha,\predi\prime,\mathsf{salt},\mathsf{ty},\mathsf{reason},\auxd\prime,\tau_Q]$. Optional reason and auxiliary data use \texttt{null} when absent.
 
 The implicit token identifier is $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (Sec.~\ref{app:hash-derivations}); salts MUST be unique across all minters on $\alpha$ (Sec.~\ref{sec:mint-tx}).
 
 \subsection{Transfer Transaction}
 
-A transfer transaction (spending a mint or prior transaction output) has five common elements:
-
-\begin{longtable}{clp{10cm}}
-\textbf{Index} & \textbf{Type} & \textbf{Description} \\
-\hline
-0 & byte string & Source state hash $\sthash$ (32 bytes) \\
-1 & byte string & Unlocking Argument: CBOR-encoded $\mathsf{CBOR}(u)$ (Sec.~\ref{app:predicate-encoding}); must unlock the recipient predicate of the preceding transaction \\
-2 & byte string & Recipient: CBOR-encoded next owner's predicate $\mathsf{CBOR}(\predi')$ (Sec.~\ref{app:predicate-encoding}) \\
-3 & byte string & Random value $x$ (32 bytes) \\
-4 & byte string & Auxiliary data $\auxd'$ \\
-\end{longtable}
-
-The payload contains these common elements followed by the request timeout $\tau_Q$, encoded as an unsigned integer, or as the CBOR simple value \texttt{null} when $\tau_Q=\bot$ (Appendix~\ref{app:encodings}). A versioned tagged envelope carries the payload.
+The abstract transfer includes the source state and unlocking argument. Its native transaction encoding is tag 39045 over
+\[
+[2,\predi',x,\auxd',\tau_Q].
+\]
+The source state hash, current predicate and unlocking argument are carried in the proof's certification data and are checked against the preceding transaction. The auxiliary data and timeout use \texttt{null} when absent.
 
 
 \subsection{Certified Transaction}
 
-A certified transaction (mint or transfer) is encoded as a three-element CBOR array:
+A certified transaction (mint or transfer) is encoded as a two-element CBOR array:
 
 \begin{longtable}{clp{8cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
-0 & CBOR array & The transaction \\
-1 & unsigned integer & Reference time $\tau$ of the round in which the leaf was created \\
-2 & CBOR structure & Inclusion proof $\pi$ \\
+0 & tagged CBOR structure & The transaction \\
+1 & tagged CBOR structure & Inclusion proof $\pi$ \\
 \end{longtable}
 
-The inclusion proof also carries the validation reference time, and a decoder requires it to agree with the value in the certified transaction. The request timeout $\tau_Q$ is inside the transaction at index~0.
+The reference time $\tau$ in the logical certified tuple is obtained from the inclusion proof; it is not stored again beside it. The request timeout $\tau_Q$ remains in the transaction.
 
 
 \subsection{Token}
 
-A token is encoded as a CBOR array with two elements:
+A token is encoded as CBOR tag 39040 over a three-element array:
 
 \begin{longtable}{clp{8cm}}
 \textbf{Index} & \textbf{Type} & \textbf{Description} \\
 \hline
-0 & CBOR array & Certified mint transaction \\
-1 & CBOR array & Array of certified transactions (may be empty) \\
+0 & unsigned integer & Version 2 \\
+1 & CBOR array & Certified mint transaction \\
+2 & CBOR array & Array of certified transactions (may be empty) \\
 \end{longtable}
 
 
@@ -242,29 +234,7 @@ The state identifier is derived from the predicate and state hash:
 
 \subsection{State Hash}
 
-For mint transactions:
-\[
-\sthash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{id}, \mathsf{MINT\_SUFFIX})), \quad \text{where } \mathsf{id} = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{salt}, \alpha))
-\]
-
-For transfer transactions, the next state hash:
-\[
-\sthash' = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, x))
-\]
-
-\subsection{Transaction Hash} % the leaf's value of aggregator tree
-
-For mint transactions:
-\[
-\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd', \tau_Q))
-\]
-
-For transactions:
-\[
-\txhash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\predi', x, \auxd', \tau_Q))
-\]
-
-Here $\mathsf{CBOR}(\ldots)$ denotes deterministic CBOR array encoding. The timeout is always present as the last element and is therefore always committed by the transaction hash; $\tau_Q=\bot$ is encoded as \texttt{null} and requires no clock.
+For mint and transfer transactions, the native transaction hash is SHA-256 of the complete tagged, versioned transaction encoding in Sec.~\ref{app:transaction-encoding}. The fixed timeout position is included even when its value is \texttt{null}. Thus the abstract transaction-data hash commits to the native tag and version as well as its payload.
 
 
 \section{Signature Format}\label{app:signature-format}
