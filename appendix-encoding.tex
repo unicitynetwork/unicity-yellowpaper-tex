@@ -126,3 +126,14 @@ The envelope version is 2 and the view version is 1. An absent sidecar is \textt
 A non-inclusion proof is tag 39034 over $[1,\mathsf{bstr}(C^\mathsf{exc}),UC]$. The queried state identifier is a verification input. The aggregation-profile certificate is either empty, with the authenticated root required to be \texttt{null}, or exactly $96+32\,\mathsf{popcount}(\mathit{bitmap})$ bytes, at most 8\,288 bytes. Its terminal value is exactly 32 bytes; trailing bytes are rejected.
 
 The version-2 inclusion lookup can return tag 39033 over $[1,\texttt{null},\texttt{null},\texttt{null},UC]$ when no certified leaf is returned. That answer is neither an inclusion proof nor the empty non-inclusion certificate above. A surrounding block number or optional pending, expired or unknown status is advisory and does not establish absence.
+
+
+\section{Recovery Records}\label{sec:recovery-encoding}
+
+The native state message is $[\mathsf{committedHead},[\mathsf{pendingBlocks}]]$; the committed head is $[\mathsf{block},[\mathsf{shardInfo}],\mathsf{QC},\mathsf{commitQC}]$. Each shard-info entry is an untagged array with fields, in order:
+\begin{enumerate}
+\item partition identifier, shard identifier, T2 timeout and last certified state root;
+\item previous statistical-record bytes, current statistical record, previous fee-record bytes and current validator-fee map;
+\item last UC, last technical record, current input record, current technical record (\texttt{IRTR}) and shard-configuration hash.
+\end{enumerate}
+These groups form one thirteen-element array, not nested arrays. The previous accounting records preserve their encoded bytes. Both retained response records are required at committed-state admission; a structurally decoded message with either missing is not installable. Pending entries are ordinary block records, not additional committed shard vectors.

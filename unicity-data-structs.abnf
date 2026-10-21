@@ -77,10 +77,19 @@
 
 ; --- Recovery Messages ---
   GetStateMsg = NodeId   ; id of the validator requesting the state
-  StateMsg = *UC CommittedHead BlockNode UnicityTrustBaseEntry
-  CommittedHead = BlockNode = RecoveryBlock
-  RecoveryBlock = BlockData *InputData QC CommitQC
-  InputData = PartitionIdentifier Shard IR Sdrh
+  StateMsg = CommittedHead *BlockData
+      ; CBOR [committedHead, [pending blocks...]].
+  CommittedHead = BlockData *RecoveredShardInfo QC CommitQC
+      ; CBOR [block, [shard info...], qc, commitQc].
+  RecoveredShardInfo = PartitionIdentifier ShardIdentifier T2Timeout NullableHash
+                      PreviousStatisticsBytes NativeStatisticalRecord PreviousFeesBytes FeeRecord
+                      UC TechRecord IR TechRecord ShardConfHash
+      ; One array[13]; final TechRecord is IRTR; retained UC and TR are required.
+  NativeStatisticalRecord = NumBlocks SumFees SumBlockSize SumStateSize MaxFee MaxBlockSize MaxStateSize
+  FeeRecord = *(NodeID EarnedFees)
+      ; CBOR map from validator identifiers to earned fees.
+  PreviousStatisticsBytes = Bytes
+  PreviousFeesBytes = Bytes
 
 ; ============================================================================
 ; 3. BFT CORE (protocols)

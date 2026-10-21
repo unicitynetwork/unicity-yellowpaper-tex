@@ -1216,11 +1216,16 @@ Proposal is a signed set of IR change requests, supplemented with proofs--the ne
 
 \subsubsection{State Synchronization}\label{root-recovery-procedure}
 
-A BFT Core validator must have up-to-date vector of Input Records of all shards. There is no persistent blockchain. Returned Unicity Certificates, certifying IRs, are possibly persisted by the underlying layers.
+A recovered state consists of a committed head and a sequence of pending blocks. The head contains its block, per-shard records, QC and commit QC. Each shard record carries current input data and accounting state together with its last UC and technical record (Appendix~\ref{sec:recovery-encoding}).
 
-The state includes necessary meta-data like the round number. This is provided by including the Unicity Seal, which also authenticates the IR vector.
-
-State may include atomic broadcast module specific data, e.g. uncommitted round information.
+Before installing the state:
+\begin{enumerate}
+\item Require exactly the locally configured shards and authenticate their configuration commitments. Rebuild the shard trees and unicity tree and match the committed root and its QCs; anchor genesis to the trusted local genesis.
+\item Require both a UC and technical record for every committed shard. The UC must certify the exact current input record, and its technical-record hash must match both the retained and current technical records. An unchanged shard may retain an older seal.
+\item Validate the fee and statistical commitments against the recovered accounting state, including the deterministic initial and transition cases.
+\item In temporary state, process pending blocks in round order: check ancestry, bind each QC's round, parent, epoch, timestamp and state root to the block it certifies, execute the block, and require the requested recovery target to exist.
+\end{enumerate}
+Only after all checks succeed may recovery write persistent state. A recovered author's identity is not authenticated by the QC; an uncertified tip's timestamp is not authenticated merely because it occurs in the state message.
 
 
 \subsection{Atomic Broadcast Primitive}\label{sec:atomic-broadcast}
