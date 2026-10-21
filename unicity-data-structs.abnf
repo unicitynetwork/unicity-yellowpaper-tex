@@ -175,6 +175,10 @@
 ; ============================================================================
 ; 5. EXECUTION LAYER
 
+  AggregationPartitionIdentifier = PartitionIdentifier
+      ; Must equal the token/aggregation profile constant in Sec. 2 (Execution Model).
+      ; Applies to every application UC, including nested and consolidated proofs.
+
 ; --- Predicates ---
   Predicate = Engine Code Params  ;~$\nu = (\mathsf{engine}, \mathsf{code}, \mathsf{params})$ -- CBOR array[3]
       ;~Engine: unsigned integer (1 = BUILT\_IN)

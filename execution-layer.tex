@@ -13,6 +13,9 @@ The model relies on three key principles:
 	\item \textbf{Recipient verification}: The recipient (relying party) independently verifies the complete token history before accepting a transfer.
 \end{enumerate}
 
+\paragraph{Aggregation partition.}\label{sec:aggregation-profile}\index{aggregation partition}
+The current token/aggregation profile uses the constant $\beta_{\mathsf{agg}}=7$. Every accepted application proof, including proofs in nested tokens and consolidated histories, must belong to this partition and to the independently trusted network. Generic certificate-tree operations remain applicable to other partitions.
+
 \subsection{Token Lifecycle}\label{sec:token-lifecycle}
 
 A token progresses through the following stages:
@@ -523,7 +526,7 @@ Given a token whose mint reason claims split origin, the verifier must perform a
 \begin{enumerate}
 	\item Decode the mint reason, manifest, payloads and proofs using deterministic CBOR.  Reject wrong or unknown tags, non-canonical integers or byte strings, duplicate or unordered asset identifiers, invalid field counts or types, trailing bytes, arithmetic overflow and any input exceeding the protocol's decoding and verification limits.
 	\item Verify the output mint transaction and its Unicity Certificate.  Decode and validate its auxiliary payload according to its token type; the payload must contain a non-empty canonical collection of distinct, positive-valued assets.
-	\item Recursively verify the complete burned source token, including every Unicity Certificate, transaction, nested mint reason, fungible payload and token type specific issuance policy, under the same trust base $\mathcal{T}$, verifier registry and cumulative resource limits used for the output.  Both tokens must have network identifier $\mathcal{T}.\alpha$.
+	\item Recursively verify the complete burned source token, including every Unicity Certificate, transaction, nested mint reason, fungible payload and token type specific issuance policy, under the same trust base $\mathcal{T}$, verifier registry and cumulative resource limits used for the output.  Both tokens must have network identifier $\mathcal{T}.\alpha$ and satisfy the aggregation-partition binding of Sec.~\ref{sec:aggregation-profile}.
 	\item Require the source token to end in a certified transfer whose auxiliary data is the exact canonical split-manifest encoding $b_\mathcal{M}$ and whose recipient predicate is exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.
 	\item Decode the source fungible payload, place its distinct asset identifiers in canonical order, and require the manifest to contain exactly one root hash for each source asset in that order.
 	\item Require the output token type to be byte-identical to the source token type.  A split proof cannot authorize minting under any other token type, even if that type would decode the same asset identifiers and amounts.

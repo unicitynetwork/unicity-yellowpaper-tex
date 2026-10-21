@@ -449,6 +449,9 @@ For any shard in the authenticated view, derive its ordinary UC using its comple
 
 \section{Proofs}\label{se:proofs}
 
+For the token/aggregation profile (Sec.~\ref{sec:aggregation-profile}), require $UC.C^\mathsf{uni}.\beta=\beta_{\mathsf{agg}}$ at every proof acceptance boundary. This applies to inclusion, non-inclusion and consolidation, including when seal verification is reused.
+
+
 \subsection{Inclusion Proof}
 
 \emph{Inclusion Proof}\index{$\pi^\mathsf{inc}$ (inclusion proof)}\index{inclusion proof} proves that a state identifier has been recorded in the SMT as a proof of the spend being unique, and that the resulting shard state was certified by the BFT Core. It is a tuple $\pi^\mathsf{inc} = (\mathsf{sid}, v, \tau, C^\mathsf{inc}, UC)$, where:
