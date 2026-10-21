@@ -592,15 +592,21 @@ The ZK-compressed instantiation (Appendix~\ref{app:zk-consistency-proof}) keeps 
 
 \subsection{Shard Input Record}\label{shard-input-record}
 
-\emph{Shard input record} ($IR$)\index{$IR$ (input record)} of a shard of a partition (of type $\mathbb{IR}$) is a tuple $(n, e, h', h, t)$, where:
+\emph{Shard input record} ($IR$)\index{$IR$ (input record)} of a shard of a partition (of type $\mathbb{IR}$) is a tuple $(n, e, h', h, v, t, h_B, f, h_E)$, where:
 \begin{enumerate}
 	\item $n$ -- shard's round number of type $\uint{64}$
 	\item $e$ -- shard's epoch number of type $\uint{64}$
-	\item $h'$ -- previous round's SMT root hash of type $\hashtype$
-	\item $h$ -- current round's SMT root hash of type $\hashtype$
+	\item $h'$ -- previous round's SMT root hash of type $\hashtype\cup\{\bot\}$
+	\item $h$ -- current round's SMT root hash of type $\hashtype\cup\{\bot\}$
+	\item $v$ -- summary value of type $\{0,1\}^*\cup\{\bot\}$
 	\item $t$ -- reference time for request validation of type $\uint{64}$
+	\item $h_B$ -- block hash of type $\hashtype\cup\{\bot\}$
+	\item $f$ -- sum of earned fees of type $\uint{64}$
+	\item $h_E$ -- executed-transactions hash of type $\hashtype\cup\{\bot\}$
 \end{enumerate}
 
+
+The record itself is required. Reconstruction preserves all its fields, including absent values; the native encoding is specified in Appendix~\ref{sec:bft-encoding}.
 
 \subsection{Statistical Record}\label{statistical-record}
 
@@ -619,17 +625,18 @@ There is one Statistical Record of current epoch where the values are being upda
 
 \subsection{Technical Record}\label{technical-record}
 
-Technical record\index{technical record ($\mathbb{TE}$)} of type $\mathbb{TE}$ is a tuple $\mathsf{TE}=(n_r, e_r, \nu_\ell, h_\mathsf{sr})$, where:
+Technical record\index{technical record ($\mathbb{TE}$)} of type $\mathbb{TE}$ is a tuple $\mathsf{TE}=(n_r, e_r, \nu_\ell, h_\mathsf{sr}, h_\mathsf{fee})$, where:
 \begin{enumerate}
 	\item $n_r$ -- suggested next round number of type $\uint{64}$
 	\item $e_r$ -- suggested next epoch number of type $\uint{64}$
 	\item $\nu_\ell$ -- suggested leader identifier of type $\{0,1\}^\ast$
-	\item $h_\mathsf{sr}$ -- hash of statistical records; type $\hashtype$
+	\item $h_\mathsf{sr}$ -- hash of previous and current statistical records; type $\hashtype$
+	\item $h_\mathsf{fee}$ -- hash of previous and current per-validator fee records; type $\hashtype$
 \end{enumerate}
 
 Technical record is delivered with an Unicity Certificate. When a shard is extending the Unicity Certificate with a next round certification attempt, then it must use the suggested values provided in Technical Record.
 
-There is one Technical Record for every shard of every partition, providing synchronization for the next round.
+There is one Technical Record for every shard of every partition, providing synchronization for the next round. Writing $F_-$ and $F$ for the previous and current per-validator fee records, $h_\mathsf{fee}=H(F_-,F)$. The fee and statistical commitments are checked against the accounting state.
 
 \subsection{Shard Info}
 
@@ -814,8 +821,8 @@ When the BFT Core's round $n$ is completed, then:
 		\item The leader for next round: \\
 			$\mathcal{SI}[\beta, \sigma].\nu_\ell \gets \Call{leaderfunc}{UC_-, \mathcal{SI}[\beta, \sigma].\mathcal{V}}$
 		\item Technical record: \\
-			$\mathcal{TE}_{\beta,\sigma} \gets (\mathcal{SI}[\beta,\sigma].n+1, \mathcal{SI}[\beta,\sigma].e, \mathcal{SI}[\beta,\sigma].\nu_\ell, h_\mathsf{sr})$ \;, \\
-			where $h_\mathsf{sr}=H(\mathcal{SI}[\beta,\sigma].\mathsf{SR}_-, \mathcal{SI}[\beta,\sigma].\mathsf{SR})$
+			$\mathcal{TE}_{\beta,\sigma} \gets (\mathcal{SI}[\beta,\sigma].n+1, \mathcal{SI}[\beta,\sigma].e, \mathcal{SI}[\beta,\sigma].\nu_\ell, h_\mathsf{sr}, h_\mathsf{fee})$ \;, \\
+			where $h_\mathsf{sr}=H(\mathcal{SI}[\beta,\sigma].\mathsf{SR}_-, \mathcal{SI}[\beta,\sigma].\mathsf{SR})$ and $h_\mathsf{fee}=H(F_-,F)$ for that shard.
 	\end{enumerate}
 
 	\item For every registered partition $\beta\in\mathcal{C}$, the collected certification requests $\mathsf{CR}_{\beta,\sigma}$ are converted to a temporary data structure $\mathcal{IRT}_\beta$ of type $(\mathbb{IR},\hashtype)[\mathcal{SH}_\beta]$, where $\mathcal{SH}_\beta=\mathcal{CD}[\beta].\mathcal{SH}$,

@@ -332,7 +332,7 @@ Pending Block Proposal ($pr$) must be stored in durable way before Certification
       \State $\ell_B \gets$ count of new SMT leaves added, $\ell_S \gets$ SMT memory usage
       \State $pr \gets (n, e, h', h, t, \nu_l, log, sr)$  \Comment{Pending Block Proposal}
       \If{\Call{store\_in\_durable\_way}{$pr$}}
-        \State $IR \gets (n, e, h', h, t)$
+        \State $IR \gets (n, e, h', h, v, t, h_B, f, h_E)$
         \State $\pi_{CP} \gets \Call{GenerateConsistencyProof}{h', h, \text{batch}}$ \Comment{Generate consistency proof}
         \State \Call{send\_CR}{$\alpha, \beta, \sigma, \nu, IR, \ell_B, \ell_S, \pi_{CP}$}
                  \Comment {Sign and send}
@@ -345,14 +345,14 @@ Pending Block Proposal ($pr$) must be stored in durable way before Certification
     \Function{do\_cert\_req\_against}{$sr$}  \Comment{Voting against the proposal}
       \State $h' \gets luc.IR.h$, $n \gets lte.n$, $e \gets lte.e$, $t \gets luc.C^\mathsf{r}.t$
       \State $h \gets \zerohash$
-      \State $IR \gets (n, e, h', h, t)$
+      \State $IR \gets (n, e, h', h, v, t, h_B, f, h_E)$
       \State $\ell_B \gets 0$, $\ell_S \gets 0$ \Comment{No additions when voting against}
       \State \Call{send\_CR}{$\alpha, \beta, \sigma, \nu, IR, \ell_B, \ell_S, \bot$}  \Comment{No consistency proof needed}
     \EndFunction
   \end{algorithmic}
 \end{algorithm}
 
-Please refer to Algorithm~\ref{alg:proposal} for details.
+Here $v$, $h_B$, $f$ and $h_E$ are the summary, block hash, earned fees and executed-transactions hash of the proposed update, as defined in Sec.~\ref{shard-input-record}. Please refer to Algorithm~\ref{alg:proposal} for details.
 
 Note that a block can be without any requests; however, this does not necessarily imply $h' = h$, as system-initiated ``housekeeping'' actions may have changed the state.
 

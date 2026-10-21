@@ -53,3 +53,18 @@ respective private key is controlled by the Node.
 ``SHA-256'' denotes the SHA-2 hash algorithm with 256-bit output and ``SHA-512'' denotes the SHA-2 hash algorithm with 512-bit output; both are specified by NIST FIPS 180-4.
 
 The list is non-exhaustive.
+
+
+\section{BFT Records}\label{sec:bft-encoding}
+
+The abstract records in the body have the following native encodings. Tags and versions are part of the bytes hashed. An input record is CBOR tag 39002 applied to
+\[
+[1,n,e,h',h,v,t,h_B,f,h_E].
+\]
+The byte-string fields $h',h,v,h_B,h_E$ preserve \texttt{null} separately from an empty byte string. A noninitial input record requires a present summary value and a nonzero timestamp. The whole input record cannot be \texttt{null}.
+
+A technical record is the untagged array
+\[
+[n_r,e_r,\nu_\ell,h_\mathsf{sr},h_\mathsf{fee}].
+\]
+Its hash includes both accounting commitments. The native statistical record is the array of block count, cumulative fees, cumulative block size, cumulative state size, maximum block fee, maximum block size and maximum state size, in that order. The abstract statistical counters omit the two fee counters; their values must still be preserved when hashing the native record. A fee record is a map from validator identifiers to earned fees. Each accounting commitment hashes the deterministic encodings of the previous record followed by the current record.

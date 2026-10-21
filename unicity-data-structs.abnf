@@ -4,7 +4,11 @@
 ; 1. BFT CORE (shared data structures)
 
   UC = IR TechRecordHash ShardTreeCertificate UnicityTreeCertificate UnicitySeal  ;~$UC = (IR, h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
-  IR = RoundNumber Epoch PreviousHash Hash Time  ;~$IR = (n, e, h', h, t)$
+  IR = Version RoundNumber Epoch NullableHash NullableHash NullableBytes Time NullableHash EarnedFees NullableHash
+      ; CBOR tag 39002, array[10]: $[1,n,e,h',h,v,t,h_B,f,h_E]$
+  NullableHash = Hash / NULL
+  NullableBytes = Bytes / NULL
+  EarnedFees = uint64
   ShardTreeCertificate = ShardIdentifier *SiblingHash  ;~$C^\mathsf{shard} = (\sigma;h^s_1, \ldots, h^s_{|\sigma|})$
   UnicityTreeCertificate = PartitionIdentifier PartitionDescriptionHash *HashStep
   HashStep = PartitionIdentifier SiblingHash  ;~$C^\mathsf{uni} = (\beta, \mathsf{dhash}; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell)))$
@@ -14,7 +18,7 @@
 
 ; --- Statistical and Technical Records ---
   StatisticalRecord = NumRounds SumRoundSize SumStateSize MaxRoundSize MaxStateSize ;~$\mathsf{SR}=(n_e, \overline{\ell}_B, \overline{\ell}_S, \hat{\ell}_B, \hat{\ell}_S)$
-  TechRecord = Round Epoch LeaderID SRHash  ;~$\mathsf{TE}=(n_r, e_r, \nu_\ell, h_\mathsf{sr})$
+  TechRecord = Round Epoch LeaderID SRHash FeeHash  ;~$\mathsf{TE}=(n_r, e_r, \nu_\ell, h_\mathsf{sr}, h_\mathsf{fee})$
 
   ShardInfo = Round PreviousHash PrevStatisticalRecord StatisticalRecord *ValidatorIdentifier LeaderIdentifier PrevUC ;~$(n,h_-, \mathsf{SR}_-, \mathsf{SR}, \mathcal{V}, \nu_\ell, UC_-)$
 
