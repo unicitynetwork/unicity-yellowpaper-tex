@@ -488,6 +488,27 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 
 This is the inclusion verifier denoted by $\mathcal{V}(\mathsf{sid},v,\pi,\mathcal{CD}_\beta,\mathcal{T})$ in the execution layer.
 
+\subsection{Proof Consolidation}\label{sec:consolidation}\index{proof consolidation}
+
+A \emph{retained view}\index{retained view} binds an immutable finalized SMT to its UC and, when available, the matching partition view. It is pinned for the duration of a proof operation. Retention is bounded: an unavailable view cannot be replaced by another root. Equal SMT roots may have different certification attachments.
+
+Batch inclusion takes an ordered sequence of distinct state identifiers in one shard and selects either its latest finalized view or an exact retained root. It returns ordinary inclusion proofs in request order under one UC, or fails as a whole if any requested leaf is absent or unavailable. A sharded latest result also supplies its matching partition view; an exact-root result need not. Latest selection must not silently fall back to an older certification.
+
+Consolidation replaces proofs from one partition by ordinary proofs sharing one seal:
+\begin{enumerate}
+\item Authenticate the original proofs and their request bindings. Let $R_{\min}$ be the maximum root round required by this authenticated evidence.
+\item Select a participating shard as the \emph{master}\index{master (consolidation)} and obtain its latest batch. Authenticate its UC and partition view and require $UC.C^\mathsf{r}.n_r\ge R_{\min}$.
+\item For each other participating shard, request its exact root from that authenticated view. Derive each shard's UC under the master seal and verify each replacement leaf against its derived root.
+\item Preserve each leaf's certification data and original reference time, require that time not to exceed the target input-record time, and apply ordinary transaction and token verification to the result.
+\end{enumerate}
+The client coordinates this attempt; the master is not an additional authority. Missing retained roots, missing required views or incompatible lineage prevent consolidation. No newer or different root may be substituted within the attempt.
+
+For an unsharded partition, identified by the authenticated empty shard identifier and zero shard siblings, the master UC itself supplies the target. No partition view or peer request is needed; all authority, lower-bound and leaf checks still apply. A request touching one shard of a sharded partition does not qualify for this case.
+
+Only outer-history proofs are replaced in a token. Transactions, identities, signed nested dependencies and opaque predicate data remain unchanged. The one-seal property applies to that outer history; nested proofs may retain other seals. Consolidation changes neither the ordinary proof format nor the token format and does not itself compress their encodings.
+
+Seal verification may be reused within one operation only for identical complete seal encodings, independently authenticated authority and verification policy. The key includes every carried signature, and cached inputs are immutable. Every shard-body and leaf check still runs. Authentication of the original evidence is separate from the shared output-seal check.
+
 \subsection{Non-Inclusion Proof}
 
 \emph{Non-Inclusion Proof}\index{$\pi^\mathsf{exc}$ (non-inclusion proof)}\index{non-inclusion proof}\index{exclusion proof} proves that a state identifier does NOT exist in the SMT. It is a tuple $\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$, where:
