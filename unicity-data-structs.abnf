@@ -4,6 +4,7 @@
 ; 1. BFT CORE (shared data structures)
 
   UC = Version IR TechRecordHash ShardConfHash ShardTreeCertificate UnicityTreeCertificate UnicitySeal  ;~$UC = (IR, h_t, h_c, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
+      ; UC: tag 39001, array[7], version 1.
   IR = Version RoundNumber Epoch NullableHash NullableHash NullableBytes Time NullableHash EarnedFees NullableHash
       ; CBOR tag 39002, array[10]: $[1,n,e,h',h,v,t,h_B,f,h_E]$
   ; The empty aggregation state root is NULL, never an empty bstr or a zero digest.
@@ -48,7 +49,7 @@
 ; BFT CORE (internal data structures)
 
 ; --- Internal Consensus Structures ---
-  LedgerCommitInfo = UnicitySeal | UnicityTrustBaseEntry ; seal without signatures
+  LedgerCommitInfo = UnicitySeal | UnicityTrustBaseEntry ; signature slot set to NULL
   QC = VoteInfo LedgerCommitInfo *Signatures
       ; LedgerCommitInfo.PreviousHash = H(VoteInfo).
   RecoverableSignature = 65OCTET
@@ -99,7 +100,7 @@
   ;  Returned UC can be repeated cert for prevStateTreeHash which triggers next attempt using different leader
   ;  a validator can have multiple pending requests extending the same hash; latest one is identified using IR.n
 
-  CReS = NetworkIdentifier PartitionIdentifier ShardIdentifier UC TechRecord [UnicityTrustBaseEntry]
+  CReS = NetworkIdentifier PartitionIdentifier ShardIdentifier TechRecord UC [UnicityTrustBaseEntry]
         ;~Certification~Response
 
   ; Subscription - Subscribe to CReS message feed in order to obtain the latest UC for synchronization
@@ -176,7 +177,7 @@
 ; 5. EXECUTION LAYER
 
   AggregationPartitionIdentifier = PartitionIdentifier
-      ; Must equal the token/aggregation profile constant in Sec. 2 (Execution Model).
+      ; Must equal the constant in Sec.~\ref{sec:aggregation-profile}.
       ; Applies to every application UC, including nested and consolidated proofs.
 
 ; --- Predicates ---
@@ -239,7 +240,7 @@
 
 ; --- Certification ---
   CertificationData = Version Recipient SourceStateHash TransactionHash ExpiresAt UnlockingArgument
-      ;~$Q = (\predi, h_\mathsf{st}, h_\mathsf{tx}, \bar\tau_Q, u)$ -- CBOR array[6], submitted to Unicity Service
+      ;~$Q = (\predi, h_\mathsf{st}, h_\mathsf{tx}, \bar\tau_Q, u)$ -- tag 39031, CBOR array[6], version 2
   ExpiresAt = Timestamp / NULL
       ;~$\bar\tau_Q\in\mathbb{T}_\bot$ -- exclusive request timeout, fixed position
       ;~NULL is the CBOR simple value \texttt{null}, i.e. $\bar\tau_Q=\bot$: the service assigns the deadline

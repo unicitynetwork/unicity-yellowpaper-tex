@@ -173,7 +173,7 @@ $D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}
 5 & byte string & Auxiliary Payload $\auxd'$ (optional, arbitrary length) \\
 \end{longtable}
 
-The payload is $D_\mathsf{mint}$ followed by the request timeout $\tau_Q$ at index~6, encoded as an unsigned integer, or as the CBOR simple value \texttt{null} when $\tau_Q=\bot$ (Appendix~\ref{app:encodings}). The native envelope is tag 39041 over $[2,\alpha,\predi\prime,\mathsf{salt},\mathsf{ty},\mathsf{reason},\auxd\prime,\tau_Q]$. Optional reason and auxiliary data use \texttt{null} when absent.
+The payload is $D_\mathsf{mint}$ followed by the request timeout $\tau_Q$ at index~6, encoded as an unsigned integer, or as the CBOR simple value \texttt{null} when $\tau_Q=\bot$ (Appendix~\ref{app:encodings}). The native envelope is tag 39041 over $[2,\alpha,\predi',\mathsf{salt},\mathsf{ty},\mathsf{reason},\auxd',\tau_Q]$. Optional reason and auxiliary data use \texttt{null} when absent.
 
 The implicit token identifier is $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (Sec.~\ref{app:hash-derivations}); salts MUST be unique across all minters on $\alpha$ (Sec.~\ref{sec:mint-tx}).
 
@@ -233,6 +233,18 @@ The state identifier is derived from the predicate and state hash:
 \]
 
 \subsection{State Hash}
+
+For mint transactions:
+\[
+\sthash = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{id}, \mathsf{MINT\_SUFFIX})), \quad \text{where } \mathsf{id} = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\mathsf{salt}, \alpha))
+\]
+
+For transfer transactions, the next state hash:
+\[
+\sthash' = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, x))
+\]
+
+\subsection{Transaction Hash}
 
 For mint and transfer transactions, the native transaction hash is SHA-256 of the complete tagged, versioned transaction encoding in Sec.~\ref{app:transaction-encoding}. The fixed timeout position is included even when its value is \texttt{null}. Thus the abstract transaction-data hash commits to the native tag and version as well as its payload.
 

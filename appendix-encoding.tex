@@ -8,7 +8,7 @@ For data to be hashed or signed, the deterministic encoding rules (as defined in
 
 \section{Tuples}
 
-Tuples are encoded as CBOR arrays in the natural way: a tuple $T$ consisting of $n$ elements, denoted $(T_1, T_2, \ldots, T_n)$ or $\langle T_1, T_2, \ldots, T_n \rangle$ in the specification, is encoded as $n$-element CBOR array with $T_1$ the first elment, $T_2$ the second element, and so on.
+Unless a native mapping is specified below, tuples are encoded as CBOR arrays in the natural way: a tuple $T$ consisting of $n$ elements, denoted $(T_1, T_2, \ldots, T_n)$ or $\langle T_1, T_2, \ldots, T_n \rangle$ in the specification, is encoded as $n$-element CBOR array with $T_1$ the first element, $T_2$ the second element, and so on.
 
 Within a fixed tuple shape, an optional element with no value, denoted $\bot$ in the specification, is not omitted from the array, but encoded as the CBOR simple value \texttt{null}. Each version of a structure therefore has exactly one tuple shape and one element count, and an optional element occupies its position whether or not it carries a value.
 
@@ -96,7 +96,7 @@ An inclusion proof is tag 39033 over
 \[
 [1,Q,\tau,\mathsf{bstr}(C^\mathsf{inc}),UC],
 \]
-where $Q$ is the tagged certification data, $\tau$ is the original leaf reference time, and the certificate byte string is specified in Appendix~\ref{app:rsmt}. The state identifier and $\lambda(Q,\tau)=\mathsf{SHA256}(\mathsf{CBOR}([\txhash,\tau]))$ are derived verification inputs, not additional array elements. A later UC does not change $\tau$.
+Here $Q$ is tag 39031 over $[2,\predi,\sthash,\txhash,\bar\tau_Q,u]$, with the predicate and unlocking argument encoded as byte strings. The value $\tau$ is the original leaf reference time. The certificate byte string is specified in Appendix~\ref{app:rsmt}. The state identifier and $\lambda(Q,\tau)=\mathsf{SHA256}(\mathsf{CBOR}([\txhash,\tau]))$ are derived verification inputs, not additional array elements. A later UC does not change $\tau$.
 
 
 \section{Empty Roots and Structural Validation}\label{sec:empty-root-encoding}

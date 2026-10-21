@@ -317,7 +317,7 @@ For the single shard case, the shard certificate is $(\emptystr;\langle\rangle)$
 
 \begin{algorithmic}[0]
 	\State ensure($IR\ne\bot$ and the shard identifier and sibling sequence are well formed)
-\State $r \gets H(IR,h_t,h_c)$
+	\State $r \gets H(IR,h_t,h_c)$
 	\For {$i \gets |\sigma|$ downto $1$ }
 		\State \textbf{if} $\sigma_i = 0$ \textbf{then} $r \gets  H(r, h^s_{|\sigma|-i+1})$
 		\State \textbf{if} $\sigma_i = 1$ \textbf{then} $r \gets  H(h^s_{|\sigma|-i+1}, r)$
@@ -369,7 +369,7 @@ For the single shard case, $\mathsf{CompShardTreeCert}((\emptystr; \langle\rangl
 \textbf{Computation}:
 \begin{algorithmic}[0]
 	\State ensure(all hash steps are present and well formed)
-\State $L \gets \langle (\beta, H(x)), (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell) \rangle$ \Comment{Restore the first hash step}
+	\State $L \gets \langle (\beta, H(x)), (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell) \rangle$ \Comment{Restore the first hash step}
 	\State \Return $\Call{\textsc{index\_tree\_output}}{L; \beta}$ \Comment{Sec.~\ref{sec:index-tree-output}}
 \end{algorithmic}
 
@@ -465,12 +465,12 @@ For the token/aggregation profile (Sec.~\ref{sec:aggregation-profile}), require 
 
 \subsubsection{Verification: $\mathsf{VerifyInclusionProof}$}\label{VerifyInclusionProof}\index{functions!VerifyInclusionProof}
 
-$\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type $\mathbb{IP} \times \mathbb{CD} \times \mathbb{UB} \to \bool$
+$\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type $\mathbb{IP} \times (\mathbb{CD}\cup\{\bot\}) \times \mathbb{UB} \to \bool$
 
 \textbf{Input}:
 \begin{enumerate}
 	\item $\pi^\mathsf{inc} = (\mathsf{sid}, v, \tau, C^\mathsf{inc}, UC)$ -- inclusion proof
-	\item $\mathcal{CD}_\beta$ -- partition description of the partition identified by $UC.C^\mathsf{uni}.\beta$
+	\item $\mathcal{CD}_\beta$ -- optional independently supplied partition description, or $\bot$
 	\item $\mathcal{T}$ -- trust base
 \end{enumerate}
 
@@ -478,18 +478,21 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
+	\State ensure(required proof records and paths are structurally valid)
 	\State ensure($UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$) \Comment{Certificate belongs to the same network as the trust base}
-	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_{\beta,UC.C^\mathsf{shard}.\sigma}) = UC.h_c$) \Comment{Authenticate shard configuration}
 	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
-	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
-	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Proof comes from the right shard}
+	\If{$\mathcal{CD}_\beta\ne\bot$}
+		\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha\land\sigma\in\mathcal{CD}_\beta.\mathcal{SH}$)
+		\State ensure($H(\mathcal{CD}_{\beta,\sigma})=UC.h_c$)
+	\EndIf
+	\State ensure($\mathsf{sid}[0..|\sigma|)=\sigma$) \Comment{Proof comes from the right shard}
 	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
 	\If {$\neg \Call{rsmt\_verify\_inclusion}{C^\mathsf{inc}, h, \mathsf{sid}, v}$} \Return \FALSE \EndIf
 	\If {$\neg \mathsf{VerifyUnicityCert}(UC, \mathcal{T})$} \Return \FALSE \EndIf
 	\State \Return \TRUE
 \end{algorithmic}
 
-This is the inclusion verifier denoted by $\mathcal{V}(\mathsf{sid},v,\pi,\mathcal{CD}_\beta,\mathcal{T})$ in the execution layer.
+The shard identifier is authenticated by the UC; its prefix binds the queried key. A supplied configuration is an additional restriction, not a replacement for certificate verification. This is the inclusion verifier denoted by $\mathcal{V}(\mathsf{sid},v,\pi,\mathcal{CD}_\beta,\mathcal{T})$ in the execution layer.
 
 \subsection{Proof Consolidation}\label{sec:consolidation}\index{proof consolidation}
 
@@ -527,12 +530,12 @@ The queried $\mathsf{sid}$ is supplied by the verifier. The result holds only fo
 
 \subsubsection{Verification: $\mathsf{VerifyNonInclusionProof}$}\label{VerifyNonInclusionProof}\index{functions!VerifyNonInclusionProof}
 
-$\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function of type $\mathbb{EP} \times \mathbb{CD} \times \mathbb{UB} \to \bool$
+$\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function of type $\mathbb{EP} \times (\mathbb{CD}\cup\{\bot\}) \times \mathbb{UB} \times \bytes{32} \to \bool$
 
 \textbf{Input}:
 \begin{enumerate}
 	\item $\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$ -- non-inclusion proof
-	\item $\mathcal{CD}_\beta$ -- authenticated partition description of the partition identified by $UC.C^\mathsf{uni}.\beta$
+	\item $\mathcal{CD}_\beta$ -- optional independently supplied partition description, or $\bot$
 	\item $\mathcal{T}$ -- trust base
 	\item $\mathsf{sid} \in \bytes{32}$ -- queried state identifier
 \end{enumerate}
@@ -541,13 +544,16 @@ $\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function 
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
+	\State ensure(required proof records and paths are structurally valid)
 	\State ensure($UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$) \Comment{Certificate belongs to the same network as the trust base}
-	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_{\beta,UC.C^\mathsf{shard}.\sigma}) = UC.h_c$) \Comment{Authenticate shard configuration}
 	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
-	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
-	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Queried key routes to the certified shard}
+	\If{$\mathcal{CD}_\beta\ne\bot$}
+		\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha\land\sigma\in\mathcal{CD}_\beta.\mathcal{SH}$)
+		\State ensure($H(\mathcal{CD}_{\beta,\sigma})=UC.h_c$)
+	\EndIf
+	\State ensure($\mathsf{sid}[0..|\sigma|)=\sigma$) \Comment{Queried key routes to the certified shard}
 	\If{$C^\mathsf{exc} \ne C^\mathsf{exc}_\emptyset$}
-		\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(C^\mathsf{exc}.k') = \sigma$) \Comment{So must the authenticated terminal}
+		\State ensure($C^\mathsf{exc}.k'[0..|\sigma|)=\sigma$) \Comment{So must the authenticated terminal}
 	\EndIf
 	\State $h \gets UC.IR.h$ \Comment{Extract SMT root hash from IR}
 	\If {$\neg \Call{rsmt\_verify\_non\_inclusion}{C^\mathsf{exc}, h, \mathsf{sid}}$} \Return \FALSE \EndIf
@@ -884,7 +890,7 @@ When the BFT Core's round $n$ is completed, then:
 	\item For every $\beta\in\mathcal{C}$, and $\sigma\in \mathcal{SH}_\beta$:
 	\begin{enumerate}
 		\item The shard tree certificate $C^\mathsf{shard}_{\beta,\sigma}$ (Sec.~\ref{se:shard-tree-cert}) is created by the function call $C^\mathsf{shard}_{\beta,\sigma}\gets \mathsf{CreateShardTreeCert}(\sigma,\chi_\beta)$ (Sec.~\ref{se:create-shard-tree-cert})
-		\item Writing $(IR,h_t,h_c)=\mathcal{IRT}_\beta[\sigma]$, the unicity certificate $UC_{\beta,\sigma}=(IR,h_t,h_c,C^\mathsf{shard}_{\beta,\sigma},C^\mathsf{uni}_\beta,C^\mathsf{r})$ (Sec.~\ref{se:unicity-certificate}) and the certification response $\mathsf{CReS}_{\beta,\sigma}=\langle \alpha,\beta,\sigma; UC_{\beta,\sigma}, \mathcal{TE}_{\beta,\sigma}\rangle$ are composed (if the shard input have changed)
+		\item Writing $(IR,h_t,h_c)=\mathcal{IRT}_\beta[\sigma]$, the unicity certificate $UC_{\beta,\sigma}=(IR,h_t,h_c,C^\mathsf{shard}_{\beta,\sigma},C^\mathsf{uni}_\beta,C^\mathsf{r})$ (Sec.~\ref{se:unicity-certificate}) and the certification response $\mathsf{CReS}_{\beta,\sigma}=\langle \alpha,\beta,\sigma,\mathcal{TE}_{\beta,\sigma}; UC_{\beta,\sigma}\rangle$ are composed (if the shard input have changed)
 		\item The last unicity certificate field is updated by $\mathcal{SI}[\beta,\sigma] UC_-\gets UC$ (if the shard input have changed).
 	\end{enumerate}
 	\item The round number and the previous root hash of the unicity tree are updated by $n\gets n+1$ and $r_-\gets r$.
