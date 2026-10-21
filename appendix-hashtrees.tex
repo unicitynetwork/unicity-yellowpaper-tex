@@ -520,7 +520,7 @@ Two things differ from the inclusion case. First, the terminal leaf is transmitt
 \[
 	\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \cdots \,\|\, s_n[32] \,\|\, k'[32] \,\|\, v',
 \]
-for a total of $64+32n+\len{v'}$ bytes: the bitmap determines the sibling count, and the remainder after the fixed-size terminal key is the value. Under the Unicity aggregation profile, $\len{v'}=\ell_{\mathsf{agg}}$, giving $96+32n$ bytes, and an implementation of that profile MAY require exactly that length. Absence therefore costs one 32-byte digest per real junction plus the terminal leaf; no junction is opened in full.
+for a total of $64+32n+\len{v'}$ bytes: the bitmap determines the sibling count, and the remainder after the fixed-size terminal key is the value. Under the Unicity aggregation profile, $\len{v'}=\ell_{\mathsf{agg}}$, giving $96+32n$ bytes, and an implementation of that profile MUST require exactly that length. Absence therefore costs one 32-byte digest per real junction plus the terminal leaf; no junction is opened in full.
 
 \noindent\textbf{Generation}: if the tree is empty, return $C^\mathsf{exc}_\emptyset$. Otherwise walk from the root. At each junction $(d,p,c_0,c_1)$, set bit $d$ in the bitmap, append the digest of $c_{1-k[d]}$ to the siblings list, and descend into $c_{k[d]}$; do \emph{not} stop when $p$ is not a prefix of $k$, since a target diverging inside a compressed edge still has a well-defined terminal. Append the reached leaf $(k',v')$. Run for a present key, the same walk ends at $k'=k$; that is an inclusion path and MUST NOT be issued as a non-inclusion certificate.
 

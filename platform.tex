@@ -517,7 +517,10 @@ Seal verification may be reused within one operation only for identical complete
 	\item $UC$ -- unicity certificate (Sec.~\ref{se:unicity-certificate})
 \end{enumerate}
 
-The queried $\mathsf{sid}$ is not part of the proof: it is supplied by the verifier, which is the party that cares which key is absent. A non-inclusion proof is a statement about one certified root, not a promise about later ones; a verifier with freshness requirements MUST additionally bound $UC.\mathcal{IR}$ by its own policy on certified round or time.
+The queried $\mathsf{sid}$ is supplied by the verifier. The result holds only for the certified snapshot, not for any later state, with binding
+\[
+(n_r,\sigma,h)=(UC.C^\mathsf{r}.n_r,\ UC.C^\mathsf{shard}.\sigma,\ UC.IR.h).
+\]
 
 \subsubsection{Verification: $\mathsf{VerifyNonInclusionProof}$}\label{VerifyNonInclusionProof}\index{functions!VerifyNonInclusionProof}
 

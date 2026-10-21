@@ -138,9 +138,16 @@
   InclusionCertificateBytes = Bytes
       ; Byte-string encoding of InclusionCertificate.
 
-  NonInclusionProof = NonInclusionCertificate UC  ;~$\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$
+  NonInclusionProof = Version NonInclusionCertificateBytes UC  ;~$\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$
+      ; Tag 39034, array[3]: [1, certificate byte string, native tagged UC].
+      ; Certificate bytes are empty or exactly 96 + 32*popcount(bitmap), <= 8288.
+      ; Terminal value is 32 bytes; no trailing bytes.
       ;~Proves that a queried $\mathsf{sid}$ does NOT exist in the SMT; the queried
       ;~$\mathsf{sid}$ is supplied by the verifier and is not carried in the proof
+
+  NonInclusionCertificateBytes = Bytes
+  UnavailableInclusionAnswer = Version NULL NULL NULL UC
+      ; Tag 39033, [1, null, null, null, UC]; not a proof of absence.
 
   ConsistencyProof = *ConsistencyProofOp | ZKProof
       ;~$\pi_{\mathsf{CP}}$ -- proves append-only consistency of the SMT round update;

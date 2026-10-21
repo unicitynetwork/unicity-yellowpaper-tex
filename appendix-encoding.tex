@@ -119,3 +119,10 @@ The unchanged native certification response is $[\beta,\sigma,\mathcal{TE},UC]$.
 [2,[\beta,\sigma,\mathcal{TE},UC],\mathsf{bstr}(P_\beta)\text{ or }\texttt{null}].
 \]
 The envelope version is 2 and the view version is 1. An absent sidecar is \texttt{null}, not an empty byte string. The view's decoding and authentication are separate from validation of the operational response.
+
+
+\section{Non-Inclusion Proof Encoding}\label{sec:non-inclusion-encoding}
+
+A non-inclusion proof is tag 39034 over $[1,\mathsf{bstr}(C^\mathsf{exc}),UC]$. The queried state identifier is a verification input. The aggregation-profile certificate is either empty, with the authenticated root required to be \texttt{null}, or exactly $96+32\,\mathsf{popcount}(\mathit{bitmap})$ bytes, at most 8\,288 bytes. Its terminal value is exactly 32 bytes; trailing bytes are rejected.
+
+The version-2 inclusion lookup can return tag 39033 over $[1,\texttt{null},\texttt{null},\texttt{null},UC]$ when no certified leaf is returned. That answer is neither an inclusion proof nor the empty non-inclusion certificate above. A surrounding block number or optional pending, expired or unknown status is advisory and does not establish absence.
