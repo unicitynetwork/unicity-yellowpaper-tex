@@ -14,7 +14,9 @@
   HashStep = PartitionIdentifier SiblingHash  ;~$C^\mathsf{uni} = (\beta; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell)))$
 
   UnicitySeal = Version NetworkIdentifier RootPartitionRoundNumber Epoch Timestamp PreviousHash Hash *Signatures  ;~$C^\mathsf{r} = (\alpha, n_r, e_r, t_r, r_-, r; s)$
-                      ;~where |Signatures| = quorumThreshold > 2f
+                      ; Count each valid trusted signer once; valid voting power >= quorumThreshold.
+                      ; Tag 39005, array[8]; signing uses NULL in the signature-map slot.
+                      ; PreviousHash commits to QC VoteInfo in the distributed implementation.
 
 ; --- Statistical and Technical Records ---
   StatisticalRecord = NumRounds SumRoundSize SumStateSize MaxRoundSize MaxStateSize ;~$\mathsf{SR}=(n_e, \overline{\ell}_B, \overline{\ell}_S, \hat{\ell}_B, \hat{\ell}_S)$
@@ -32,6 +34,9 @@
 ; --- Internal Consensus Structures ---
   LedgerCommitInfo = UnicitySeal | UnicityTrustBaseEntry ; seal without signatures
   QC = VoteInfo LedgerCommitInfo *Signatures
+      ; LedgerCommitInfo.PreviousHash = H(VoteInfo).
+  RecoverableSignature = 65OCTET
+      ; R || S || V: nonzero scalars, low S, V in 0..3; recover the expected key.
 
   VoteInfo = RoundInfo
   RoundInfo = RoundNumber Epoch Timestamp ParentRoundNumber CurrentRootHash | UnicityTrustBaseEntryHash

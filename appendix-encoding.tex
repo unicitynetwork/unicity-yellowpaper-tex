@@ -77,3 +77,14 @@ The unicity certificate is tag 39001 over
 The shard certificate is tag 39003 over $[1,\sigma,[h^s_1,\ldots,h^s_{|\sigma|}]]$; siblings are in leaf-to-root order and their count equals the shard identifier's bit length. The empty shard has an empty sibling array. The unicity-tree certificate is tag 39004 over $[1,\beta,[[\beta_2,h_2],\ldots,[\beta_\ell,h_\ell]]]$.
 
 A shard leaf hashes, in sequence, the tagged input record, the technical-record hash byte string and the shard-configuration hash byte string. A shard internal node hashes the two child hash byte strings in left-to-right order. The value passed to the indexed tree for partition $\beta$ is the hash of the byte-string encoding of its shard-tree root; there is no additional partition-description hash in that value or in the unicity-tree certificate.
+
+
+\subsection{Unicity Seal}\label{sec:seal-encoding}
+
+A seal is CBOR tag 39005 over $[1,\alpha,n_r,e_r,t_r,r_-,r,s]$, where $s$ is a map from validator identifiers to signature byte strings. The signing preimage is the deterministic encoding of the same tagged array with $s=\texttt{null}$. The signature slot is not removed. Full seal bytes retain the entire signature map.
+
+In the distributed implementation, the field named \texttt{PreviousHash}, denoted $r_-$, is the hash of the QC's \texttt{VoteInfo}. QC verification recomputes that hash before checking the signatures. It is not the previous unicity-tree root.
+
+\subsection{Recoverable Signatures}\label{sec:recoverable-signatures}
+
+The seal and standard predicate signature profile is exactly 65 bytes $R\|S\|V$, with big-endian 32-byte scalars. For secp256k1 group order $q$, require $1\le R<q$, $1\le S\le\lfloor q/2\rfloor$ and $V\in\{0,1,2,3\}$. Verification must recover the independently expected public key using $V$. Values 27/28, chain-ID conversions and compact 64-byte signatures are not accepted by this profile. A signature failing these checks contributes no vote to a seal quorum.

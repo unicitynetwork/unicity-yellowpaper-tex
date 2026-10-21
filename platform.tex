@@ -379,10 +379,12 @@ For the single shard case, $\mathsf{CompShardTreeCert}((\emptystr; \langle\rangl
 	\item $n_r$ -- BFT Core's Round number
 	\item $e_r$ -- BFT Core's Epoch number
 	\item $t_r$ -- Round creation time (wall clock value specified and verified by the BFT Core), with one-second precision. See Appendix~\ref{app:encodings} for encoding
-	\item $r_-$ -- Root hash of previous round's Unicity Tree
+	\item $r_-$ -- consensus commitment (the hash of the QC vote information in the distributed implementation)
 	\item $r$ -- Root hash of the Unicity Tree (denoted as $r^{\text{root}}$ if necessary for clarity)
-	\item $s$ -- Signature, computed by the BFT Core over preceding fields ($s = \mathsf{Sign}_{\mathsf{sk}_r}(n_r, e_r, t_r, r_-, r)$). The formulation of signature field depends on underlying consensus mechanism and its parameters. Here we assume an opaque data structure which can be verified based on the Unicity Trust Base, i.e., there is an implementation of an abstract function $\mathsf{Verify}_{\mathcal{T}}((n_r, e_r, t_r, r_-, r), s)$, encapsulated into the implementation of $\mathsf{VerifyUnicitySeal}$.
+	\item $s$ -- Signature, computed by the BFT Core over preceding fields ($s = \mathsf{Sign}_{\mathsf{sk}_r}(\alpha,n_r,e_r,t_r,r_-,r;\bot)$). The formulation of signature field depends on underlying consensus mechanism and its parameters. Here we assume an opaque data structure which can be verified based on the Unicity Trust Base, i.e., there is an implementation of an abstract function $\mathsf{Verify}_{\mathcal{T}}((\alpha,n_r,e_r,t_r,r_-,r;\bot),s)$, encapsulated into the implementation of $\mathsf{VerifyUnicitySeal}$.
 \end{enumerate}
+
+Write $\overline{C^\mathsf{r}}$ for the seal with its signature field replaced by $\bot$. This is the signed record; its native encoding, including the version, is specified in Appendix~\ref{sec:seal-encoding}. A previous-root interpretation of $r_-$ in simplified algorithms is illustrative.
 
 $\mathsf{VerifyUnicitySeal}$ -- unicity seal verification function of type $\hashtype \times \mathbb{US} \times \mathbb{UB} \to \bool$\;. This function also verifies, if Unicity Seal's network identifier matches with the Unicity Trust Base.
 

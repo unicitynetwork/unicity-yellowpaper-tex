@@ -1599,7 +1599,7 @@ We start with one BFT Core validator, which does not change (and can not change 
 
 \begin{algorithmic}[0]
   \Function{VerifyUnicitySeal}{$r, C^\mathsf{r}, \mathcal{T}$}
-    \State \Return $(\mathcal{T}.\alpha = C^\mathsf{r}.\alpha \land r = C^\mathsf{r}.r  \land \mathsf{Ver}_{\mathcal{T}.\mathsf{pk}}(C^\mathsf{r}, C^\mathsf{r}.s))$  \Comment{Calculated over all fields except signature}
+    \State \Return $(\mathcal{T}.\alpha = C^\mathsf{r}.\alpha \land r = C^\mathsf{r}.r  \land \mathsf{Ver}_{\mathcal{T}.\mathsf{pk}}(\overline{C^\mathsf{r}}, C^\mathsf{r}.s))$  \Comment{Signature field replaced by $\bot$}
   \EndFunction
 \end{algorithmic}
 
@@ -1631,7 +1631,7 @@ In the case of dynamic BFT Core the validator(s) can change at epoch boundaries.
     \If{$\mathcal{T}[C^\mathsf{r}.e] = \bot$}
       \State \Return \textbf{error}  \Comment{No record in trust base for the epoch}
     \EndIf
-    \State \Return $(\mathsf{Ver}_{T.\mathsf{pk}}(C^\mathsf{r}, C^\mathsf{r}.s) = 1)$  \Comment{Calculated over all fields except signature}
+    \State \Return $(\mathsf{Ver}_{T.\mathsf{pk}}(\overline{C^\mathsf{r}}, C^\mathsf{r}.s) = 1)$  \Comment{Signature field replaced by $\bot$}
   \EndFunction
 \end{algorithmic}
 
@@ -1677,25 +1677,21 @@ Unicity Trust Base is a map of BFT Core validator identifiers to validator publi
     \item $C^\mathsf{r} = (\alpha, n_r, t_r, r_-, r; s) \quad \text{where} \quad s = \{(i, s_i) \mid i \in (1 \,.\,.\, \nu_r)  \}  \quad \text{and} \quad \lvert s \rvert \ge q$\,. \\
 \end{itemize}
 
-Unicity Trust Base does not change as the BFT Core configuration is static.
+Unicity Trust Base does not change as the BFT Core configuration is static. The algorithm uses unit voting power; for a weighted trust base, add the trusted stake of each valid signer instead. Invalid or unknown surplus signatures contribute no voting power; malformed signature containers and duplicate signer encodings are rejected.
 
 \begin{algorithmic}[0]
   \Function{VerifyUnicitySeal}{$r, C^\mathsf{r}, \mathcal{T}$}
     \If{$\mathcal{T}.\alpha \ne C^\mathsf{r}.\alpha \lor r \ne C^\mathsf{r}.r$}
         \State \Return $0$
     \EndIf
-    \If{$\lnot ( \forall\ m, n \in 1 \,.\,.\, \lvert C^\mathsf{r}.s \rvert \colon C^\mathsf{r}.s[m].i \ne C^\mathsf{r}.s[n].i )$}
-      \State \Return 0 \Comment{Duplicate signers}
-    \EndIf
-    \If{$\lvert C^\mathsf{r}.s \rvert \le \mathcal{T}.q$}
-      \State \Return 0 \Comment{No quorum}
-    \EndIf
-    \For{ $(i, s) \in  C^\mathsf{r}.s $ }
-      \If{$(\mathsf{Ver}_{\mathcal{T}.\mathsf{pk}_i}(C^\mathsf{r}, s) = 0) $}\Comment{Calculated over all fields except signature}
-         \State \Return 0   \Comment{Invalid signature}
+    \State ensure($C^\mathsf{r}.s$ is well formed and has distinct signer identifiers)
+    \State $w \gets 0$
+    \For{$(i,s_i)\in C^\mathsf{r}.s$}
+      \If{$i\in\mathcal{T}\ \land\ \mathsf{Ver}_{\mathcal{T}.\mathsf{pk}_i}(\overline{C^\mathsf{r}},s_i)=1$}
+        \State $w \gets w+1$
       \EndIf
     \EndFor
-    \State \Return 1   \Comment{Success}
+    \State \Return $(w\ge\mathcal{T}.q)$
   \EndFunction
 \end{algorithmic}
 

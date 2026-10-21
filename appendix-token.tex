@@ -273,7 +273,7 @@ All standard predicates that verify digital signatures ($\predi_\mathsf{sig}$, $
 
 \begin{itemize}
 	\item \textbf{Public keys}: compressed format, 33 bytes (1-byte prefix $\texttt{0x02}$ or $\texttt{0x03}$, followed by 32-byte $x$-coordinate).
-	\item \textbf{Signatures}: 65 bytes ($R \mathbin{\|} S \mathbin{\|} V$), where $R$ and $S$ are 32-byte integers and $V$ is a 1-byte recovery identifier.
+	\item \textbf{Signatures}: 65 bytes ($R \mathbin{\|} S \mathbin{\|} V$), where $R$ and $S$ are 32-byte integers and $V$ is a 1-byte recovery identifier, subject to the scalar, low-$S$ and key-recovery requirements of Sec.~\ref{sec:recoverable-signatures}.
 	\item \textbf{Signed message}: the predicate message hash $m = \mathsf{SHA\text{-}256}(\mathsf{CBOR}(\sthash, \txhash))$, where $\txhash$ commits to the exclusive request timeout, as defined in Sec.~\ref{sec:predicate-framework}.
 \end{itemize}
 
