@@ -79,7 +79,7 @@ For standard type partitions, the field $\mathcal{CD}.\mathcal{SD}$ does not exi
 
 A shard $\sigma$ of partition $\beta$ may be split into two sub-shards $\sigma \| 0$ and $\sigma \| 1$ for scaling reasons. The split affects (i) the sharding scheme recorded in the partition description, (ii) the per-shard SMTs maintained by aggregation layer nodes, and (iii) the per-shard state tracked by the BFT Core in $\mathcal{SI}$. The underlying tree operation is $\textsc{rsmt\_shard\_split}$ (Appendix~\ref{sec:rsmt-shard-split-fn}).
 
-\paragraph{Partition description update.} Replacing $\sigma$ by $\sigma\|0,\sigma\|1$ changes the sharding scheme $\mathcal{SH}$ and thus $H(\mathcal{CD}[\beta])$, which appears as $\mathsf{dhash}$ in the Unicity Tree Certificate (Sec.~\ref{se:unicity-tree-certificate}). A split is configuration change executed at epoch change: a new partition description $\mathcal{CD}[\beta]'$ with the updated $\mathcal{SH}'$ is activated at an epoch boundary, and the split takes effect in the first round of the new epoch. Old unicity certificates remain verifiable against the $\mathcal{CD}[\beta]$ that was in force at the time of their issuance; verifiers must select the partition description record corresponding to $UC.C^\mathsf{r}.e_r$ (or, alternatively, authenticate it by its $\mathsf{dhash}$).
+\paragraph{Partition description update.} Replacing $\sigma$ by $\sigma\|0,\sigma\|1$ changes the sharding scheme $\mathcal{SH}$ and thus $H(\mathcal{CD}[\beta])$, which is reflected in the shard configuration hash $h_c$ in each Unicity Certificate (Sec.~\ref{se:unicity-certificate}). A split is configuration change executed at epoch change: a new partition description $\mathcal{CD}[\beta]'$ with the updated $\mathcal{SH}'$ is activated at an epoch boundary, and the split takes effect in the first round of the new epoch. Old unicity certificates remain verifiable against the $\mathcal{CD}[\beta]$ that was in force at the time of their issuance; verifiers must select the partition description record corresponding to $UC.C^\mathsf{r}.e_r$ and authenticate the corresponding shard configuration by $h_c$.
 
 \paragraph{Aggregator state handover.} At the epoch boundary of the split, the aggregation layer nodes serving the new shard $\sigma\|b$ initialize their SMT by applying
 \[
@@ -212,8 +212,8 @@ After processing a batch of requests, the aggregation layer nodes compute the ne
 	\begin{minipage}[h]{0.45\linewidth}
 		\centering
 		\begin{tikzpicture}[every path/.append style={draw, thick},rectangle/.style = {draw,minimum size=1cm}]
-			\node (IR)  at (0, 0) [rectangle,minimum width=2.6cm]  {$IR$\ \ \ \ \ };
-			\node (h)  at (1, 0) [rectangle,minimum width=.6cm]  {$h^t$};
+			\node (IR)  at (0, 0) [rectangle,minimum width=2.6cm]  {$IR, h_t, h_c$};
+
 			\node (Cs)  at (0, 2) [rectangle]  {$C^\mathsf{shard}$};
 			\draw      [->] (IR) -- (Cs);
 			\node (Cu) at (0, 4) [rectangle]   {$C^\mathsf{uni}$};
@@ -271,13 +271,13 @@ Appendix~\ref{app:rsmt} defines the corresponding wire formats and verification 
 \emph{Shard Tree Certificate}\index{$C^\mathsf{shard}$ (shard tree certificate)}\index{shard tree certificate} connects a shard's certified input hash to the partition's shard-tree root, from which the Unicity Tree certificate continues to the global root of trust. It is a tuple $C^\mathsf{shard} = (\sigma; h^s_1, \ldots, h^s_{|\sigma|})$, where:
 \begin{enumerate}
 	\item $\sigma=\sigma_1\sigma_2\ldots \sigma_{|\sigma|}$ is a shard identifier of type $\{0,1\}^\ast$
-	\item $h^s_1, \ldots, h^s_{|\sigma|}$ -- sibling hashes of type $\hashtype$
+	\item $h^s_1, \ldots, h^s_{|\sigma|}$ -- sibling hashes of type $\hashtype$, ordered from leaf to root
 \end{enumerate}
 
-For the single shard case, the sharding scheme is $\{\emptystr\}$ and the certificate is $(\emptystr, \bot)$.
+For the single shard case, the sharding scheme is $\{\emptystr\}$ and the certificate is $(\emptystr; \langle\rangle)$.
 
 \subsubsection{Sharded SMT Structure}
-In a sharded setting, each shard maintains the SMT for its portion of the key space and produces a certified shard input record $(IR, h_t)$. The Consensus Layer then deterministically builds the shard tree from the authenticated shard inputs of all shards in the partition (see Sec.~\ref{se:shard-tree} and Algorithm~\ref{alg:uc-gen}).
+In a sharded setting, each shard maintains the SMT for its portion of the key space and produces a certified shard input record $(IR, h_t, h_c)$. The Consensus Layer then deterministically builds the shard tree from the authenticated shard inputs of all shards in the partition (see Sec.~\ref{se:shard-tree} and Algorithm~\ref{alg:uc-gen}).
 
 \subsubsection{Creation: $\mathsf{CreateShardTreeCert}$}\label{se:create-shard-tree-cert}
 
@@ -300,7 +300,7 @@ In a sharded setting, each shard maintains the SMT for its portion of the key sp
 
 where $\sigma_1\sigma_2\ldots\sigma_m$ is the binary representation of $\sigma$, and $\overline{\sigma_i}$ is the binary complement of $\sigma_i$.
 
-For the single shard case, the shard certificate is $(\emptystr,\bot)$.
+For the single shard case, the shard certificate is $(\emptystr;\langle\rangle)$.
 
 \subsubsection{Computation: $\mathsf{CompShardTreeCert}$}\index{functions!CompShardTreeCert}
 
@@ -308,29 +308,28 @@ For the single shard case, the shard certificate is $(\emptystr,\bot)$.
 \begin{enumerate}
 	\item $(\sigma;h^s_1, \ldots, h^s_{|\sigma|})$ -- shard tree certificate, where $\sigma=\sigma_1\sigma_2\ldots \sigma_{|\sigma|}$ is a shard identifier
 	\item $IR$ -- Shard Input Record
-	\item $h_t$ -- hash value of type $\hashtype$
+	\item $h_t,h_c$ -- technical-record and shard-configuration hashes of type $\hashtype$
 \end{enumerate}
 \textbf{Output}: Root hash $r$ of type $\hashtype$
 
 \textbf{Computation}:
 
 \begin{algorithmic}[0]
-	\State $r \gets H(IR \mathbin{\|} h_t)$
+	\State $r \gets H(IR,h_t,h_c)$
 	\For {$i \gets |\sigma|$ downto $1$ }
-		\State \textbf{if} $\sigma_i = 0$ \textbf{then} $r \gets  H(r, h^s_i)$
-		\State \textbf{if} $\sigma_i = 1$ \textbf{then} $r \gets  H(h^s_i, r)$
+		\State \textbf{if} $\sigma_i = 0$ \textbf{then} $r \gets  H(r, h^s_{|\sigma|-i+1})$
+		\State \textbf{if} $\sigma_i = 1$ \textbf{then} $r \gets  H(h^s_{|\sigma|-i+1}, r)$
 	\EndFor
 	\State \Return $r$
 \end{algorithmic}
 
-For the single shard case, $\mathsf{CompShardTreeCert}((\emptystr, \bot), IR, h_t)$ returns $H(IR \mathbin{\|} h_t)$.
+For the single shard case, $\mathsf{CompShardTreeCert}((\emptystr; \langle\rangle), IR, h_t, h_c)$ returns $H(IR,h_t,h_c)$.
 
 \subsection{Unicity Tree Certificate}\label{se:unicity-tree-certificate}
 
-\emph{Unicity Tree Certificate}\index{$C^\mathsf{uni}$ (unicity tree certificate)}\index{unicity tree certificate} (Fig.~\ref{fi:uc}) is a tuple $C^\mathsf{uni} = (\beta, \mathsf{dhash}; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$, where:
+\emph{Unicity Tree Certificate}\index{$C^\mathsf{uni}$ (unicity tree certificate)}\index{unicity tree certificate} (Fig.~\ref{fi:uc}) is a tuple $C^\mathsf{uni} = (\beta; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$, where:
 \begin{enumerate}
 	\item $\beta$ -- partition identifier of type $\mathbb{C}$
-	\item $\mathsf{dhash}$ -- partition description hash of type $\hashtype$
 	\item $(\beta_2, h_2), \ldots, (\beta_\ell, h_\ell)$ -- a sequence of partition identifier and sibling hash pairs
 \end{enumerate}
 
@@ -340,35 +339,34 @@ For the single shard case, $\mathsf{CompShardTreeCert}((\emptystr, \bot), IR, h_
 \begin{enumerate}
 	\item $\beta$ -- partition identifier of type $\mathbb{C}$
 	\item $\mathcal{C}$ -- set of partition identifiers of type $\mathbb{C}$
-	\item $\mathcal{CD}$ -- partition description of type $\mathbb{CD}[\mathcal{C}]$
 	\item $\mathcal{IH}$ -- input hashes of type $\hashtype[\mathcal{C}]$
 \end{enumerate}
 
-\textbf{Output}: unicity tree certificate $(\beta, \mathsf{dhash}; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$
+\textbf{Output}: unicity tree certificate $(\beta; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$
 
 \textbf{Computation}:
 \begin{algorithmic}
 	\State $n \gets \len{\mathcal{C}}$ \Comment{Number of partitions}
 	\State $C \gets \mathsf{sorted}(\mathcal{C})$ \Comment{Sorted list}
 	\For{$i \gets 1 \ldots n$}
-		\State $x_i \gets H(\mathcal{IH}[C_i] \mathbin{\|} H(\mathcal{CD}[C_i]))$
+		\State $x_i \gets H(\mathcal{IH}[C_i])$
 	\EndFor
 	\State $\langle (\beta_1, h_1), (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell) \rangle \gets \Call{\textsc{index\_tree\_chain}}{(C_1, x_1), (C_2, x_2), \ldots, (C_n, x_n), \beta}$ %\Comment{Sec.~\ref{sec:index-tree-chain}}
-	\State \Return $(\beta, H(\mathcal{CD}[\beta]); (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$ \Comment{Drop redundant first hash step}
+	\State \Return $(\beta; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$ \Comment{Drop redundant first hash step}
 \end{algorithmic}
 
 \subsubsection{Computation: $\mathsf{CompUnicityTreeCert}$}
 \index{unicity tree certificate!computation}
 \textbf{Input}:
 \begin{enumerate}
-	\item $(\beta, \mathsf{dhash}; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$ -- unicity tree certificate
+	\item $(\beta; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell))$ -- unicity tree certificate
 	\item $x$ -- input hash (output of the $\mathsf{CompShardTreeCert}$ function)
 \end{enumerate}
 \textbf{Output}: Root hash $r$ of type $\hashtype$
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
-	\State $L \gets \langle (\beta, H(x, \mathsf{dhash})), (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell) \rangle$ \Comment{Restore the first hash step}
+	\State $L \gets \langle (\beta, H(x)), (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell) \rangle$ \Comment{Restore the first hash step}
 	\State \Return $\Call{\textsc{index\_tree\_output}}{L; \beta}$ \Comment{Sec.~\ref{sec:index-tree-output}}
 \end{algorithmic}
 
@@ -390,16 +388,17 @@ $\mathsf{VerifyUnicitySeal}$ -- unicity seal verification function of type $\has
 
 \subsection{Unicity Certificate}\label{se:unicity-certificate}\index{$UC$ (unicity certificate)}
 
-\emph{Unicity Certificate} is a tuple $UC = (IR, h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$, where:
+\emph{Unicity Certificate} is a tuple $UC = (IR, h_t, h_c, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$, where:
 \begin{enumerate}
     \item $\mathcal{IR}$ is a shard input record of type $\mathbb{IR}$ (Sec.~\ref{shard-input-record}),
     \item $h_t$ is the hash (of technical record) of type $\hashtype$,
+    \item $h_c$ is the hash of the shard configuration record, $\mathcal{CD}[\beta,\sigma]$,
     \item $C^\mathsf{shard}$ is a shard tree certificate,
     \item $C^\mathsf{uni}$ is a unicity tree certificate, and
     \item $C^\mathsf{r}$ is a unicity seal
 \end{enumerate}
 
-Elements of the tuple form an authenticated chain, see function \nameref{VerifyUnicityCert}.
+The shard configuration $\mathcal{CD}[\beta,\sigma]$ (also written $\mathcal{CD}_{\beta,\sigma}$) is the partition description record for that shard, including its identifier and configuration. Elements of the tuple form an authenticated chain, see function \nameref{VerifyUnicityCert}.
 
 
 \subsubsection{Verification: $\mathsf{VerifyUnicityCert}$}\label{VerifyUnicityCert}\index{functions!VerifyUnicityCert}
@@ -409,7 +408,7 @@ This function authenticates the certificate chain itself. It does not, by itself
 
 \textbf{Input}:
 \begin{enumerate}
-	\item $UC = (IR, h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$ -- Unicity Certificate
+	\item $UC = (IR, h_t, h_c, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$ -- Unicity Certificate
 	\item $\mathcal{T}$ -- Unicity Trust Base
 \end{enumerate}
 
@@ -419,7 +418,7 @@ This function authenticates the certificate chain itself. It does not, by itself
 
 \begin{algorithmic}[0]
 	\State ensure($UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$)
-	\State $r\gets \mathsf{CompShardTreeCert}(UC.C^\mathsf{shard}, UC.IR, UC.h_t)$
+	\State $r\gets \mathsf{CompShardTreeCert}(UC.C^\mathsf{shard}, UC.IR, UC.h_t, UC.h_c)$
 	\State $r\gets \mathsf{CompUnicityTreeCert}(UC.C^\mathsf{uni}, r)$
 	\State \Return $\mathsf{VerifyUnicitySeal}(r, UC.C^\mathsf{r}, \mathcal{T}) = 1$
 \end{algorithmic}
@@ -454,7 +453,7 @@ $\mathsf{VerifyInclusionProof}$ -- inclusion proof verification function of type
 \textbf{Computation}:
 \begin{algorithmic}[0]
 	\State ensure($UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$) \Comment{Certificate belongs to the same network as the trust base}
-	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
+	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_{\beta,UC.C^\mathsf{shard}.\sigma}) = UC.h_c$) \Comment{Authenticate shard configuration}
 	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
 	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
 	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Proof comes from the right shard}
@@ -493,7 +492,7 @@ $\mathsf{VerifyNonInclusionProof}$ -- non-inclusion proof verification function 
 \textbf{Computation}:
 \begin{algorithmic}[0]
 	\State ensure($UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$) \Comment{Certificate belongs to the same network as the trust base}
-	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_\beta) = UC.C^\mathsf{uni}.\mathsf{dhash}$) \Comment{Authenticate partition description}
+	\State ensure($\mathcal{CD}_\beta.\alpha = \mathcal{T}.\alpha \land H(\mathcal{CD}_{\beta,UC.C^\mathsf{shard}.\sigma}) = UC.h_c$) \Comment{Authenticate shard configuration}
 	\State $\sigma \gets UC.C^\mathsf{shard}.\sigma$
 	\State ensure($\sigma \in \mathcal{CD}_\beta.\mathcal{SH}$)
 	\State ensure($f_{\mathcal{CD}_\beta.\mathcal{SH}}(\mathsf{sid}) = \sigma$) \Comment{Queried key routes to the certified shard}
@@ -655,14 +654,14 @@ There is one Technical Record for every shard of every partition, providing sync
 \subsection{Shard Tree}\label{se:shard-tree}
 
 For a partition $\beta$, let $\mathcal{SH}_\beta = \mathcal{CD}[\beta].\mathcal{SH}$, and
-$\mathcal{IRT}_\beta$ be of type $(\mathbb{IR},\hashtype)[\mathcal{SH}_\beta]$, i.e. for
-every $\beta\in\mathcal{C}$ and $\sigma\in\mathcal{SH}_\beta$, $\mathcal{IRT}_\beta[\sigma]=(\mathcal{IR},h_t)$ (for some $\mathcal{IR}$ and $h_t$).
+$\mathcal{IRT}_\beta$ be of type $(\mathbb{IR},\hashtype,\hashtype)[\mathcal{SH}_\beta]$, i.e. for
+every $\beta\in\mathcal{C}$ and $\sigma\in\mathcal{SH}_\beta$, $\mathcal{IRT}_\beta[\sigma]=(\mathcal{IR},h_t,h_c)$ (for some $\mathcal{IR}$ and hashes $h_t,h_c$).
 
 If there is no input from a shard to certify then $\mathcal{IRT}_\beta[\sigma] = \mathcal{IRT}_\beta[\sigma]_-$, that is, the value from the previously built Shard Tree is used. If there is no previous value then $\mathcal{IRT}_\beta[\sigma] = \zerohash$.
 
 Shard tree\index{shard tree} for a partition $\beta$ is a function $\chi_\beta \colon \overline{\mathcal{SH}_\beta} \to \hashtype$ such that:
 \begin{enumerate}
-	\item If $\sigma\in\mathcal{SH}_\beta$, then $\chi_\beta(\sigma) = H(\mathcal{IRT}_\beta[\sigma]) =H(\mathcal{IRT}_\beta[\sigma].\mathcal{IR} \mathbin{\|} \mathcal{IRT}_\beta[\sigma].h_t)$.
+	\item If $\sigma\in\mathcal{SH}_\beta$, then $\chi_\beta(\sigma) = H(\mathcal{IRT}_\beta[\sigma]) =H(\mathcal{IRT}_\beta[\sigma].\mathcal{IR},\mathcal{IRT}_\beta[\sigma].h_t,\mathcal{IRT}_\beta[\sigma].h_c)$.
 	\item If $\sigma\in \overline{\mathcal{SH}_\beta}\backslash\mathcal{SH}_\beta$, then
 		$\chi_\beta(\sigma) = H(\chi_\beta(\sigma\| 0)\, \mathbin{\|} \,\chi_\beta(\sigma\| 1))$.
 \end{enumerate}
@@ -675,7 +674,7 @@ The value $\chi_\beta(\lfloor\!\rfloor)$ is called the root hash of the shard tr
 \textbf{Input}:
 \begin{enumerate}
 	\item $\mathcal{SH}$ -- sharding scheme of type $\mathbb{SH}$
-	\item $\mathcal{IRT}$ -- shard-specific data of type $(\mathbb{IR},\hashtype)[\mathbb{SH}]$
+	\item $\mathcal{IRT}$ -- shard-specific data of type $(\mathbb{IR},\hashtype,\hashtype)[\mathbb{SH}]$
 \end{enumerate}
 \textbf{Output}: $\chi$ -- shard tree of type $\overline{\mathcal{SH}}\to \hashtype$
 
@@ -703,7 +702,6 @@ Unicity Tree is an indexed Merkle tree that aggregates the state of all partitio
 \textbf{Input}:
 \begin{enumerate}
 	\item $\mathcal{C}$ -- set of partition identifiers of type $\mathbb{C}$
-	\item $\mathcal{CD}$ -- partition description of type $\mathbb{CD}[\mathcal{C}]$
 	\item $\mathcal{IH}$ -- input hashes of type $\hashtype[\mathcal{C}]$
 \end{enumerate}
 \textbf{Output}: $r$ -- unicity tree root hash of type $\hashtype$
@@ -713,7 +711,7 @@ Unicity Tree is an indexed Merkle tree that aggregates the state of all partitio
 	\State $n \gets \len{\mathcal{C}}$ \Comment{Number of partitions}
 	\State $C \gets \mathsf{sorted}(\mathcal{C})$ \Comment{Sorted list}
 	\For{$i \gets 1 \ldots n$}
-		\State $x_i \gets H(\mathcal{IH}[C_i] \mathbin{\|} H(\mathcal{CD}[C_i]))$
+		\State $x_i \gets H(\mathcal{IH}[C_i])$
 	\EndFor
 	\State \Return $\Call{\textsc{index\_tree\_root}}{(C_1, x_1), (C_2, x_2), \ldots, (C_n, x_n)}$ \Comment{Sec.~\ref{sec:index-tree-root}}
 \end{algorithmic}
@@ -825,18 +823,18 @@ When the BFT Core's round $n$ is completed, then:
 			where $h_\mathsf{sr}=H(\mathcal{SI}[\beta,\sigma].\mathsf{SR}_-, \mathcal{SI}[\beta,\sigma].\mathsf{SR})$ and $h_\mathsf{fee}=H(F_-,F)$ for that shard.
 	\end{enumerate}
 
-	\item For every registered partition $\beta\in\mathcal{C}$, the collected certification requests $\mathsf{CR}_{\beta,\sigma}$ are converted to a temporary data structure $\mathcal{IRT}_\beta$ of type $(\mathbb{IR},\hashtype)[\mathcal{SH}_\beta]$, where $\mathcal{SH}_\beta=\mathcal{CD}[\beta].\mathcal{SH}$,
-	and $\mathcal{IRT}_\beta[\sigma]=(\mathsf{CR}_{\beta,\sigma}.\mathcal{IR}, H(\mathcal{TE}_{\beta,\sigma}))$; \\
+	\item For every registered partition $\beta\in\mathcal{C}$, the collected certification requests $\mathsf{CR}_{\beta,\sigma}$ are converted to a temporary data structure $\mathcal{IRT}_\beta$ of type $(\mathbb{IR},\hashtype,\hashtype)[\mathcal{SH}_\beta]$, where $\mathcal{SH}_\beta=\mathcal{CD}[\beta].\mathcal{SH}$,
+	and $\mathcal{IRT}_\beta[\sigma]=(\mathsf{CR}_{\beta,\sigma}.\mathcal{IR}, H(\mathcal{TE}_{\beta,\sigma}),H(\mathcal{CD}[\beta,\sigma]))$; \\
 	if there is no request then respective leaf repeats its previous value. If there is no previous value, the leaf is initialized to $\zerohash$.
 	\item For every $\beta\in\mathcal{C}$, the shard tree $\chi_\beta$  (Sec.~\ref{se:shard-tree}) is created by the function call $\chi_\beta\gets\mathsf{CreateShardTree}(\mathcal{SH}_\beta,\mathcal{IRT}_\beta)$ (Sec.~\ref{se:create-shard-tree}).
 	\item A temporary data structure $\mathcal{IH}$ of type $\hashtype[\mathcal{C}]$ is created such that $\mathcal{IH}[\beta]\gets \chi_\beta(\emptystr)$ for every $\beta\in\mathcal{C}$, i.e. $\mathcal{IH}$ contains the root hashes of the shard trees.
-	\item The root of unicity tree is computed as $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{CD}, \mathcal{IH})$ (Sec.~\ref{se:create-unicity-tree})
+	\item The root of unicity tree is computed as $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{IH})$ (Sec.~\ref{se:create-unicity-tree})
 	\item Unicity seal $C^\mathsf{r}=(\alpha, n, e, t, r_-,r; s )$ is created, where $t\gets\mathsf{time}()$ is the current time and $s$ is a "signature" on all other fields. The form of $s$ depends on the used consensus mechanism.
-	\item For every $\beta\in\mathcal{C}$, the unicity tree certificate $C^\mathsf{uni}_\beta$ is created by the function call $C^\mathsf{uni}_\beta\gets \mathsf{CreateUnicityTreeCert}(\beta, \mathcal{C}, \mathcal{CD}, \mathcal{IH})$ (Sec.~\ref{se:create-unicity-tree-cert})
+	\item For every $\beta\in\mathcal{C}$, the unicity tree certificate $C^\mathsf{uni}_\beta$ is created by the function call $C^\mathsf{uni}_\beta\gets \mathsf{CreateUnicityTreeCert}(\beta, \mathcal{C}, \mathcal{IH})$ (Sec.~\ref{se:create-unicity-tree-cert})
 	\item For every $\beta\in\mathcal{C}$, and $\sigma\in \mathcal{SH}_\beta$:
 	\begin{enumerate}
 		\item The shard tree certificate $C^\mathsf{shard}_{\beta,\sigma}$ (Sec.~\ref{se:shard-tree-cert}) is created by the function call $C^\mathsf{shard}_{\beta,\sigma}\gets \mathsf{CreateShardTreeCert}(\sigma,\chi_\beta)$ (Sec.~\ref{se:create-shard-tree-cert})
-		\item The unicity certificate $UC_{\beta,\sigma}=(\mathcal{IRT}_\beta[\sigma].\mathcal{IR},\mathcal{IRT}_\beta[\sigma].h_t, C^\mathsf{shard}_{\beta,\sigma}, C^\mathsf{uni}_\beta, C^\mathsf{r})$ (Sec.~\ref{se:unicity-certificate}) and the certification response $\mathsf{CReS}_{\beta,\sigma}=\langle \alpha,\beta,\sigma; UC_{\beta,\sigma}, \mathcal{TE}_{\beta,\sigma}\rangle$ are composed (if the shard input have changed)
+		\item Writing $(IR,h_t,h_c)=\mathcal{IRT}_\beta[\sigma]$, the unicity certificate $UC_{\beta,\sigma}=(IR,h_t,h_c,C^\mathsf{shard}_{\beta,\sigma},C^\mathsf{uni}_\beta,C^\mathsf{r})$ (Sec.~\ref{se:unicity-certificate}) and the certification response $\mathsf{CReS}_{\beta,\sigma}=\langle \alpha,\beta,\sigma; UC_{\beta,\sigma}, \mathcal{TE}_{\beta,\sigma}\rangle$ are composed (if the shard input have changed)
 		\item The last unicity certificate field is updated by $\mathcal{SI}[\beta,\sigma] UC_-\gets UC$ (if the shard input have changed).
 	\end{enumerate}
 	\item The round number and the previous root hash of the unicity tree are updated by $n\gets n+1$ and $r_-\gets r$.

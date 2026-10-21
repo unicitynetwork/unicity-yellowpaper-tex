@@ -1069,20 +1069,20 @@ Periodically, do the following:
         \EndFor
       \EndFor
       \ForAll{$(\beta, \sigma, ir, te) \in changes$}   \Comment{Apply changes}
-         \State $\mathcal{IRT}_\beta[\sigma] \gets (ir, h(te))$
+         \State $\mathcal{IRT}_\beta[\sigma] \gets (ir, h(te), H(\mathcal{CD}[\beta,\sigma]))$
       \EndFor
       \ForAll{$\beta \in \mathcal{C}$}
         \State $\chi_\beta\gets\mathsf{CreateShardTree}(\mathcal{SH}_\beta,\mathcal{IRT}_\beta)$        \Comment{Sec.~\ref{se:create-shard-tree}}
         \State $\mathcal{IH}[\beta]\gets \chi_\beta(\emptystr)$
       \EndFor
-      \State $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{CD}, \mathcal{IH})$ \Comment{Sec.~\ref{se:create-unicity-tree}}
+      \State $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{IH})$ \Comment{Sec.~\ref{se:create-unicity-tree}}
       \State $t \gets \Call{GetUTCDateTime}$
       \State $C^\mathsf{r} \gets \Call{CreateUnicitySeal}{\alpha, n, e, t, r_-, r; \mathsf{sk}_r}$
       \ForAll{$(\beta, \sigma, ir, te) \in changes$}
         \State $req[\beta][\sigma] \gets []$
         \State $C^\mathsf{shard} \gets \Call{CreateShardTreeCert}{\sigma, \chi_\beta}$
-        \State $C^\mathsf{uni} \gets \Call{CreateUnicityTreeCert}{\beta, \mathcal{C}, \mathcal{CD}, \mathcal{IH}}$
-        \State $uc \gets (\mathcal{IRT}_\beta[\sigma].IR, \mathcal{IRT}_\beta[\sigma].h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
+        \State $C^\mathsf{uni} \gets \Call{CreateUnicityTreeCert}{\beta, \mathcal{C}, \mathcal{IH}}$
+        \State $uc \gets (\mathcal{IRT}_\beta[\sigma].IR, \mathcal{IRT}_\beta[\sigma].h_t,\mathcal{IRT}_\beta[\sigma].h_c, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
         \State $\mathcal{SI}[\beta, \sigma].UC_- \gets uc$
         \ForAll{$connection \in conn[\beta][\sigma]$} \Comment{To all validators of the shard, in parallel}
           \State \Call{send\_CReS}{$connection; \alpha, \beta, \sigma, uc, te$} \Comment{Subscriptions expire -- see protocol desc.}

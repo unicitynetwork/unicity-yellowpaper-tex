@@ -68,3 +68,12 @@ A technical record is the untagged array
 [n_r,e_r,\nu_\ell,h_\mathsf{sr},h_\mathsf{fee}].
 \]
 Its hash includes both accounting commitments. The native statistical record is the array of block count, cumulative fees, cumulative block size, cumulative state size, maximum block fee, maximum block size and maximum state size, in that order. The abstract statistical counters omit the two fee counters; their values must still be preserved when hashing the native record. A fee record is a map from validator identifiers to earned fees. Each accounting commitment hashes the deterministic encodings of the previous record followed by the current record.
+
+
+The unicity certificate is tag 39001 over
+\[
+[1,IR,h_t,h_c,C^\mathsf{shard},C^\mathsf{uni},C^\mathsf{r}].
+\]
+The shard certificate is tag 39003 over $[1,\sigma,[h^s_1,\ldots,h^s_{|\sigma|}]]$; siblings are in leaf-to-root order and their count equals the shard identifier's bit length. The empty shard has an empty sibling array. The unicity-tree certificate is tag 39004 over $[1,\beta,[[\beta_2,h_2],\ldots,[\beta_\ell,h_\ell]]]$.
+
+A shard leaf hashes, in sequence, the tagged input record, the technical-record hash byte string and the shard-configuration hash byte string. A shard internal node hashes the two child hash byte strings in left-to-right order. The value passed to the indexed tree for partition $\beta$ is the hash of the byte-string encoding of its shard-tree root; there is no additional partition-description hash in that value or in the unicity-tree certificate.

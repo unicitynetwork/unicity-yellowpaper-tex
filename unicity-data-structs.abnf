@@ -3,15 +3,15 @@
 ; ============================================================================
 ; 1. BFT CORE (shared data structures)
 
-  UC = IR TechRecordHash ShardTreeCertificate UnicityTreeCertificate UnicitySeal  ;~$UC = (IR, h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
+  UC = Version IR TechRecordHash ShardConfHash ShardTreeCertificate UnicityTreeCertificate UnicitySeal  ;~$UC = (IR, h_t, h_c, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
   IR = Version RoundNumber Epoch NullableHash NullableHash NullableBytes Time NullableHash EarnedFees NullableHash
       ; CBOR tag 39002, array[10]: $[1,n,e,h',h,v,t,h_B,f,h_E]$
   NullableHash = Hash / NULL
   NullableBytes = Bytes / NULL
   EarnedFees = uint64
-  ShardTreeCertificate = ShardIdentifier *SiblingHash  ;~$C^\mathsf{shard} = (\sigma;h^s_1, \ldots, h^s_{|\sigma|})$
-  UnicityTreeCertificate = PartitionIdentifier PartitionDescriptionHash *HashStep
-  HashStep = PartitionIdentifier SiblingHash  ;~$C^\mathsf{uni} = (\beta, \mathsf{dhash}; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell)))$
+  ShardTreeCertificate = Version ShardIdentifier *SiblingHash  ;~$C^\mathsf{shard} = (\sigma;h^s_1, \ldots, h^s_{|\sigma|})$
+  UnicityTreeCertificate = Version PartitionIdentifier *HashStep
+  HashStep = PartitionIdentifier SiblingHash  ;~$C^\mathsf{uni} = (\beta; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell)))$
 
   UnicitySeal = Version NetworkIdentifier RootPartitionRoundNumber Epoch Timestamp PreviousHash Hash *Signatures  ;~$C^\mathsf{r} = (\alpha, n_r, e_r, t_r, r_-, r; s)$
                       ;~where |Signatures| = quorumThreshold > 2f
