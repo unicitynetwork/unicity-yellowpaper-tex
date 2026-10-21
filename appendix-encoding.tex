@@ -97,3 +97,10 @@ An inclusion proof is tag 39033 over
 [1,Q,\tau,\mathsf{bstr}(C^\mathsf{inc}),UC],
 \]
 where $Q$ is the tagged certification data, $\tau$ is the original leaf reference time, and the certificate byte string is specified in Appendix~\ref{app:rsmt}. The state identifier and $\lambda(Q,\tau)=\mathsf{SHA256}(\mathsf{CBOR}([\txhash,\tau]))$ are derived verification inputs, not additional array elements. A later UC does not change $\tau$.
+
+
+\section{Empty Roots and Structural Validation}\label{sec:empty-root-encoding}
+
+The empty aggregation state root $\bot$ is encoded as CBOR \texttt{null} in the input record. A 32-byte all-zero digest is an ordinary root, not the empty-tree sentinel; an empty byte-string root is invalid. The UC and input record remain present. An empty non-inclusion certificate is a zero-length byte string and is admissible only for that authenticated empty root.
+
+Decoders and path evaluators reject absent required records, null path entries, malformed identifiers and inconsistent path lengths before dereferencing or hashing them. These requirements do not prohibit the nullable input-record fields or the valid zero-length shard path.

@@ -316,7 +316,8 @@ For the single shard case, the shard certificate is $(\emptystr;\langle\rangle)$
 \textbf{Computation}:
 
 \begin{algorithmic}[0]
-	\State $r \gets H(IR,h_t,h_c)$
+	\State ensure($IR\ne\bot$ and the shard identifier and sibling sequence are well formed)
+\State $r \gets H(IR,h_t,h_c)$
 	\For {$i \gets |\sigma|$ downto $1$ }
 		\State \textbf{if} $\sigma_i = 0$ \textbf{then} $r \gets  H(r, h^s_{|\sigma|-i+1})$
 		\State \textbf{if} $\sigma_i = 1$ \textbf{then} $r \gets  H(h^s_{|\sigma|-i+1}, r)$
@@ -367,7 +368,8 @@ For the single shard case, $\mathsf{CompShardTreeCert}((\emptystr; \langle\rangl
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
-	\State $L \gets \langle (\beta, H(x)), (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell) \rangle$ \Comment{Restore the first hash step}
+	\State ensure(all hash steps are present and well formed)
+\State $L \gets \langle (\beta, H(x)), (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell) \rangle$ \Comment{Restore the first hash step}
 	\State \Return $\Call{\textsc{index\_tree\_output}}{L; \beta}$ \Comment{Sec.~\ref{sec:index-tree-output}}
 \end{algorithmic}
 
@@ -407,7 +409,7 @@ The shard configuration $\mathcal{CD}[\beta,\sigma]$ (also written $\mathcal{CD}
 \subsubsection{Verification: $\mathsf{VerifyUnicityCert}$}\label{VerifyUnicityCert}\index{functions!VerifyUnicityCert}
 
 Verifies if unicity certificate is valid, based on unicity trust base as the root of trust.
-This function authenticates the certificate chain itself. It does not, by itself, prove that a particular state identifier belongs to the shard named in $C^\mathsf{shard}$; that binding is checked by the proof verification functions below.
+Required records and path elements must be present and structurally valid before hashing. A shard path has exactly $|\sigma|$ siblings; an empty shard path is valid only for $\sigma=\emptystr$. Null path entries, malformed identifiers and inconsistent lengths are rejected, including by direct path-evaluation calls. This function authenticates the certificate chain itself. It does not, by itself, prove that a particular state identifier belongs to the shard named in $C^\mathsf{shard}$; that binding is checked by the proof verification functions below.
 
 \textbf{Input}:
 \begin{enumerate}
@@ -660,7 +662,7 @@ For a partition $\beta$, let $\mathcal{SH}_\beta = \mathcal{CD}[\beta].\mathcal{
 $\mathcal{IRT}_\beta$ be of type $(\mathbb{IR},\hashtype,\hashtype)[\mathcal{SH}_\beta]$, i.e. for
 every $\beta\in\mathcal{C}$ and $\sigma\in\mathcal{SH}_\beta$, $\mathcal{IRT}_\beta[\sigma]=(\mathcal{IR},h_t,h_c)$ (for some $\mathcal{IR}$ and hashes $h_t,h_c$).
 
-If there is no input from a shard to certify then $\mathcal{IRT}_\beta[\sigma] = \mathcal{IRT}_\beta[\sigma]_-$, that is, the value from the previously built Shard Tree is used. If there is no previous value then $\mathcal{IRT}_\beta[\sigma] = \zerohash$.
+If there is no input from a shard to certify then $\mathcal{IRT}_\beta[\sigma] = \mathcal{IRT}_\beta[\sigma]_-$, that is, the value from the previously built Shard Tree is used. If there is no previous value, initialize $\mathcal{IRT}_\beta[\sigma]=(IR_0,H(\mathcal{TE}_0),H(\mathcal{CD}[\beta,\sigma]))$, using the initial input and technical records for the configured shard. The initial input record has zero round, epoch, time and fees and absent byte-string fields; the technical record is derived from the shard configuration and initial accounting state.
 
 Shard tree\index{shard tree} for a partition $\beta$ is a function $\chi_\beta \colon \overline{\mathcal{SH}_\beta} \to \hashtype$ such that:
 \begin{enumerate}
@@ -828,7 +830,7 @@ When the BFT Core's round $n$ is completed, then:
 
 	\item For every registered partition $\beta\in\mathcal{C}$, the collected certification requests $\mathsf{CR}_{\beta,\sigma}$ are converted to a temporary data structure $\mathcal{IRT}_\beta$ of type $(\mathbb{IR},\hashtype,\hashtype)[\mathcal{SH}_\beta]$, where $\mathcal{SH}_\beta=\mathcal{CD}[\beta].\mathcal{SH}$,
 	and $\mathcal{IRT}_\beta[\sigma]=(\mathsf{CR}_{\beta,\sigma}.\mathcal{IR}, H(\mathcal{TE}_{\beta,\sigma}),H(\mathcal{CD}[\beta,\sigma]))$; \\
-	if there is no request then respective leaf repeats its previous value. If there is no previous value, the leaf is initialized to $\zerohash$.
+	if there is no request then respective leaf repeats its previous value. If there is no previous value, use the configured initial records as in Sec.~\ref{se:shard-tree}.
 	\item For every $\beta\in\mathcal{C}$, the shard tree $\chi_\beta$  (Sec.~\ref{se:shard-tree}) is created by the function call $\chi_\beta\gets\mathsf{CreateShardTree}(\mathcal{SH}_\beta,\mathcal{IRT}_\beta)$ (Sec.~\ref{se:create-shard-tree}).
 	\item A temporary data structure $\mathcal{IH}$ of type $\hashtype[\mathcal{C}]$ is created such that $\mathcal{IH}[\beta]\gets \chi_\beta(\emptystr)$ for every $\beta\in\mathcal{C}$, i.e. $\mathcal{IH}$ contains the root hashes of the shard trees.
 	\item The root of unicity tree is computed as $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{IH})$ (Sec.~\ref{se:create-unicity-tree})

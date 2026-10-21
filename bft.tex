@@ -933,7 +933,7 @@ For a deployable implementation, please refer to Distributed BFT Core (Section~\
     \State $r_- \gets \NULL$: Previous round's Unicity Tree root hash
     \State $\mathcal{SI}[][]$ - shard info of every $\sigma\in\mathcal{SH}_\beta$ of every $\beta\in\mathcal{C}$
     \State \emph{Variables}:
-    \State $\forall \ \beta\in\mathcal{C}, \sigma\in\mathcal{SH}_\beta \colon \mathcal{IRT}_\beta[\sigma] \gets (\zerohash)$
+    \State $\forall \ \beta\in\mathcal{C}, \sigma\in\mathcal{SH}_\beta \colon \mathcal{IRT}_\beta[\sigma] \gets (IR_0,H(\mathcal{TE}_0),H(\mathcal{CD}[\beta,\sigma]))$
     \State $\chi_\beta$: the shard tree for every $\beta\in\mathcal{C}$  (Sec.~\ref{se:shard-tree})
     \State $\upsilon$: unicity tree (Sec.~\ref{se:unicity-tree-certificate})
     \State $changes[][] \gets \bot$ Changes to IR, applied at the end of round, indexed by partition ID and shard number
