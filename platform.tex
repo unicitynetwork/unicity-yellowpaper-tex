@@ -429,6 +429,24 @@ Required records and path elements must be present and structurally valid before
 \end{algorithmic}
 
 
+\subsection{Partition View}\label{sec:partition-view}\index{partition view}
+
+A \emph{partition view} is the complete vector of shard-tree inputs for one partition:
+\[
+P_\beta=(\beta;\langle(\sigma,IR_\sigma,h_{t,\sigma},h_{c,\sigma})\rangle_{\sigma\in\mathcal{SH}_\beta}).
+\]
+The shard identifiers form an irreducible prefix-free code in topological order. Every input record is complete, including unchanged shards. The view is captured from the same committed inputs used to build the certified shard tree and remains immutable.
+
+Given a candidate $P_\beta$, an enclosing certificate $UC$ and an independently trusted $\mathcal{T}$, authenticate the view as follows:
+\begin{enumerate}
+\item Check its structure and partition identifier, then rebuild $\chi_\beta$ from its complete vector.
+\item Require the enclosing certificate's shard, input record, technical-record hash and configuration hash to equal the corresponding leaf, and its shard path to equal the path in $\chi_\beta$.
+\item Require $\mathsf{CompUnicityTreeCert}(UC.C^\mathsf{uni},\chi_\beta(\emptystr))=UC.C^\mathsf{r}.r$ and verify the seal against $\mathcal{T}$.
+\end{enumerate}
+Only after these checks may the view supply authenticated shard roots or topology. Independently configured topology and configuration hashes, when supplied, are additional restrictions; the candidate never selects the trust base.
+
+For any shard in the authenticated view, derive its ordinary UC using its complete input tuple, the corresponding path in $\chi_\beta$, and the enclosing unicity-tree certificate and seal. Preserve the complete seal, including all signatures. The returned records must not share mutable state with the candidate.
+
 \section{Proofs}\label{se:proofs}
 
 \subsection{Inclusion Proof}
@@ -844,6 +862,8 @@ When the BFT Core's round $n$ is completed, then:
 	\end{enumerate}
 	\item The round number and the previous root hash of the unicity tree are updated by $n\gets n+1$ and $r_-\gets r$.
 \end{enumerate}
+
+A certification response may carry a partition view as a sidecar. Capture and encode it once per partition from the committed tree inputs above, and attach that same immutable view to the responses produced from them. Missing or inadmissible view material disables reconstruction from that response, not acceptance of an otherwise valid operational certificate. The sidecar neither changes response cadence nor advances unchanged shards.
 
 When a shard's (identified by $\beta$, $\sigma$) epoch with at least one non-empty round ends, the following assignments are executed:
 \begin{enumerate}

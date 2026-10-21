@@ -104,3 +104,18 @@ where $Q$ is the tagged certification data, $\tau$ is the original leaf referenc
 The empty aggregation state root $\bot$ is encoded as CBOR \texttt{null} in the input record. A 32-byte all-zero digest is an ordinary root, not the empty-tree sentinel; an empty byte-string root is invalid. The UC and input record remain present. An empty non-inclusion certificate is a zero-length byte string and is admissible only for that authenticated empty root.
 
 Decoders and path evaluators reject absent required records, null path entries, malformed identifiers and inconsistent path lengths before dereferencing or hashing them. These requirements do not prohibit the nullable input-record fields or the valid zero-length shard path.
+
+
+\section{Partition View and Certification Response}\label{sec:partition-view-encoding}
+
+The partition view is an untagged deterministic CBOR array
+\[
+[1,\beta,[[\sigma_1,IR_1,h_{t,1},h_{c,1}],\ldots,[\sigma_m,IR_m,h_{t,m},h_{c,m}]]].
+\]
+Require exact array shapes, complete input consumption and equality with deterministic re-encoding. The current consolidation admission profile permits 1--8 leaves and at most 16\,KiB per view, with shard identifiers of at most 256 bits, input records of at most 1\,024 bytes and summary values of at most 256 bytes. These are admission limits, not consensus limits. Null and empty byte strings in input records remain distinct.
+
+The unchanged native certification response is $[\beta,\sigma,\mathcal{TE},UC]$. Its versioned envelope is
+\[
+[2,[\beta,\sigma,\mathcal{TE},UC],\mathsf{bstr}(P_\beta)\text{ or }\texttt{null}].
+\]
+The envelope version is 2 and the view version is 1. An absent sidecar is \texttt{null}, not an empty byte string. The view's decoding and authentication are separate from validation of the operational response.

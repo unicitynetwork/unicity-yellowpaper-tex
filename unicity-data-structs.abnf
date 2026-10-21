@@ -21,6 +21,19 @@
                       ; Tag 39005, array[8]; signing uses NULL in the signature-map slot.
                       ; PreviousHash commits to QC VoteInfo in the distributed implementation.
 
+  PartitionView = Version PartitionIdentifier 1*8PartitionViewLeaf
+      ; Untagged [1, partition, [leaves...]], canonical complete topological order.
+      ; At most 16 KiB; shard <= 256 bits, IR <= 1024 bytes, summary <= 256 bytes.
+      ; These are consolidation admission limits, not consensus limits.
+  PartitionViewLeaf = ShardIdentifier IR TechRecordHash ShardConfHash
+      ; Exact four-element array; retain every native IR field.
+  NativeCReS = PartitionIdentifier ShardIdentifier TechRecord UC
+      ; Untagged four-element array; abstract CReS below also names network context.
+  CReSV2 = Version NativeCReS (PartitionViewBytes / NULL)
+      ; [2, response, sidecar]; absent sidecar is NULL, not an empty byte string.
+  PartitionViewBytes = Bytes
+      ; Nonempty byte string containing a complete encoded PartitionView.
+
 ; --- Statistical and Technical Records ---
   StatisticalRecord = NumRounds SumRoundSize SumStateSize MaxRoundSize MaxStateSize ;~$\mathsf{SR}=(n_e, \overline{\ell}_B, \overline{\ell}_S, \hat{\ell}_B, \hat{\ell}_S)$
   TechRecord = Round Epoch LeaderID SRHash FeeHash  ;~$\mathsf{TE}=(n_r, e_r, \nu_\ell, h_\mathsf{sr}, h_\mathsf{fee})$

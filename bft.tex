@@ -693,7 +693,7 @@ If an aggregation layer node has reasons to suspect that BFT Core have generated
 
 This section extends Sec.~\ref{certification-response}, \nameref{certification-response}).
 
-CReS is asynchronous response (in the sense of data flow) to Certification Request (CR); there may be many CReS responses to one client request. $\mathsf{TE}$ stands for \nameref{technical-record}, sent from the BFT Core to aggregation layer nodes. Valid if $UC.h_t = h(\mathsf{TE})$.
+CReS is asynchronous response (in the sense of data flow) to Certification Request (CR); there may be many CReS responses to one client request. $\mathsf{TE}$ stands for \nameref{technical-record}, sent from the BFT Core to aggregation layer nodes. Valid if $UC.h_t = h(\mathsf{TE})$. A response can additionally carry the partition view defined in Sec.~\ref{sec:partition-view}; its presence does not change the certified technical record or require a response for every leaf in the view.
 
 Optional field RootTrustBaseEntry indicates, that UTB $\mathcal{T}$ have changed, e.g., have grown by the provided entry.
 
