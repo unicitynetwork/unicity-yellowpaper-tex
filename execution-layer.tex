@@ -13,6 +13,9 @@ The model relies on three key principles:
 	\item \textbf{Recipient verification}: The recipient (relying party) independently verifies the complete token history before accepting a transfer.
 \end{enumerate}
 
+\paragraph{Aggregation partition.}\label{sec:aggregation-profile}\index{aggregation partition}
+The current token/aggregation profile uses the constant $\beta_{\mathsf{agg}}=7$. Every accepted application proof, including proofs in nested tokens and consolidated histories, must belong to this partition and to the independently trusted network. Generic certificate-tree operations remain applicable to other partitions.
+
 \subsection{Token Lifecycle}\label{sec:token-lifecycle}
 
 A token progresses through the following stages:
@@ -55,7 +58,7 @@ A \emph{token}\index{token!structure} is a self-contained data structure carryin
 \]
 where $T_0^\mathsf{cert}$ is a certified mint transaction and $T_i^\mathsf{cert}$ for $i > 0$ are certified transfer transactions.
 
-Let $\mathbb{T}_\bot=\mathbb{T}\cup\{\bot\}$. Every transaction $T$ carries an exclusive request timeout $\tau_Q(T)\in\mathbb{T}_\bot$, where $\tau_Q(T)=\bot$ delegates the choice of deadline to the Unicity Service and requires no client clock. The timeout occupies a fixed position in the transaction encoding and is committed by the transaction hash in either case (Appendix~\ref{app:encodings}). A certified transaction carries its transaction, the reference time $\tau$ at which its leaf was created, and its inclusion proof. The concrete proof representation also carries the certification data needed to reconstruct the service request and the same reference time. Both must match. (Appendix~\ref{app:execution-layer}).
+Let $\mathbb{T}_\bot=\mathbb{T}\cup\{\bot\}$. Every transaction $T$ carries an exclusive request timeout $\tau_Q(T)\in\mathbb{T}_\bot$, where $\tau_Q(T)=\bot$ delegates the choice of deadline to the Unicity Service and requires no client clock. The timeout occupies a fixed position in the transaction encoding and is committed by the transaction hash in either case (Appendix~\ref{app:encodings}). A certified transaction has its transaction, inclusion proof and reference time $\tau$ at which its leaf was created; the reference time is derived from the proof in the concrete encoding. The concrete proof representation also carries the certification data needed to reconstruct the service request and the same reference time. These bind the same transaction and reference time (Appendix~\ref{app:execution-layer}).
 
 \subsubsection{Mint Transaction}\label{sec:mint-tx}
 
@@ -523,7 +526,7 @@ Given a token whose mint reason claims split origin, the verifier must perform a
 \begin{enumerate}
 	\item Decode the mint reason, manifest, payloads and proofs using deterministic CBOR.  Reject wrong or unknown tags, non-canonical integers or byte strings, duplicate or unordered asset identifiers, invalid field counts or types, trailing bytes, arithmetic overflow and any input exceeding the protocol's decoding and verification limits.
 	\item Verify the output mint transaction and its Unicity Certificate.  Decode and validate its auxiliary payload according to its token type; the payload must contain a non-empty canonical collection of distinct, positive-valued assets.
-	\item Recursively verify the complete burned source token, including every Unicity Certificate, transaction, nested mint reason, fungible payload and token type specific issuance policy, under the same trust base $\mathcal{T}$, verifier registry and cumulative resource limits used for the output.  Both tokens must have network identifier $\mathcal{T}.\alpha$.
+	\item Recursively verify the complete burned source token, including every Unicity Certificate, transaction, nested mint reason, fungible payload and token type specific issuance policy, under the same trust base $\mathcal{T}$, verifier registry and cumulative resource limits used for the output.  Both tokens must have network identifier $\mathcal{T}.\alpha$ and satisfy the aggregation-partition binding of Sec.~\ref{sec:aggregation-profile}.
 	\item Require the source token to end in a certified transfer whose auxiliary data is the exact canonical split-manifest encoding $b_\mathcal{M}$ and whose recipient predicate is exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.
 	\item Decode the source fungible payload, place its distinct asset identifiers in canonical order, and require the manifest to contain exactly one root hash for each source asset in that order.
 	\item Require the output token type to be byte-identical to the source token type.  A split proof cannot authorize minting under any other token type, even if that type would decode the same asset identifiers and amounts.
@@ -592,8 +595,8 @@ The nullifier accumulator can be deterministically rebuilt by anybody based on t
 For a batch of $B$ burns, the proof attests the conjunction of the following claims:
 
 \begin{description}
-\item[Anchor.] A single recent Unicity Certificate $UC^*$ certifies an SMT root $h^* = UC^*.IR.h$ under $\mathcal{T}$, and $H(\mathcal{T}) = h_\mathcal{T}$. Because the SMT is add-only (Sec.~\ref{sec:smt}), every state a token ever occupied remains provable under any later root, so one $UC^*$ anchors entire token histories. The proof verifies this BFT certificate \emph{once} per batch, instead of one certificate per transition.
-\item[Finality.] Each burned token verifies by $\Call{VerifyToken}{}$, with every certified transaction's leaf shown included under the shared root $h^*$; in particular the final state is a burn whose auxiliary data is the encoded return reason and whose recipient predicate binds its hash. This anchored mode is restricted to predicates whose validation does not depend on the original Unicity request-validation time.
+\item[Anchor.] One seal $C^{\mathsf r,*}$ authenticates the participating shards' UCs under $\mathcal T$, with $H(\mathcal T)=h_\mathcal T$. They define a root map $\mathcal H^*[\sigma]=UC^*_\sigma.IR.h$. The seal is verified once and each shard body is verified against it (Sec.~\ref{sec:consolidation}).
+\item[Finality.] Each burned token verifies by $\Call{VerifyToken}{}$, routing every historical leaf to its authenticated shard root $\mathcal H^*[\sigma]$ and preserving its original reference time; the final state is a burn whose auxiliary data is the encoded return reason and whose recipient predicate binds its hash. This anchored mode is restricted to predicates whose validation does not depend on the original Unicity request-validation time.
 \item[Value and backing.] Each burned amount equals the token's certified value for $\mathsf{aid}$, which traces --- through split value-conservation (Sec.~\ref{sec:split-verification}) --- to a genesis whose backing proof references a lock the vault recorded at bridge-in.
 \item[Destination.] Each $\mathcal{R}$ matches the pinned configuration and yields a public \emph{release leaf} (recipient, amount, fee).
 \item[Replay.] Each nullifier is absent from the input accumulator root $A_\mathsf{old}$; inserting them yields $A_\mathsf{new}$.

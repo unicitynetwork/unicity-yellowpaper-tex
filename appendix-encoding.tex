@@ -8,7 +8,7 @@ For data to be hashed or signed, the deterministic encoding rules (as defined in
 
 \section{Tuples}
 
-Tuples are encoded as CBOR arrays in the natural way: a tuple $T$ consisting of $n$ elements, denoted $(T_1, T_2, \ldots, T_n)$ or $\langle T_1, T_2, \ldots, T_n \rangle$ in the specification, is encoded as $n$-element CBOR array with $T_1$ the first elment, $T_2$ the second element, and so on.
+Unless a native mapping is specified below, tuples are encoded as CBOR arrays in the natural way: a tuple $T$ consisting of $n$ elements, denoted $(T_1, T_2, \ldots, T_n)$ or $\langle T_1, T_2, \ldots, T_n \rangle$ in the specification, is encoded as $n$-element CBOR array with $T_1$ the first element, $T_2$ the second element, and so on.
 
 Within a fixed tuple shape, an optional element with no value, denoted $\bot$ in the specification, is not omitted from the array, but encoded as the CBOR simple value \texttt{null}. Each version of a structure therefore has exactly one tuple shape and one element count, and an optional element occupies its position whether or not it carries a value.
 
@@ -53,3 +53,87 @@ respective private key is controlled by the Node.
 ``SHA-256'' denotes the SHA-2 hash algorithm with 256-bit output and ``SHA-512'' denotes the SHA-2 hash algorithm with 512-bit output; both are specified by NIST FIPS 180-4.
 
 The list is non-exhaustive.
+
+
+\section{BFT Records}\label{sec:bft-encoding}
+
+The abstract records in the body have the following native encodings. Tags and versions are part of the bytes hashed. An input record is CBOR tag 39002 applied to
+\[
+[1,n,e,h',h,v,t,h_B,f,h_E].
+\]
+The byte-string fields $h',h,v,h_B,h_E$ preserve \texttt{null} separately from an empty byte string. A noninitial input record requires a present summary value and a nonzero timestamp. The whole input record cannot be \texttt{null}.
+
+A technical record is the untagged array
+\[
+[n_r,e_r,\nu_\ell,h_\mathsf{sr},h_\mathsf{fee}].
+\]
+Its hash includes both accounting commitments. The native statistical record is the array of block count, cumulative fees, cumulative block size, cumulative state size, maximum block fee, maximum block size and maximum state size, in that order. The abstract statistical counters omit the two fee counters; their values must still be preserved when hashing the native record. A fee record is a map from validator identifiers to earned fees. Each accounting commitment hashes the deterministic encodings of the previous record followed by the current record.
+
+
+The unicity certificate is tag 39001 over
+\[
+[1,IR,h_t,h_c,C^\mathsf{shard},C^\mathsf{uni},C^\mathsf{r}].
+\]
+The shard certificate is tag 39003 over $[1,\sigma,[h^s_1,\ldots,h^s_{|\sigma|}]]$; siblings are in leaf-to-root order and their count equals the shard identifier's bit length. The empty shard has an empty sibling array. The unicity-tree certificate is tag 39004 over $[1,\beta,[[\beta_2,h_2],\ldots,[\beta_\ell,h_\ell]]]$.
+
+A shard leaf hashes, in sequence, the tagged input record, the technical-record hash byte string and the shard-configuration hash byte string. A shard internal node hashes the two child hash byte strings in left-to-right order. The value passed to the indexed tree for partition $\beta$ is the hash of the byte-string encoding of its shard-tree root; there is no additional partition-description hash in that value or in the unicity-tree certificate.
+
+
+\subsection{Unicity Seal}\label{sec:seal-encoding}
+
+A seal is CBOR tag 39005 over $[1,\alpha,n_r,e_r,t_r,r_-,r,s]$, where $s$ is a map from validator identifiers to signature byte strings. The signing preimage is the deterministic encoding of the same tagged array with $s=\texttt{null}$. The signature slot is not removed. Full seal bytes retain the entire signature map.
+
+In the distributed implementation, the field named \texttt{PreviousHash}, denoted $r_-$, is the hash of the QC's \texttt{VoteInfo}. QC verification recomputes that hash before checking the signatures. It is not the previous unicity-tree root.
+
+\subsection{Recoverable Signatures}\label{sec:recoverable-signatures}
+
+The seal and standard predicate signature profile is exactly 65 bytes $R\|S\|V$, with big-endian 32-byte scalars. For secp256k1 group order $q$, require $1\le R<q$, $1\le S\le\lfloor q/2\rfloor$ and $V\in\{0,1,2,3\}$. Verification must recover the independently expected public key using $V$. Values 27/28, chain-ID conversions and compact 64-byte signatures are not accepted by this profile. A signature failing these checks contributes no vote to a seal quorum.
+
+
+\section{Inclusion Proof Encoding}\label{sec:inclusion-encoding}
+
+An inclusion proof is tag 39033 over
+\[
+[1,Q,\tau,\mathsf{bstr}(C^\mathsf{inc}),UC],
+\]
+Here $Q$ is tag 39031 over $[2,\predi,\sthash,\txhash,\bar\tau_Q,u]$, with the predicate and unlocking argument encoded as byte strings. The value $\tau$ is the original leaf reference time. The certificate byte string is specified in Appendix~\ref{app:rsmt}. The state identifier and $\lambda(Q,\tau)=\mathsf{SHA256}(\mathsf{CBOR}([\txhash,\tau]))$ are derived verification inputs, not additional array elements. A later UC does not change $\tau$.
+
+
+\section{Empty Roots and Structural Validation}\label{sec:empty-root-encoding}
+
+The empty aggregation state root $\bot$ is encoded as CBOR \texttt{null} in the input record. A 32-byte all-zero digest is an ordinary root, not the empty-tree sentinel; an empty byte-string root is invalid. The UC and input record remain present. An empty non-inclusion certificate is a zero-length byte string and is admissible only for that authenticated empty root.
+
+Decoders and path evaluators reject absent required records, null path entries, malformed identifiers and inconsistent path lengths before dereferencing or hashing them. These requirements do not prohibit the nullable input-record fields or the valid zero-length shard path.
+
+
+\section{Partition View and Certification Response}\label{sec:partition-view-encoding}
+
+The partition view is an untagged deterministic CBOR array
+\[
+[1,\beta,[[\sigma_1,IR_1,h_{t,1},h_{c,1}],\ldots,[\sigma_m,IR_m,h_{t,m},h_{c,m}]]].
+\]
+Require exact array shapes, complete input consumption and equality with deterministic re-encoding. The current consolidation admission profile permits 1--8 leaves and at most 16\,KiB per view, with shard identifiers of at most 256 bits, input records of at most 1\,024 bytes and summary values of at most 256 bytes. These are admission limits, not consensus limits. Null and empty byte strings in input records remain distinct.
+
+The unchanged native certification response is $[\beta,\sigma,\mathcal{TE},UC]$. Its versioned envelope is
+\[
+[2,[\beta,\sigma,\mathcal{TE},UC],\mathsf{bstr}(P_\beta)\text{ or }\texttt{null}].
+\]
+The envelope version is 2 and the view version is 1. An absent sidecar is \texttt{null}, not an empty byte string. The view's decoding and authentication are separate from validation of the operational response.
+
+
+\section{Non-Inclusion Proof Encoding}\label{sec:non-inclusion-encoding}
+
+A non-inclusion proof is tag 39034 over $[1,\mathsf{bstr}(C^\mathsf{exc}),UC]$. The queried state identifier is a verification input. The aggregation-profile certificate is either empty, with the authenticated root required to be \texttt{null}, or exactly $96+32\,\mathsf{popcount}(\mathit{bitmap})$ bytes, at most 8\,288 bytes. Its terminal value is exactly 32 bytes; trailing bytes are rejected.
+
+The version-2 inclusion lookup can return tag 39033 over $[1,\texttt{null},\texttt{null},\texttt{null},UC]$ when no certified leaf is returned. That answer is neither an inclusion proof nor the empty non-inclusion certificate above. A surrounding block number or optional pending, expired or unknown status is advisory and does not establish absence.
+
+
+\section{Recovery Records}\label{sec:recovery-encoding}
+
+The native state message is $[\mathsf{committedHead},[\mathsf{pendingBlocks}]]$; the committed head is $[\mathsf{block},[\mathsf{shardInfo}],\mathsf{QC},\mathsf{commitQC}]$. Each shard-info entry is an untagged array with fields, in order:
+\begin{enumerate}
+\item partition identifier, shard identifier, T2 timeout and last certified state root;
+\item previous statistical-record bytes, current statistical record, previous fee-record bytes and current validator-fee map;
+\item last UC, last technical record, current input record, current technical record (\texttt{IRTR}) and shard-configuration hash.
+\end{enumerate}
+These groups form one thirteen-element array, not nested arrays. The previous accounting records preserve their encoded bytes. Both retained response records are required at committed-state admission; a structurally decoded message with either missing is not installable. Pending entries are ordinary block records, not additional committed shard vectors.
