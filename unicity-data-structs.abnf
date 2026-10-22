@@ -3,18 +3,41 @@
 ; ============================================================================
 ; 1. BFT CORE (shared data structures)
 
-  UC = IR TechRecordHash ShardTreeCertificate UnicityTreeCertificate UnicitySeal  ;~$UC = (IR, h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
-  IR = RoundNumber Epoch PreviousHash Hash Time  ;~$IR = (n, e, h', h, t)$
-  ShardTreeCertificate = ShardIdentifier *SiblingHash  ;~$C^\mathsf{shard} = (\sigma;h^s_1, \ldots, h^s_{|\sigma|})$
-  UnicityTreeCertificate = PartitionIdentifier PartitionDescriptionHash *HashStep
-  HashStep = PartitionIdentifier SiblingHash  ;~$C^\mathsf{uni} = (\beta, \mathsf{dhash}; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell)))$
+  UC = Version IR TechRecordHash ShardConfHash ShardTreeCertificate UnicityTreeCertificate UnicitySeal  ;~$UC = (IR, h_t, h_c, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
+      ; UC: tag 39001, array[7], version 1.
+  IR = Version RoundNumber Epoch NullableHash NullableHash NullableBytes Time NullableHash EarnedFees NullableHash
+      ; CBOR tag 39002, array[10]: $[1,n,e,h',h,v,t,h_B,f,h_E]$
+  ; The empty aggregation state root is NULL, never an empty bstr or a zero digest.
+  ; IR and UC themselves are required records.
+  NullableHash = Hash / NULL
+  NullableBytes = Bytes / NULL
+  EarnedFees = uint64
+  ShardTreeCertificate = Version ShardIdentifier *SiblingHash  ;~$C^\mathsf{shard} = (\sigma;h^s_1, \ldots, h^s_{|\sigma|})$
+  ; Exactly one sibling per shard bit, leaf-to-root; no null path entries.
+  UnicityTreeCertificate = Version PartitionIdentifier *HashStep
+  HashStep = PartitionIdentifier SiblingHash  ;~$C^\mathsf{uni} = (\beta; (\beta_2, h_2), \ldots, (\beta_\ell, h_\ell)))$
 
   UnicitySeal = Version NetworkIdentifier RootPartitionRoundNumber Epoch Timestamp PreviousHash Hash *Signatures  ;~$C^\mathsf{r} = (\alpha, n_r, e_r, t_r, r_-, r; s)$
-                      ;~where |Signatures| = quorumThreshold > 2f
+                      ; Count each valid trusted signer once; valid voting power >= quorumThreshold.
+                      ; Tag 39005, array[8]; signing uses NULL in the signature-map slot.
+                      ; PreviousHash commits to QC VoteInfo in the distributed implementation.
+
+  PartitionView = Version PartitionIdentifier 1*8PartitionViewLeaf
+      ; Untagged [1, partition, [leaves...]], canonical complete topological order.
+      ; At most 16 KiB; shard <= 256 bits, IR <= 1024 bytes, summary <= 256 bytes.
+      ; These are consolidation admission limits, not consensus limits.
+  PartitionViewLeaf = ShardIdentifier IR TechRecordHash ShardConfHash
+      ; Exact four-element array; retain every native IR field.
+  NativeCReS = PartitionIdentifier ShardIdentifier TechRecord UC
+      ; Untagged four-element array; abstract CReS below also names network context.
+  CReSV2 = Version NativeCReS (PartitionViewBytes / NULL)
+      ; [2, response, sidecar]; absent sidecar is NULL, not an empty byte string.
+  PartitionViewBytes = Bytes
+      ; Nonempty byte string containing a complete encoded PartitionView.
 
 ; --- Statistical and Technical Records ---
   StatisticalRecord = NumRounds SumRoundSize SumStateSize MaxRoundSize MaxStateSize ;~$\mathsf{SR}=(n_e, \overline{\ell}_B, \overline{\ell}_S, \hat{\ell}_B, \hat{\ell}_S)$
-  TechRecord = Round Epoch LeaderID SRHash  ;~$\mathsf{TE}=(n_r, e_r, \nu_\ell, h_\mathsf{sr})$
+  TechRecord = Round Epoch LeaderID SRHash FeeHash  ;~$\mathsf{TE}=(n_r, e_r, \nu_\ell, h_\mathsf{sr}, h_\mathsf{fee})$
 
   ShardInfo = Round PreviousHash PrevStatisticalRecord StatisticalRecord *ValidatorIdentifier LeaderIdentifier PrevUC ;~$(n,h_-, \mathsf{SR}_-, \mathsf{SR}, \mathcal{V}, \nu_\ell, UC_-)$
 
@@ -26,8 +49,11 @@
 ; BFT CORE (internal data structures)
 
 ; --- Internal Consensus Structures ---
-  LedgerCommitInfo = UnicitySeal | UnicityTrustBaseEntry ; seal without signatures
+  LedgerCommitInfo = UnicitySeal | UnicityTrustBaseEntry ; signature slot set to NULL
   QC = VoteInfo LedgerCommitInfo *Signatures
+      ; LedgerCommitInfo.PreviousHash = H(VoteInfo).
+  RecoverableSignature = 65OCTET
+      ; R || S || V: nonzero scalars, low S, V in 0..3; recover the expected key.
 
   VoteInfo = RoundInfo
   RoundInfo = RoundNumber Epoch Timestamp ParentRoundNumber CurrentRootHash | UnicityTrustBaseEntryHash
@@ -52,10 +78,19 @@
 
 ; --- Recovery Messages ---
   GetStateMsg = NodeId   ; id of the validator requesting the state
-  StateMsg = *UC CommittedHead BlockNode UnicityTrustBaseEntry
-  CommittedHead = BlockNode = RecoveryBlock
-  RecoveryBlock = BlockData *InputData QC CommitQC
-  InputData = PartitionIdentifier Shard IR Sdrh
+  StateMsg = CommittedHead *BlockData
+      ; CBOR [committedHead, [pending blocks...]].
+  CommittedHead = BlockData *RecoveredShardInfo QC CommitQC
+      ; CBOR [block, [shard info...], qc, commitQc].
+  RecoveredShardInfo = PartitionIdentifier ShardIdentifier T2Timeout NullableHash
+                      PreviousStatisticsBytes NativeStatisticalRecord PreviousFeesBytes FeeRecord
+                      UC TechRecord IR TechRecord ShardConfHash
+      ; One array[13]; final TechRecord is IRTR; retained UC and TR are required.
+  NativeStatisticalRecord = NumBlocks SumFees SumBlockSize SumStateSize MaxFee MaxBlockSize MaxStateSize
+  FeeRecord = *(NodeID EarnedFees)
+      ; CBOR map from validator identifiers to earned fees.
+  PreviousStatisticsBytes = Bytes
+  PreviousFeesBytes = Bytes
 
 ; ============================================================================
 ; 3. BFT CORE (protocols)
@@ -65,7 +100,7 @@
   ;  Returned UC can be repeated cert for prevStateTreeHash which triggers next attempt using different leader
   ;  a validator can have multiple pending requests extending the same hash; latest one is identified using IR.n
 
-  CReS = NetworkIdentifier PartitionIdentifier ShardIdentifier UC TechRecord [UnicityTrustBaseEntry]
+  CReS = NetworkIdentifier PartitionIdentifier ShardIdentifier TechRecord UC [UnicityTrustBaseEntry]
         ;~Certification~Response
 
   ; Subscription - Subscribe to CReS message feed in order to obtain the latest UC for synchronization
@@ -86,27 +121,43 @@
 ; Keys are read as 256-bit big-endian bit strings; depth $d$ addresses bit $d$.
 
   StateIdentifier = Bytes32  ;~$\mathsf{sid} = H(\mathsf{CBOR}(\nu, h_{\mathsf{st}}))$ -- SMT leaf key
-  LeafData = TransactionHash    ;~$h_{\mathsf{tx}}$ -- SMT leaf value
-  SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, h_{\mathsf{tx}})$
+  LeafData = Bytes32  ;~$v=\mathsf{SHA256}(\mathsf{CBOR}([h_{\mathsf{tx}},\tau]))$
+  SMTLeaf = StateIdentifier LeafData  ;~$L = (\mathsf{sid}, v)$
 
-  InclusionCertificate = Bitmap *SiblingHash  ;~$C^\mathsf{inc} = (\mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$
-      ;~bitmap: 32 bytes (256-bit big-endian bit vector); bit $d$ set iff sibling needed at depth $d$
-      ;~siblings: $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, root-to-leaf order
-      ;~regions not transmitted: verifier derives $k[0..d)$ from the queried key
+  CertificatePath = Bitmap *SiblingHash  ;~$(\mathit{bitmap}, \langle s_1, \ldots, s_n \rangle)$ -- shared by both certificate types
+      ;~bitmap: 32 bytes; bit $d$ is the $(d \bmod 8)$-th most significant bit of byte $\lfloor d/8 \rfloor$
+      ;~bit $d$ set iff the certified path has a junction at bifurcation depth $d$
+      ;~siblings: exactly $n = \mathsf{bitcount}(\mathit{bitmap})$ hashes, root-to-leaf order
+      ;~depths come from the bitmap; regions are derived by the verifier, never transmitted
+
+  InclusionCertificate = CertificatePath  ;~$C^\mathsf{inc} = (\mathit{bitmap}, \mathit{siblings})$
+      ;~certified leaf is the queried $(k,v)$: supplied by the verifier, not carried here
+      ;~verifier derives each region as $k[0..d)$ from the queried key
       ;~Wire: $\mathit{bitmap}[32] \,\|\, s_1[32] \,\|\, \ldots \,\|\, s_n[32]$
 
-  NonInclusionCertificate = *OpeningJunction *1OpeningLeaf  ;~$C^\mathsf{exc} = \langle e_1, \ldots, e_\ell \rangle$
-      ;~chain of one-level openings along the key-directed descent, root first
-      ;~terminal: junction whose region is not a prefix of the key, or foreign leaf
-      ;~empty chain: valid iff the tree is empty
-  OpeningLeaf = %x00 Key Bytes  ;~$(k_\ell, v_\ell)$: opened leaf, $33 + |v_\ell|$ bytes; last element only
-  OpeningJunction = %x01 Depth Region Hash Hash  ;~$(d, p, h_L, h_R)$: opened junction, 98 bytes
+  NonInclusionCertificate = [CertificatePath SMTLeaf]  ;~$C^\mathsf{exc}_\emptyset$ or $(\mathit{bitmap},\mathit{siblings};k',v')$
+      ;~terminal: $SMTLeaf = (k',v')$, the leaf reached by key-directed descent for the queried key
+      ;~verifier derives regions from $k'$, requires $k[d]=k'[d]$ at every junction, and requires $k' \ne k$
+      ;~empty (zero-length): admissible only for an empty tree
+      ;~Wire: $\mathit{bitmap}[32]\,\|\,s_1[32]\,\|\cdots\|\,s_n[32]\,\|\,k'[32]\,\|\,v'$
 
-  InclusionProof = StateIdentifier LeafData InclusionCertificate UC  ;~$\pi^\mathsf{inc} = (\mathsf{sid}, h_{\mathsf{tx}}, C^\mathsf{inc}, UC)$
-      ;~Proves that $\mathsf{sid}$ EXISTS in the SMT with value $h_{\mathsf{tx}}$
+  InclusionProof = Version CertificationData ReferenceTime InclusionCertificateBytes UC
+      ; Tag 39033, array[5]; the query and leaf value are verifier inputs.
+      ; The original reference time is not replaced by a later UC timestamp.
+  ReferenceTime = Timestamp
+  InclusionCertificateBytes = Bytes
+      ; Byte-string encoding of InclusionCertificate.
 
-  NonInclusionProof = NonInclusionCertificate UC  ;~$\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$
-      ;~Proves that a queried $\mathsf{sid}$ does NOT exist in the SMT
+  NonInclusionProof = Version NonInclusionCertificateBytes UC  ;~$\pi^\mathsf{exc} = (C^\mathsf{exc}, UC)$
+      ; Tag 39034, array[3]: [1, certificate byte string, native tagged UC].
+      ; Certificate bytes are empty or exactly 96 + 32*popcount(bitmap), <= 8288.
+      ; Terminal value is 32 bytes; no trailing bytes.
+      ;~Proves that a queried $\mathsf{sid}$ does NOT exist in the SMT; the queried
+      ;~$\mathsf{sid}$ is supplied by the verifier and is not carried in the proof
+
+  NonInclusionCertificateBytes = Bytes
+  UnavailableInclusionAnswer = Version NULL NULL NULL UC
+      ; Tag 39033, [1, null, null, null, UC]; not a proof of absence.
 
   ConsistencyProof = *ConsistencyProofOp | ZKProof
       ;~$\pi_{\mathsf{CP}}$ -- proves append-only consistency of the SMT round update;
@@ -124,6 +175,10 @@
 
 ; ============================================================================
 ; 5. EXECUTION LAYER
+
+  AggregationPartitionIdentifier = PartitionIdentifier
+      ; Must equal the constant in Sec.~\ref{sec:aggregation-profile}.
+      ; Applies to every application UC, including nested and consolidated proofs.
 
 ; --- Predicates ---
   Predicate = Engine Code Params  ;~$\nu = (\mathsf{engine}, \mathsf{code}, \mathsf{params})$ -- CBOR array[3]
@@ -152,18 +207,19 @@
   ;   htlc        : CBOR array[2]: [x (bstr), s (65-byte bstr)]
 
 ; --- Transactions ---
-  MintTransaction = NetworkIdentifier Recipient Salt TokenType MintReason Data
-      ;~$T\_0 = (\alpha, \nu', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$ -- CBOR array[6]
-      ;~Token identifier is derived: $\mathsf{id} = H(\mathsf{salt}, \alpha)$ (see Hash Derivations)
+  MintTransaction = Version NetworkIdentifier Recipient Salt TokenType NullableBytes NullableBytes ExpiresAt
+      ; Tag 39041, array[8], version 2; reason, data and timeout keep their positions.
+      ; Token identifier is derived from salt and network.
 
-  TransferTransaction = SourceStateHash UnlockingArgument Recipient StateMask Data
-      ;~$T = (h_\mathsf{st}, u, \nu', x, \auxd')$ -- CBOR array[5]
+  TransferTransaction = Version Recipient StateMask NullableBytes ExpiresAt
+      ; Tag 39045, array[5], version 2.
+      ; Source state and unlocking argument are checked through certification data.
 
   CertifiedMintTransaction = MintTransaction InclusionProof  ;~$(T_0, \pi)$ -- CBOR array[2]
   CertifiedTransferTransaction = TransferTransaction InclusionProof  ;~$(T, \pi)$ -- CBOR array[2]
 
-  Token = CertifiedMintTransaction *CertifiedTransferTransaction
-      ;~$\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$ -- CBOR array[2]: [genesis, [transfers...]]
+  Token = Version CertifiedMintTransaction *CertifiedTransferTransaction
+      ;~$\mathcal{L} = (T_0^\mathsf{cert}, T_1^\mathsf{cert}, \ldots, T_n^\mathsf{cert})$ -- tag 39040, array[3]: [2, genesis, [transfers...]]
 
 ; --- Fields ---
   Salt = Bytes32  ;~$\mathsf{salt}$ -- 32-byte minter-chosen salt, required to be unique among the minter's choices
@@ -176,22 +232,23 @@
                     ;~(use $\predi_\mathsf{p2sh}$ to commit only to a hash)
   StateMask = Bytes32  ;~$x \overset{\$}{\leftarrow}  \{0,1\}^{256}$ -- random value for state derivation
   Data = Bytes  ;~$\auxd'$ -- auxiliary payload (optional, arbitrary length)
-  TransactionHash = Hash  ;~$h_\mathsf{tx} = H(D)$ -- hash of transaction data
+  TransactionHash = Hash  ;~$h_\mathsf{tx}$ -- SHA-256 of the complete tagged native transaction, including timeout
   UnlockScript = Bytes  ;~$u$ -- unlocking argument (e.g. signature)
 
 ; --- State ---
   StateId = Hash  ;~$\mathsf{sid} = H(\mathsf{CBOR}(\nu, h_\mathsf{st}))$ -- key in Unicity Service registry
 
 ; --- Certification ---
-  CertificationData = Recipient SourceStateHash TransactionHash UnlockingArgument
-      ;~$Q = (\nu, h_\mathsf{st}, h_\mathsf{tx}, u)$ -- CBOR array[4], submitted to Unicity Service
+  CertificationData = Version Recipient SourceStateHash TransactionHash ExpiresAt UnlockingArgument
+      ;~$Q = (\predi, h_\mathsf{st}, h_\mathsf{tx}, \bar\tau_Q, u)$ -- tag 39031, CBOR array[6], version 2
+  ExpiresAt = Timestamp / NULL
+      ;~$\bar\tau_Q\in\mathbb{T}_\bot$ -- exclusive request timeout, fixed position
+      ;~NULL is the CBOR simple value \texttt{null}, i.e. $\bar\tau_Q=\bot$: the service assigns the deadline
 
 ; --- Hash Derivations ---
   ; $\mathsf{id} = H(\mathsf{salt}, \alpha)$~-- token identifier (derived; globally unique across networks)
   ; $h_\mathsf{st} = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$~-- mint source state hash
   ; $h_\mathsf{st}' = H(h_\mathsf{st}, x)$~-- next state hash
-  ; $h_\mathsf{tx} = H(\alpha, \mathsf{recipient}, \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd')$~-- mint transaction hash (the value in Unicity Service if seen as key-value store)
-  ; $h_\mathsf{tx} = H(\mathsf{recipient}, x, \auxd')$~-- transfer transaction hash (value in Unicity Service)
 
 ; --- Fungible Token Structures ---
   Asset = AssetId Value  ;~$(\mathsf{aid}, v)$ -- CBOR array[2]

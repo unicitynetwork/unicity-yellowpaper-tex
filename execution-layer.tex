@@ -13,6 +13,9 @@ The model relies on three key principles:
 	\item \textbf{Recipient verification}: The recipient (relying party) independently verifies the complete token history before accepting a transfer.
 \end{enumerate}
 
+\paragraph{Aggregation partition.}\label{sec:aggregation-profile}\index{aggregation partition}
+The current token/aggregation profile uses the constant $\beta_{\mathsf{agg}}=7$. Every accepted application proof, including proofs in nested tokens and consolidated histories, must belong to this partition and to the independently trusted network. Generic certificate-tree operations remain applicable to other partitions.
+
 \subsection{Token Lifecycle}\label{sec:token-lifecycle}
 
 A token progresses through the following stages:
@@ -57,10 +60,12 @@ where $T_0^\mathsf{cert}$ is a certified mint transaction and $T_i^\mathsf{cert}
 
 A token has two compressible dimensions, both treated in Sec.~\ref{sec:history-compression} and neither of which alters a certified transaction: its own transfer sequence, a prefix of which MAY be replaced by a \emph{compressed history} object; and its \emph{provenance}, the ancestor tokens its genesis reason depends on, which MAY be supplied as \emph{token certificates} instead of in full. Either result denotes the same token in the same state, is verified by the same function $\Call{VerifyToken}{}$, and is spent by an ordinary transfer.
 
+Let $\mathbb{T}_\bot=\mathbb{T}\cup\{\bot\}$. Every transaction $T$ carries an exclusive request timeout $\tau_Q(T)\in\mathbb{T}_\bot$, where $\tau_Q(T)=\bot$ delegates the choice of deadline to the Unicity Service and requires no client clock. The timeout occupies a fixed position in the transaction encoding and is committed by the transaction hash in either case (Appendix~\ref{app:encodings}). A certified transaction has its transaction, inclusion proof and reference time $\tau$ at which its leaf was created; the reference time is derived from the proof in the concrete encoding. The concrete proof representation also carries the certification data needed to reconstruct the service request and the same reference time. These bind the same transaction and reference time (Appendix~\ref{app:execution-layer}).
+
 \subsubsection{Mint Transaction}\label{sec:mint-tx}
 
 \index{mint transaction!structure}
-A \emph{certified mint transaction} is a tuple $(T_0, \pi_0)$, where $T_0 = (\sthash, D_\mathsf{mint})$ and
+A \emph{certified mint transaction} is a tuple $(T_0, \tau_0, \pi_0)$, where $T_0$ consists of the source state hash, its request timeout $\tau_Q(T_0)$, and the common data
 \[
 D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason}, \auxd') .
 \]
@@ -70,11 +75,13 @@ D_\mathsf{mint} = (\alpha, \predi', \mathsf{salt}, \mathsf{ty}, \mathsf{reason},
 	\begin{itemize}
 		\item $\alpha \in \mathbb{A}$ -- network identifier, binding the token to a specific Unicity network instance
 		\item $\predi'$ -- spending predicate of the first owner
-		\item $\mathsf{salt} \in \{0,1\}^{256}$ -- token identifier salt, chosen by the minter and required to be unique among the minter's salt choices (e.g.\ by uniform random sampling or by a local counter); $\mathsf{salt}$ has no masking role and need not be high-entropy
+		\item $\mathsf{salt} \in \{0,1\}^{256}$ -- token identifier salt, which MUST be unique across all minters on $\alpha$ (e.g.\ uniform random sampling or a secret-key PRF on a non-repeating counter). If value is committed to $\mathsf{id}$ before minting, $\mathsf{id}$ MUST remain unpredictable until genesis certification.
 		\item $\mathsf{ty}$ -- token type, classifying the token category, defining its mandatory validation rules
 		\item $\mathsf{reason}$ -- mint reason; content depends on the token type. Justifies minting this token, e.g., by proving minting authority
 		\item $\auxd'$ -- auxiliary payload (application-specific; e.g. asset value for fungible tokens)
 	\end{itemize}
+	\item $\tau_Q(T_0)$ -- optional explicit timeout of the mint certification request
+	\item $\tau_0\in\mathbb T$ -- reference time of the round in which the mint leaf was created
 	\item $\pi_0$ -- inclusion proof from the Unicity Service
 \end{itemize}
 
@@ -88,21 +95,23 @@ This ensures that two tokens minted on different networks cannot induce collidin
 
 $\mathsf{MINT\_SUFFIX}$\index{MINT\_SUFFIX} is a fixed domain separator constant. The minting key pair $(\mathsf{sk}_\mathsf{mint}, \mathsf{pk}_\mathsf{mint})$ is a public constant; it serves only to provide a uniform request interface with the Unicity Service. Values: Appendix~\ref{app:el-constants}.
 
-\paragraph{Certifying a mint transaction} $T_0 = (\sthash, D_\mathsf{mint})$:
+\paragraph{Certifying a mint transaction} $T_0$:
 \begin{enumerate}
-	\item $\txhash \gets H(D_\mathsf{mint})$
+	\item Choose $\tau_Q(T_0)\in\mathbb{T}_\bot$; choosing $\bot$ delegates timeout assignment to the service and requires no local clock
+	\item $\txhash \gets H(D_\mathsf{mint}, \tau_Q(T_0))$
 	\item $h_T \gets H(\sthash, \txhash)$
 	\item $\sigma \gets \mathsf{Sign}(\mathsf{sk}_\mathsf{mint}, h_T)$
-	\item $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, \sigma)$
+	\item $Q \gets (\mathsf{pk}_\mathsf{mint}, \sthash, \txhash, \tau_Q(T_0), \sigma)$
 	\item $\pi_0 \gets \unisrv(Q)$
 \end{enumerate}
 
-\paragraph{Verifying a certified mint transaction} $(T_0, \pi_0)$ against trust base $\mathcal{T}$, using known, fixed mint keys:
+\paragraph{Verifying a certified mint transaction} $(T_0, \tau_0, \pi_0)$ against trust base $\mathcal{T}$, using known, fixed mint keys:
 \begin{enumerate}
 	\item require $T_0.D_\mathsf{mint}.\alpha = \pi_0.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$
 	\item derive $\mathsf{id} \gets H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha)$;\; require $T_0.\sthash = H(\mathsf{id}, \mathsf{MINT\_SUFFIX})$
-	\item $\txhash \gets H(D_\mathsf{mint})$;\; require $\txhash = \pi_0.\txhash$
-	\item $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), \txhash, \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
+	\item require $\tau_0=\tau(\pi_0)$; derive $\txhash=H(D_\mathsf{mint},\tau_Q(T_0))$ and $v=H(\txhash,\tau_0)$
+	\item if $\tau_Q(T_0)\ne\bot$, require $\tau_0 < \tau_Q(T_0)$
+	\item require $v = \pi_0.v$ and $\mathcal{V}(H(\mathsf{pk}_\mathsf{mint}, \sthash), v, \pi_0, \mathcal{CD}_\beta, \mathcal{T}) = 1$
 	\item Mint authorization check on $\mathsf{ty}$, $\mathsf{reason}$ and $\auxd'$: mint reason validity and auxiliary payload format and semantics, dispatched by token type (Sec.~\ref{sec:mint-authorization}, Alg.~\ref{alg:mint-auth})
 \end{enumerate}
 
@@ -112,7 +121,7 @@ Correctness of the token id derivation is enforced implicitly by step~2: $\sthas
 \subsubsection{Transfer Transaction}\label{sec:transfer-tx}
 
 \index{transfer transaction!structure}
-A \emph{certified transfer transaction} is a tuple $(T, u, \pi)$, where $T = (\sthash, D)$:
+A \emph{certified transfer transaction} is a tuple $(T, \tau, \pi)$, where $T$ consists of the source state hash, the common transaction data $D$, and its request timeout:
 \begin{itemize}
 	\item $D = (\predi', x, \auxd')$ -- transaction data:
 	\begin{itemize}
@@ -120,26 +129,29 @@ A \emph{certified transfer transaction} is a tuple $(T, u, \pi)$, where $T = (\s
 		\item $x \gets \{0,1\}^\ell$ -- random value for state hash derivation
 		\item $\auxd'$ -- auxiliary data for the next state
 	\end{itemize}
-	\item $u$ -- unlocking argument satisfying the current predicate $\predi$
-	\item $\pi$ -- inclusion proof from the Unicity Service
+	\item $\tau_Q(T)\in\mathbb{T}_\bot$ -- optional explicit timeout of the certification request
+	\item $\tau\in\mathbb T$ -- reference time of the round in which the leaf was created
+	\item $\pi$ -- inclusion proof and associated certification data, including the unlocking argument $u$
 \end{itemize}
 
-\paragraph{Certifying a transfer transaction} $T = (\sthash, D)$ in the current state $(\predi, h)$:
+\paragraph{Certifying a transfer transaction} $T$ in the current state $(\predi, h)$:
 \begin{enumerate}
-	\item $\txhash \gets H(D)$
+	\item Choose $\tau_Q(T)\in\mathbb{T}_\bot$; choosing $\bot$ delegates timeout assignment to the service and requires no local clock
+	\item $\txhash \gets H(D, \tau_Q(T))$
 	\item $h_T \gets H(\sthash, \txhash)$
 	\item Create $u$ such that $\predi(\tau_\mathsf{exp}, h_T, u) = 1$ for an expected system time $\tau_\mathsf{exp}$
-	\item $Q \gets (\predi, \sthash, \txhash, u)$
+	\item $Q \gets (\predi, \sthash, \txhash, \tau_Q(T), u)$
 	\item $\pi \gets \unisrv(Q)$
 \end{enumerate}
 
-\paragraph{Verifying a certified transfer transaction} $(T, u, \pi)$ in state $(\predi, h)$:
+\paragraph{Verifying a certified transfer transaction} $(T, \tau, \pi)$ in state $(\predi, h)$:
 \begin{enumerate}
 	\item $T.\sthash = h$ \quad (state hash matches expected)
 	\item $\pi.UC.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$ \quad (inclusion proof is from the same network as the trust base)
-	\item $\txhash \gets H(T.D)$;\; require $\txhash = \pi.\txhash$ \quad (transaction data binds to the certified SMT leaf)
-	\item $\predi(\mathsf{time}(\pi), H(\sthash, \txhash), u) = 1$ \quad (predicate satisfied)
-	\item $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pi, \mathcal{CD}_\beta, \mathcal{T}) = 1$ \quad (inclusion proof valid and certified by the correct shard)
+	\item require $\tau=\tau(\pi)$; derive $\txhash=H(T.D,\tau_Q(T))$ and $v=H(\txhash,\tau)$
+	\item if $\tau_Q(T)\ne\bot$, require $\tau < \tau_Q(T)$
+	\item require $\predi(\tau, H(\sthash, \txhash), u) = 1$, where $u$ is recovered from the certification data accompanying $\pi$
+	\item require $v = \pi.v$ and $\mathcal{V}(H(\predi, T.\sthash), v, \pi, \mathcal{CD}_\beta, \mathcal{T}) = 1$ \quad (inclusion proof valid and certified by the correct shard)
 	\item Additional token type-specific checks (Sec.~\ref{sec:token-types})
 \end{enumerate}
 
@@ -158,9 +170,9 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 
 \textbf{Computation}:
 \begin{algorithmic}[0]
-	\State \Parse $T_0^\mathsf{cert}$ \textbf{as} $(T_0, \pi_0)$
+	\State \Parse $T_0^\mathsf{cert}$ \textbf{as} $(T_0, \tau_0, \pi_0)$
 	\If {$T_0.D_\mathsf{mint}.\alpha \ne \mathcal{T}.\alpha$} \Return \FALSE \EndIf
-	\If {$\neg \Call{VerifyMintTransaction}{T_0, \pi_0, \mathcal{T}}$} \Return \FALSE \EndIf
+	\If {$\neg \Call{VerifyMintTransaction}{T_0, \tau_0, \pi_0, \mathcal{T}}$} \Return \FALSE \EndIf
 	\State $\predi^0 \gets T_0.D_\mathsf{mint}.\predi'$
 	\State $h^0 \gets H(H(T_0.D_\mathsf{mint}.\mathsf{salt}, T_0.D_\mathsf{mint}.\alpha), \mathsf{MINT\_SUFFIX})$
 	\If {$\mathcal{H}$ present}
@@ -168,8 +180,8 @@ $\mathsf{VerifyToken}$ -- token verification function of type $\mathbb{L} \times
 		\State $\predi^{m} \gets \decpred(\mathcal{H}.e)$;\quad $h^{m} \gets \mathcal{H}.h$ \Comment{carry restored from the proof}
 	\EndIf
 	\For {$i \gets m+1 \ldots n$}
-		\State \Parse $T_i^\mathsf{cert}$ \textbf{as} $(T_i, u_i, \pi_i)$
-		\If {$\neg \Call{VerifyTransferTransaction}{T_i, u_i, \pi_i, \predi^{i-1}, h^{i-1}, \mathcal{T}}$} \Return \FALSE \EndIf
+		\State \Parse $T_i^\mathsf{cert}$ \textbf{as} $(T_i, \tau_i, \pi_i)$
+		\If {$\neg \Call{VerifyTransferTransaction}{T_i, \tau_i, \pi_i, \predi^{i-1}, h^{i-1}, \mathcal{T}}$} \Return \FALSE \EndIf
 		\State $\predi^{i} \gets T_i.D.\predi'$
 		\State $h^{i} \gets H(h^{i-1}, T_i.D.x)$
 	\EndFor
@@ -193,8 +205,8 @@ A \emph{predicate} $\predi_\mathsf{name}(\mathsf{par}; \cdot)$ is a boolean func
 	\item \textbf{Parameters} $\mathsf{par}$ -- type-dependent configuration (e.g. a public key)
 	\item \textbf{Arguments} $(\tau, m, u)$:
 	\begin{itemize}
-		\item $\tau \in \mathbb{T}$ -- system time, extracted from the Unicity Seal timestamp $C^\mathsf{r}.t_r$
-		\item $m \in \hashtype$ -- message hash $H(\sthash, \txhash)$
+		\item $\tau \in \mathbb{T}$ -- certified request-validation reference time (Sec.~\ref{sec:time-extraction})
+		\item $m \in \hashtype$ -- message hash $H(\sthash, \txhash)$, where $\txhash$ commits to the request timeout
 		\item $u$ -- unlocking argument, structure depends on predicate type
 	\end{itemize}
 \end{itemize}
@@ -217,14 +229,12 @@ where $UC_-$ is the last valid Unicity Certificate of that shard (which the Aggr
 \paragraph{BFT Core enforcement.}
 The BFT Core verifies the Aggregator's choice of reference time as part of request admission (Sec.~\ref{certification-request}, check $\mathsf{CR}.\mathcal{IR}.t = \mathcal{SI}[\beta,\sigma].UC_-.C^\mathsf{r}.t_r$).
 
-\paragraph{Extraction from inclusion proofs.}
-Given an inclusion proof $\pi^\mathsf{inc} = (\mathsf{sid}, \txhash, C^\mathsf{inc}, UC)$, the \emph{system time} used for predicate evaluation is extracted as
-\[
-	\mathsf{time}(\pi^\mathsf{inc}) \;=\; UC.\mathcal{IR}.t
-\]
-This is the same value the Aggregator used when admitting the request -- the previous seal's $t_r$, copied into $\mathcal{IR}.t$ and BFT-verified. Re-validation by any later verifier is therefore deterministic and yields the identical predicate evaluation outcome.
+\paragraph{Binding to the certified leaf.}
+For every request, $\tau$ is committed by the leaf value $H(\txhash, \tau)$ (Sec.~\ref{sec:request-validation}) and is carried with the transition. A verifier recomputes that value from the transaction data and the carried $\tau$ and requires it to equal the certified leaf value; a mismatch rejects. This makes re-validation deterministic and independent of which inclusion proof establishes the leaf. The invariant applies equally when the request timeout is omitted and assigned by the service.
 
-Note that $UC.\mathcal{IR}.t \ne UC.C^\mathsf{r}.t_r$ in general: $\mathcal{IR}.t$ is the reference time of the round \emph{being} certified (taken from the prior seal), whereas $C^\mathsf{r}.t_r$ is the wall-clock time at which the new seal itself was produced. Predicate evaluation uses $\mathcal{IR}.t$.
+Reading the time only from $UC.\mathcal{IR}.t$ identifies the validation time for a proof issued in the transition's own round. The SMT is append-only, so a leaf can be certified afresh against any later root, whose Input Record carries another round's reference time. The carried value $\tau(\pi)$ is therefore a property of the certified leaf rather than of the replaceable certificate chain.
+
+Note that $UC.\mathcal{IR}.t \ne UC.C^\mathsf{r}.t_r$ in general: $\mathcal{IR}.t$ is the reference time of the round \emph{being} certified (taken from the prior seal), whereas $C^\mathsf{r}.t_r$ is the wall-clock time at which the new seal itself was produced. It is $\mathcal{IR}.t$ that enters the leaf value.
 
 \subsection{Standard Predicates}\label{sec:standard-predicates}
 
@@ -362,26 +372,30 @@ This section describes how the execution layer interacts with the Unicity Servic
 
 \subsection{Certification Request}
 
-A certification request from the execution layer is a tuple $Q = (\predi, \sthash, \txhash, u)$, where:
+A certification request from the execution layer is a tuple $Q = (\predi, \sthash, \txhash, \bar\tau_Q, u)$, where:
 \begin{itemize}
 	\item $\predi$ -- spending predicate of the current owner
 	\item $\sthash$ -- current state hash
-	\item $\txhash$ -- transaction data hash
+	\item $\txhash$ -- transaction hash, committing to transaction data and the timeout when one is explicit
+	\item $\bar\tau_Q\in\mathbb{T}_\bot$ -- optional explicit, exclusive request timeout
 	\item $u$ -- unlocking argument satisfying $\predi$
 \end{itemize}
 
-\subsection{Processing}
+\subsection{Processing}\label{sec:us-processing}
 
 The Unicity Service processes the request as follows:
 \begin{enumerate}
 	\item Compute state identifier: $\mathsf{sid} \gets H(\predi, \sthash)$
 	\item Compute message hash: $m \gets H(\sthash, \txhash)$
+	\item Assign or recover the effective timeout $\widehat\tau_Q$ and verify $\tau < \widehat\tau_Q$
 	\item Evaluate predicate: verify $\predi(\tau, m, u) = 1$
 	\item Check uniqueness: verify $R[\mathsf{sid}] = \bot$
-	\item If both checks pass: $R[\mathsf{sid}] \gets \txhash$\footnote{The current SDK implementation stores $H(\mathsf{CBOR}(\predi, \sthash, \txhash, u))$ as the leaf value instead of $\txhash$, because of backward compatibility with the legacy SDK.}
+	\item If all checks pass: $R[\mathsf{sid}] \gets \lambda(Q,\tau)$
 \end{enumerate}
 
-If the request is accepted, the Unicity Service returns an inclusion proof $\pinc$. If the state has already been spent (uniqueness check fails) or the predicate evaluation fails, the request is rejected.
+For every request, the leaf value binds the reference time under which the request was validated. The BFT Core derives all leaf values from the declared transaction hashes and $\mathsf{CR}.\mathcal{IR}.t$ before verifying the consistency proof (Sec.~\ref{sec:derived-leaf-values}). Timeout omission affects transaction construction and admission policy, but not this commitment.
+
+If the request is accepted, the Unicity Service returns an inclusion proof $\pinc$. If the request is expired, the state has already been spent, or the predicate evaluation fails, the request is rejected.
 
 
 \section{Transaction Flow}\label{sec:transaction-flow}
@@ -410,8 +424,9 @@ Figure~\ref{fi:exec-transaction-flow} illustrates one complete token transfer, f
             \begin{call}{S}{\shortstack[l]{
                     $x \gets \{0,1\}^\ell$     \\
                     $D = (\predi', x, \auxd')$ \\
-                    $T = (\sthash, D)$         \\
-                    $\txhash \gets H(D)$ \\
+                    choose $\bar\tau_Q\in\mathbb{T}_\bot$ \\
+                    $T = (\sthash, D, \bar\tau_Q)$ \\
+                    $\txhash \gets H(D,\bar\tau_Q)$ \\
                     $h_T = H(\sthash, \txhash)$ \\
                     $u$ such that $\predi(\tau_\mathsf{exp}, h_T, u) = 1$
                 }
@@ -419,12 +434,13 @@ Figure~\ref{fi:exec-transaction-flow} illustrates one complete token transfer, f
             \end{call}
 
             % Sender requests certification from Unicity Service
-            \begin{messcall}{S}{$Q = (\predi, \sthash, \txhash, u)$}{US}
+            \begin{messcall}{S}{$Q = (\predi, \sthash, \txhash, \bar\tau_Q, u)$}{US}
                 \postlevel
                 \begin{call}{US}{\shortstack[l]{
+                    $\tau < \widehat\tau_Q$ \\
                     $\predi(\tau, H(\sthash, \txhash), u) \stackrel{?}{=} 1$ \\
                     $R[H(\predi, \sthash)] \stackrel{?}{=} \bot$ \\
-                    $R[H(\predi, \sthash)] \gets \txhash$
+                    $R[H(\predi, \sthash)] \gets \lambda(Q,\tau)$
                     }}{US}{}
                 \end{call}
             \end{messcall}
@@ -433,23 +449,24 @@ Figure~\ref{fi:exec-transaction-flow} illustrates one complete token transfer, f
             \end{messcall}
 
             % Sender sends certified transaction to recipient
-            \begin{messcall}{S}{$\mathcal{L} \cup (T, u, \pinc)$}{R}
+            \begin{messcall}{S}{$\mathcal{L} \cup (T, \tau, \pinc)$}{R}
                 \postlevel
                 \postlevel
                 \postlevel
                 \postlevel
                 \begin{call}{R}{\shortstack[l]{
                     $T.\sthash \stackrel{?}{=} H(h^\textsf{prev}_\mathsf{st}, x_\textsf{prev})$ \\
-                    $\txhash \gets H(D);\;\; \txhash \stackrel{?}{=} \pinc.\txhash$ \\
-                    $\tau \gets \mathsf{time}(\pinc)$ \\
+                    $\tau \stackrel{?}{=} \tau(\pinc)$ \\
+                    derive $(\txhash,v)$ \\
+                    $v \stackrel{?}{=} \pinc.v$ \\
                     $\predi(\tau, H(\sthash, \txhash), u) \stackrel{?}{=} 1$ \\
-                    $\mathcal{V}(H(\predi, T.\sthash), \txhash, \pinc, \mathcal{CD}_\beta, \mathcal{T}) \stackrel{?}{=} 1$ \\
+                    $\mathcal{V}(H(\predi, T.\sthash), v, \pinc, \mathcal{CD}_\beta, \mathcal{T}) \stackrel{?}{=} 1$ \\
                     Accept if all checks pass
                     }}{R}{}
                 \end{call}
             \end{messcall}
         \end{sequencediagram}
-        \caption{One Unicity transaction. The predicate $\predi$ represents the current ownership condition, and the capability to unlock $\predi'$ defines the new owner. System time $\tau$ is extracted from the inclusion proof and used in predicate evaluation by future verifiers.}\label{fi:exec-transaction-flow}
+        \caption{One Unicity transaction. The predicate $\predi$ represents the current ownership condition, and the capability to unlock $\predi'$ defines the new owner. The request is valid only for a round whose reference time $\tau$ satisfies $\tau<\widehat\tau_Q$.}\label{fi:exec-transaction-flow}
     \end{center}
 \end{figure}
 
@@ -463,7 +480,7 @@ Minting on the Unicity platform is technically permissionless: the minting key p
 	\item $\mathsf{reason}$ -- the \emph{mint reason}, an abstract payload that justifies the act of minting under the rules of type $\mathsf{ty}$: an issuer's authorization signature, a value-conservation proof of a split, a proof of external backing, or a zero-knowledge proof of an arbitrary type-defined statement.
 \end{itemize}
 
-This section specifies the generic verification flow that checks mint authorization: the expansion of step~5 of mint-transaction verification (Sec.~\ref{sec:mint-tx}) and of step~6 of transfer verification (Sec.~\ref{sec:transfer-tx}). Concrete reason formats, issuance policies and standard token types are provided in Appendix~\ref{app:token-registry}.
+This section specifies the generic verification flow that checks mint authorization: the expansion of step~6 of mint-transaction verification (Sec.~\ref{sec:mint-tx}) and of step~7 of transfer verification (Sec.~\ref{sec:transfer-tx}). Concrete reason formats, issuance policies and standard token types are provided in Appendix~\ref{app:token-registry}.
 
 \subsection{Token Type}\label{sec:token-type}
 
@@ -522,7 +539,7 @@ The contents of $\mathcal{RV}$ and $\mathcal{TD}$ are an application-level trust
 
 \subsection{Mint Authorization Check}\label{sec:mint-authorization}
 
-Algorithm~\ref{alg:mint-auth} defines the mint authorization check, run as step~5 of mint-transaction verification (Sec.~\ref{sec:mint-tx}) after the generic certification checks (steps~1--4) have passed. Every $\mathsf{ensure}$ failure, decoding error or exhausted budget rejects the transaction. $\mathsf{collect}$ is the nested-token collector of Sec.~\ref{sec:nested-verification}.
+Algorithm~\ref{alg:mint-auth} defines the mint authorization check, run as step~6 of mint-transaction verification (Sec.~\ref{sec:mint-tx}) after the generic certification checks (steps~1--5) have passed. Every $\mathsf{ensure}$ failure, decoding error or exhausted budget rejects the transaction. $\mathsf{collect}$ is the nested-token collector of Sec.~\ref{sec:nested-verification}.
 
 \begin{algorithm}[!htb]
 \caption{Mint Authorization Verification}\label{alg:mint-auth}
@@ -551,7 +568,7 @@ A reason verifier $V_t$ obtains the tokens a reason depends on from the \emph{ev
 
 Reason bodies and payloads are decoded under the strict deterministic-CBOR discipline of Appendix~\ref{app:split-proof-encoding}: wrong or unknown tags, non-minimal encodings, wrong field counts or types, trailing bytes, and exhausted budgets are all rejected.
 
-Type-specific validation is not limited to the genesis: step~6 of transfer verification (Sec.~\ref{sec:transfer-tx}) runs the per-transfer checks of $\mathcal{D}_\mathsf{ty}$, where the type defines any. For most types there are none --- the authoritative type-governed payload is the genesis payload $\auxd'_0$, and transfer-level auxiliary data is free-form transport (e.g.\ ephemeral keys of Sec.~\ref{sec:private-transactions}) unless the type states otherwise.
+Type-specific validation is not limited to the genesis: step~7 of transfer verification (Sec.~\ref{sec:transfer-tx}) runs the per-transfer checks of $\mathcal{D}_\mathsf{ty}$, where the type defines any. For most types there are none --- the authoritative type-governed payload is the genesis payload $\auxd'_0$, and transfer-level auxiliary data is free-form transport (e.g.\ ephemeral keys of Sec.~\ref{sec:private-transactions}) unless the type states otherwise.
 
 \paragraph{Fail-shut policy.}\index{fail-shut policy}
 On the Unicity Mainnet ($\alpha = 1$), token acceptance MUST be \emph{fail-shut}: a relying party accepting a token MUST reject any token whose type has no entry in $\mathcal{TD}$, whose reason format has no entry in $\mathcal{RV}$, or whose reason tag lies outside the type's admissible set --- each with a distinct diagnostic error. A permissive mode that skips authorization checks for unregistered types MAY exist in testnet for diagnostic, archival or explorer tooling, but MUST NOT gate acceptance of value.
@@ -631,7 +648,7 @@ Given a token whose mint reason claims split origin, the verifier must perform a
 \begin{enumerate}
 	\item Decode the mint reason, manifest, payloads and proofs using deterministic CBOR.  Reject wrong or unknown tags, non-canonical integers or byte strings, duplicate or unordered asset identifiers, invalid field counts or types, trailing bytes, arithmetic overflow and any input exceeding the protocol's decoding and verification limits.
 	\item Verify the output mint transaction and its Unicity Certificate.  Decode and validate its auxiliary payload according to its token type; the payload must contain a non-empty canonical collection of distinct, positive-valued assets.
-	\item Recursively verify the complete burned source token, including every Unicity Certificate, transaction, nested mint reason, fungible payload and token type specific issuance policy, under the same trust base $\mathcal{T}$, verifier registry and cumulative resource limits used for the output.  Both tokens must have network identifier $\mathcal{T}.\alpha$.
+	\item Recursively verify the complete burned source token, including every Unicity Certificate, transaction, nested mint reason, fungible payload and token type specific issuance policy, under the same trust base $\mathcal{T}$, verifier registry and cumulative resource limits used for the output.  Both tokens must have network identifier $\mathcal{T}.\alpha$ and satisfy the aggregation-partition binding of Sec.~\ref{sec:aggregation-profile}.
 	\item Require the source token to end in a certified transfer whose auxiliary data is the exact canonical split-manifest encoding $b_\mathcal{M}$ and whose recipient predicate is exactly $\predi_\mathsf{burn}(\mathsf{SHA\text{-}256}(b_\mathcal{M}))$.
 	\item Decode the source fungible payload, place its distinct asset identifiers in canonical order, and require the manifest to contain exactly one root hash for each source asset in that order.
 	\item Require the output token type to be byte-identical to the source token type.  A split proof cannot authorize minting under any other token type, even if that type would decode the same asset identifiers and amounts.
@@ -672,7 +689,7 @@ Two properties are imposed on the construction, both for the same reason --- kee
 \subsection{Anchored Inclusion and Anchor Accumulation}\label{sec:compression-anchors}
 
 \index{anchor certificate}
-Because the SMT is add-only (Sec.~\ref{sec:smt}), one recent certificate suffices to establish inclusion of many older leaves. Fix an \emph{anchor certificate} $UC^*$ and its root $h^* = UC^*.\mathcal{IR}.h$; a leaf $L = (\mathsf{sid}, \txhash)$ is anchored by an SMT inclusion certificate of $L$ against $h^*$ (Appendix~\ref{app:bridging-anchor}). This replaces one certificate verification per transition by one certificate plus a hash-path check per transition.
+Because the SMT is add-only (Sec.~\ref{sec:smt}), one recent certificate suffices to establish inclusion of many older leaves. Fix an \emph{anchor certificate} $UC^*$ and its root $h^* = UC^*.\mathcal{IR}.h$; a leaf $L = (\mathsf{sid}, v)$, where $v = H(\txhash, \tau)$, is anchored by an SMT inclusion certificate of $L$ against $h^*$ (Appendix~\ref{app:bridging-anchor}). This replaces one certificate verification per transition by one certificate plus a hash-path check per transition.
 
 A proof produced today is anchored at today's root. When the holder later extends it with newer transitions, those are anchored at a newer root, and the older anchor cannot be re-derived: collapsing two anchors into one would require a consistency proof between two arbitrary certified roots, which the aggregation layer does not currently publish (consistency proofs are verified by the BFT Core when issuing a certificate, Sec.~\ref{sec:request-validation}, and not retained). A compressed history therefore carries an ordered list of anchors $\langle UC^*_1, \ldots, UC^*_F\rangle$, one per compression event, accumulated into a single public value
 \[
@@ -692,7 +709,7 @@ Three ASCII domain separators are fixed: $\mathsf{ANCHOR\_INIT} = \texttt{"UNICI
 \[
 	\begin{aligned}
 		C_0 &:= H(\mathsf{STEP\_INIT}), &
-		C_i &:= H(C_{i-1},\, \mathsf{sid}_i,\, \txhash_i), \\
+		C_i &:= H(C_{i-1},\, \mathsf{sid}_i,\, v_i), \\
 		R_0 &:= H(\mathsf{TREF\_INIT}), &
 		R_j &:= H(R_{j-1},\, \mathsf{sid}_j,\, \txhash_j,\, \tau).
 	\end{aligned}
@@ -715,19 +732,19 @@ Proves that a well-formed, predicate-satisfying transfer chain runs from the gen
 6 & $R$ & time-reference chain over the time-dependent transitions \\
 \end{longtable}
 
-\noindent Witness: the transfer transactions $T_i$, the unlocking arguments $u_i$ for $i = 1 \ldots m$, the genesis owner predicate, and the time-reference list. Starting from $(h, e) \gets (h^0, \encpred(\predi^0))$ --- with $H(e) = x.\hat{e}^0$ --- and $C \gets C_0$, $R \gets R_0$, for each $i$ the relation checks, writing $\predi^{i-1} = \decpred(e)$ for the carried predicate,
+\noindent Witness: the transfer transactions $T_i$, their original reference times $\tau_i$ and unlocking arguments $u_i$ for $i = 1 \ldots m$, the genesis owner predicate, and the time-reference list. Starting from $(h, e) \gets (h^0, \encpred(\predi^0))$ --- with $H(e) = x.\hat{e}^0$ --- and $C \gets C_0$, $R \gets R_0$, for each $i$ the relation checks, writing $\predi^{i-1} = \decpred(e)$ for the carried predicate,
 
 \begin{enumerate}
 	\item $T_i.\sthash = h$ \quad (the chain is contiguous);
-	\item $\txhash_i \gets H(T_i.D)$;\; $\mathsf{sid}_i \gets H(e, T_i.\sthash)$;
-	\item $\predi^{i-1}(\tau_i, H(T_i.\sthash, \txhash_i), u_i) = 1$. Whether $\predi^{i-1}$ reads the reference time is a static property of its type (Appendix~\ref{app:predicate-encoding}). If it does, the relation consumes the next entry $(\mathsf{sid}, \txhash, \tau)$ of the witness time-reference list, requires $(\mathsf{sid}, \txhash) = (\mathsf{sid}_i, \txhash_i)$, folds the entry into $R \gets H(R, \mathsf{sid}, \txhash, \tau)$, and evaluates the predicate with $\tau_i \gets \tau$; if it does not, $\tau_i$ is unconstrained and no entry is consumed;
-	\item $C \gets H(C, \mathsf{sid}_i, \txhash_i)$;\; $e \gets \encpred(T_i.D.\predi')$;\; $h \gets H(h, T_i.D.x)$;
+	\item $\txhash_i \gets H(T_i.D, \tau_Q(T_i))$;\; $\mathsf{sid}_i \gets H(e, T_i.\sthash)$;\; $v_i \gets H(\txhash_i, \tau_i)$. If $\tau_Q(T_i) \ne \bot$, require $\tau_i < \tau_Q(T_i)$;
+	\item $\predi^{i-1}(\tau_i, H(T_i.\sthash, \txhash_i), u_i) = 1$. Whether $\predi^{i-1}$ reads the reference time is a static property of its type (Appendix~\ref{app:predicate-encoding}). If it does, the relation consumes the next entry $(\mathsf{sid}, \txhash, \tau)$ of the witness time-reference list, requires $(\mathsf{sid}, \txhash, \tau) = (\mathsf{sid}_i, \txhash_i, \tau_i)$, folds the entry into $R \gets H(R, \mathsf{sid}, \txhash, \tau)$, and evaluates the predicate at that same $\tau_i$; if it does not, no entry is consumed, but $\tau_i$ remains bound by $v_i$ and subject to the timeout check;
+	\item $C \gets H(C, \mathsf{sid}_i, v_i)$;\; $e \gets \encpred(T_i.D.\predi')$;\; $h \gets H(h, T_i.D.x)$;
 \end{enumerate}
 and finally $h = x.h^m$, $H(e) = x.\hat{e}^m$, $C = x.C$, $R = x.R$, and the witness time-reference list is fully consumed --- so the public $R$ accounts for exactly the transitions that read a reference time, no more and no fewer.
 
-Steps 1--4 are precisely checks 1, 3 and 4 of transfer verification (Sec.~\ref{sec:transfer-tx}) together with the carry update of $\Call{VerifyToken}{}$. Check 2 of transfer verification (network identifier) and the certificate half of check 5 are discharged outside the relation; the inclusion half is discharged by $\mathfrak{R}_\mathsf{in}$.
+Steps 1--4 implement the state, transaction-hash, timeout and predicate checks of transfer verification (Sec.~\ref{sec:transfer-tx}, checks 1 and 3--5), together with the carry update of $\Call{VerifyToken}{}$. Check 2 (network identifier) and the certificate half of check 6 are discharged outside the relation; the inclusion half is discharged by $\mathfrak{R}_\mathsf{in}$.
 
-\paragraph{Time-dependent transitions.} Anchored inclusion does not provide reference time (Appendix~\ref{app:bridging-anchor}), while $\predi_\mathsf{tlock}$ and $\predi_\mathsf{htlc}$ need it (Sec.~\ref{sec:time-extraction}). Rather than verifying those transitions' certificates inside the relation, the compressed history carries their original inclusion proofs on the wire: the verifier validates each in the ordinary way, extracts $(\mathsf{sid}, \txhash, \tau = UC.\mathcal{IR}.t)$, and reconstructs $R$. Binding $\tau$ to $(\mathsf{sid}, \txhash)$ prevents a prover from presenting an unrelated certificate with a fake timestamp. Cost is one certificate per time-dependent transition.
+\paragraph{Time-dependent transitions.} Anchored inclusion authenticates the original reference time through $v_i = H(\txhash_i, \tau_i)$ (Appendix~\ref{app:bridging-anchor}), including for $\predi_\mathsf{tlock}$ and $\predi_\mathsf{htlc}$ (Sec.~\ref{sec:time-extraction}). The compressed-history format also carries inclusion proofs for these time-dependent transitions: the verifier validates each in the ordinary way, extracts $(\mathsf{sid}, \txhash, \tau(\pinc))$, and reconstructs $R$. The carried reference time is the original leaf time, even if the proof uses a later certificate. This costs one certificate verification per time-dependent transition and keeps certificate verification outside the relation.
 
 \subsubsection{Inclusion Relation $\mathfrak{R}_\mathsf{in}$}
 
@@ -742,7 +759,7 @@ Proves that every leaf committed by $C$ was certified, under at least one anchor
 2 & $A$ & anchor accumulator $A_F$ (Sec.~\ref{sec:compression-anchors}) \\
 \end{longtable}
 
-\noindent Witness: the leaf list $\langle(\mathsf{sid}_i, \txhash_i)\rangle_{i=1}^{m}$, an inclusion certificate per leaf, the anchor roots $\langle h^*_f \rangle$ and the segment boundaries assigning leaves to anchors. The relation recomputes the hash chain $C$ from the leaf list in order, recomputes $A$ from the anchor roots in order, and requires every leaf to be included under the root of its segment. Segment boundaries are witness data: publishing them would publish the fold history for no verification benefit.
+\noindent Witness: the leaf list $\langle(\mathsf{sid}_i, v_i)\rangle_{i=1}^{m}$, an inclusion certificate per leaf, the anchor roots $\langle h^*_f \rangle$ and the segment boundaries assigning leaves to anchors. The relation recomputes the hash chain $C$ from the leaf list in order, recomputes $A$ from the anchor roots in order, and requires every leaf to be included under the root of its segment. Segment boundaries are witness data: publishing them would publish the fold history for no verification benefit.
 
 Note the asymmetry. $\mathfrak{R}_\mathsf{ch}$ contains signature verification, but is extended incrementally and not re-proven. $\mathfrak{R}_\mathsf{in}$ is hash-based, and can be re-proven from scratch cheaply.
 
@@ -759,14 +776,14 @@ $\Call{VerifyCompressedHistory}{\mathcal{H}, \predi^0, h^0, \mathcal{T}}$, invok
 \begin{enumerate}
 	\item Ensure $\mathsf{ver} = 1$; decode $e$ to $\predi^m$ under the canonical rules of Appendix~\ref{app:predicate-encoding}, rejecting a non-canonical encoding.
 	\item $A \gets H(\mathsf{ANCHOR\_INIT})$; for $f = 1 \ldots F$: ensure $UC^*_f.C^\mathsf{r}.\alpha = \mathcal{T}.\alpha$ and $\mathsf{VerifyUnicityCert}(UC^*_f, \mathcal{T}) = 1$; accumulate $A \gets H(A, UC^*_f.\mathcal{IR}.h)$ in the given order.
-	\item $R \gets H(\mathsf{TREF\_INIT})$; for $j = 1 \ldots k$: verify $\pinc_j$ in full against $\mathcal{T}$, exactly as an ordinary transfer's inclusion proof is verified (Sec.~\ref{sec:transfer-tx}, check 5); accumulate $R \gets H(R, \pinc_j.\mathsf{sid}, \pinc_j.\txhash, \mathsf{time}(\pinc_j))$.
+	\item $R \gets H(\mathsf{TREF\_INIT})$; for $j = 1 \ldots k$: verify $\pinc_j$ in full against $\mathcal{T}$, exactly as an ordinary transfer's inclusion proof is verified (Sec.~\ref{sec:transfer-tx}, check 6); accumulate $R \gets H(R, \pinc_j.\mathsf{sid}, \pinc_j.\txhash, \tau(\pinc_j))$.
 	\item Ensure $\mathfrak{R}_\mathsf{ch}$ verifies under $\mathsf{vk}_\mathsf{ch}$ with public input $(1,\; h^0,\; H(\encpred(\predi^0)),\; h,\; H(e),\; C,\; R)$.
 	\item Ensure $\mathfrak{R}_\mathsf{in}$ verifies under $\mathsf{vk}_\mathsf{in}$ with public input $(1,\; C,\; A)$ --- the same $C$, byte-identical.
 \end{enumerate}
 
 Every failure rejects. A verifier that does not pin $\mathsf{vk}_\mathsf{ch}$ and $\mathsf{vk}_\mathsf{in}$ MUST reject any compressed token with a distinct diagnostic error, as with an unregistered reason format (Sec.~\ref{sec:mint-authorization}); it MUST NOT fall back to accepting the token unverified.
 
-Resource accounting (Sec.~\ref{sec:nested-verification}) charges $\Lambda$ a fixed cost for each proof verification plus the $F + k$ certificate verifications. The verification cost of a compressed history is independent of the number of transitions it stands for.
+Resource accounting (Sec.~\ref{sec:nested-verification}) charges $\Lambda$ a fixed cost for each proof verification plus the $F + k$ certificate verifications. The verification cost depends on $F$ and $k$, rather than on the full number of compressed transitions.
 
 \subsection{Folding and Re-Anchoring}\label{sec:compression-folding}
 
@@ -778,7 +795,7 @@ $\mathfrak{R}_\mathsf{in}$ is then re-proven. Two options:
 	\item[Re-anchor] Re-prove $\mathfrak{R}_\mathsf{in}$ over the \emph{entire} leaf list under a single fresh anchor, and replace the anchor list by that one certificate. $F$ returns to $1$.
 \end{description}
 
-Re-anchoring needs the full leaf list $\langle(\mathsf{sid}_i, \txhash_i)\rangle$ and fresh inclusion certificates, but nothing else: not the transfer data, not the predicates, not the unlocking arguments. A holder that wishes to re-anchor indefinitely therefore retains 64 bytes per compressed transition and re-fetches the certificates from an aggregator on demand. That data is already public --- it is what the Unicity Service holds --- so retaining it carries no confidentiality obligation, and it does not grow with the size of the transactions themselves.
+Re-anchoring needs the full leaf list $\langle(\mathsf{sid}_i, v_i)\rangle$ and fresh inclusion certificates, but nothing else: not the transfer data, not the predicates, not the unlocking arguments. A holder that wishes to re-anchor indefinitely therefore retains 64 bytes per compressed transition and re-fetches the certificates from an aggregator on demand. That data is already public --- it is what the Unicity Service holds --- so retaining it carries no confidentiality obligation, and it does not grow with the size of the transactions themselves.
 
 Holders SHOULD re-anchor rather than append whenever the leaf list is retained. A holder that has discarded the leaf list can still fold, by appending; a holder that has discarded the transfer data as well can still fold newly received transitions, since folding consumes only the previous proof and the new transitions.
 
@@ -844,8 +861,8 @@ Asset decoding inside the relation is the generic canonical asset-collection dec
 
 $\mathfrak{R}_\mathsf{lin}(x; \mathsf{w})$ holds iff, for the token identified by $x.\mathsf{id}$:
 \begin{enumerate}
-	\item \textbf{Genesis}: the witness contains a certified mint transaction $T_0$ with $H(D_\mathsf{mint}.\mathsf{salt}, D_\mathsf{mint}.\alpha) = x.\mathsf{id}$, $D_\mathsf{mint}.\mathsf{ty} = x.\mathsf{ty}$, whose payload decodes canonically to $x.\mathcal{A}$, and whose leaf is anchored under $A$.
-	\item \textbf{Reason}: if $D_\mathsf{mint}.\mathsf{reason}$ is a conserving format (split or merge, in reference form), its verification rules are re-run inside the relation: each named source is resolved to a sub-derivation of this same relation, and the format's conservation checks are applied to the sub-derivations' asset collections. Otherwise, $H(D_\mathsf{mint})$ is folded into $\mathcal{I}$ and the genesis is accepted unexamined.
+	\item \textbf{Genesis}: the witness contains a certified mint transaction $(T_0, \tau_0, \pi_0)$ with $H(D_\mathsf{mint}.\mathsf{salt}, D_\mathsf{mint}.\alpha) = x.\mathsf{id}$, $D_\mathsf{mint}.\mathsf{ty} = x.\mathsf{ty}$, whose payload decodes canonically to $x.\mathcal{A}$. Derive $\txhash_0 = H(D_\mathsf{mint}, \tau_Q(T_0))$ and anchor its leaf value $H(\txhash_0, \tau_0)$ under $A$, applying the generic mint checks of Sec.~\ref{sec:mint-tx}, including $\tau_0 < \tau_Q(T_0)$ when the timeout is explicit.
+	\item \textbf{Reason}: if $D_\mathsf{mint}.\mathsf{reason}$ is a conserving format (split or merge, in reference form), its verification rules are re-run inside the relation: each named source is resolved to a sub-derivation of this same relation, and the format's conservation checks are applied to the sub-derivations' asset collections. Otherwise, $H(D_\mathsf{mint}, \tau_Q(T_0))$ is folded into $\mathcal{I}$ and the genesis is accepted unexamined.
 	\item \textbf{Transfers}: the transfer chain from the genesis carry to $x.(h, e)$ satisfies the step checks of $\mathfrak{R}_\mathsf{ch}$ (Sec.~\ref{sec:compression-relations}), with the same anchoring and the same treatment of time-dependent transitions.
 	\item \textbf{Recursion}: a sub-derivation whose evidence is itself a certificate is discharged by verifying that certificate's $\pi_\mathsf{lin}$ in-circuit, folding its $A$, $R$ and $\mathcal{I}$ into this one. This is what makes depth constant: a certificate over a certificate is one proof, not two.
 	\item \textbf{Terminal state}: for a source consumed by a burn, the chain stops immediately before that burn, and $x.(h,e)$ is the state the burn spends. The burn transfer itself is never inside the certificate (Sec.~\ref{sec:compression-scope}).
@@ -857,7 +874,7 @@ $\Call{VerifyTokenCertificate}{\mathcal{K}, \mathcal{T}, \Gamma}$, invoked where
 \begin{enumerate}
 	\item Ensure $\mathcal{K}.\mathsf{ver} = 1$; decode $e$ canonically (Appendix~\ref{app:predicate-encoding}).
 	\item Verify the anchors and accumulate $A$; verify the time-reference inclusion proofs and accumulate $R$ --- both exactly as in Sec.~\ref{sec:compressed-verification}, steps 2 and 3.
-	\item For each carried root $T_{0,r}^\mathsf{cert}$: ensure $\Call{VerifyMintTransaction}{T_{0,r}, \pi_{0,r}, \mathcal{T}} = 1$, which runs Alg.~\ref{alg:mint-auth} under the verifier's own $\Gamma$; accumulate $\mathcal{I} \gets H(\mathcal{I}, \pi_{0,r}.\txhash)$ in the given order. Every root consumes budget from $\Lambda$, so a provenance with more issuance roots than the budget admits is rejected exactly as a too-deep provenance graph is today (Sec.~\ref{sec:nested-verification}).
+	\item For each carried root $T_{0,r}^\mathsf{cert}$: ensure $\Call{VerifyMintTransaction}{T_{0,r}, \tau(\pi_{0,r}), \pi_{0,r}, \mathcal{T}} = 1$, which runs Alg.~\ref{alg:mint-auth} under the verifier's own $\Gamma$; accumulate $\mathcal{I} \gets H(\mathcal{I}, \pi_{0,r}.\txhash)$ in the given order. Every root consumes budget from $\Lambda$, so a provenance with more issuance roots than the budget admits is rejected exactly as a too-deep provenance graph is today (Sec.~\ref{sec:nested-verification}).
 	\item Ensure $\mathfrak{R}_\mathsf{lin}$ verifies under $\mathsf{vk}_\mathsf{lin}$ with public input $(1, A, R, \mathcal{K}.\mathsf{id}, \mathcal{K}.\mathsf{ty}, \mathcal{K}.\mathcal{A}, (\mathcal{K}.h, \mathcal{K}.e), \mathcal{I})$.
 	\item Return $(\mathsf{id}, \mathsf{ty}, \mathcal{A}, h, e)$ to the calling reason verifier; any failed check returns $\bot$ instead.
 \end{enumerate}
@@ -882,7 +899,7 @@ Where §\ref{sec:history-compression} has a break-even point, this does not: a c
 
 \begin{description}
 	\item[Terminal burns are never folded] A token consumed by a burn --- as the source of a split (Sec.~\ref{sec:split-verification}) or of any reason format that consumes a burn --- MUST have that final transfer presented in the clear, whether the rest of it is a compressed history ($m \le n-1$) or a certificate (the chain stops before the burn). The consuming verifier checks the burn's auxiliary data and recipient predicate byte-exactly, and neither a proof nor a certificate supplies them.
-	\item[Per-transfer type checks are out of scope in version 1] $\mathfrak{R}_\mathsf{ch}$ and $\mathfrak{R}_\mathsf{lin}$ omit check 6 of transfer verification (Sec.~\ref{sec:transfer-tx}), which is a no-op for types that define no per-transfer rules --- the common case (Sec.~\ref{sec:mint-authorization}). A type that defines per-transfer rules, such as a pool type (Appendix~\ref{app:autonomous-pools}), requires those rules inside the relation; its definition manifest MUST then pin the verification keys of the relation variant that implements them, and a verifier MUST NOT accept compressed tokens of such a type under the generic keys.
+	\item[Per-transfer type checks are out of scope in version 1] $\mathfrak{R}_\mathsf{ch}$ and $\mathfrak{R}_\mathsf{lin}$ omit check 7 of transfer verification (Sec.~\ref{sec:transfer-tx}), which is a no-op for types that define no per-transfer rules --- the common case (Sec.~\ref{sec:mint-authorization}). A type that defines per-transfer rules, such as a pool type (Appendix~\ref{app:autonomous-pools}), requires those rules inside the relation; its definition manifest MUST then pin the verification keys of the relation variant that implements them, and a verifier MUST NOT accept compressed tokens of such a type under the generic keys.
 	\item[Only reference-form reasons compress] A genesis whose reason embeds its sources by value seals them permanently. Provenance compression is therefore available to a token exactly when every genesis in its ancestry used a reference-form format. The embedding split reason (tag 39044) and its reference-form counterpart are separate registry entries with separate tags (Appendix~\ref{app:reason-formats}); a type admits whichever it intends its holders to be able to compress, and a token already minted under the embedding form cannot be converted.
 	\item[Merges keep their roots] Folding collapses provenance \emph{depth} to a single proof, but each independent lineage flowing into a merge contributes its own issuance root, and every root is verified in the clear. Breadth is therefore still paid for, in proportion to the number of distinct issuance events behind a token --- one for a token that has only ever been split, more for a heavily merged one. Shallow, narrow provenance remains preferable: issuing in fixed denominations and consolidating deliberately beats repeated splitting and merging.
 \end{description}
@@ -897,20 +914,21 @@ Where §\ref{sec:history-compression} has a break-even point, this does not: a c
 \index{bridge}\index{bridged asset}
 A fungible token may represent an asset held in custody on an \emph{external chain} (e.g.\ an account-based EVM chain). Bridging is bi-directional. \emph{Bridge-in} locks the external asset in a settlement contract (the \emph{vault}) and mints a Unicity token whose mint reason (Sec.~\ref{sec:mint-justification}) is a \emph{backing proof} binding the token to that lock. \emph{Bridge-out}, or \emph{return}, burns the Unicity token and releases the matching external asset. Both directions are realized without a trusted bridge operator or committee: bridge-in as a token-type specific mint-reason verifier that every recipient re-runs, and bridge-out as a succinct validity proof the vault verifies. This section specifies both; concrete data structures and algorithms are in Appendix~\ref{app:bridging}.
 
-\subsection{Bridge-In: Lock and Mint}\label{sec:bridge-in}
+\subsection{Bridge-In: Mint and Lock}\label{sec:bridge-in}
 
-To bring an asset in, the locker fixes the recipient's first-owner predicate $\predi'_0$ and a token salt, determining the token identifier $\mathsf{id} = H(\mathsf{salt},\alpha)$ (Sec.~\ref{sec:mint-tx}) and the recipient commitment $h_\mathsf{rcpt} = H(\mathsf{CBOR}(\predi'_0))$. The locker calls the vault on the external chain, which escrows the asset into pooled custody, assigns a monotone lock nonce $n$, and emits a \emph{lock event} committing to $\mathsf{id}$, $h_\mathsf{rcpt}$, and the locked amount. The locker then mints a Unicity token of type $\mathsf{ty}$ to $\predi'_0$ whose genesis carries a \emph{backing reason} that references the lock by $(\chi, a_\mathsf{V}, a_\mathsf{A}, n)$ (Appendix~\ref{app:bridging-lock}).
+The locker chooses a secret salt, the first-owner predicate $\predi'_0$, and value $v$, deriving $\mathsf{id} = H(\mathsf{salt},\alpha)$ and $h_\mathsf{rcpt} = H(\mathsf{CBOR}(\predi'_0))$. It MUST verify and durably store the genesis certification before submitting the external lock (Appendix~\ref{app:bridging-order}). The genesis's \emph{backing reason} names $(\chi,a_\mathsf{V},a_\mathsf{A})$; the vault escrows $v$ and records the lock under $\kappa = H(\mathsf{id},h_\mathsf{rcpt},v)$ with a monotone nonce $n$. The token is accepted only after a matching lock is final.
 
-Minting is permissionless: the minter key is a public constant derived from $\mathsf{id}$ (Appendix~\ref{app:el-constants}), so a valid genesis signature conveys no authority by itself. Authority comes entirely from the backing reason, verified by every recipient as the token-type specific mint-reason check (Sec.~\ref{sec:mint-tx}, step~5). The verifier (Appendix~\ref{app:bridging-backing}) confirms that a \emph{final} lock with nonce $n$ exists at the configured vault and asset on the configured chain, and binds it to the genesis: the lock's committed identifier equals $\mathsf{id}$, its recipient commitment equals $h_\mathsf{rcpt}$, and its amount equals the genesis's declared value for $\mathsf{aid}$. The reason body carries only the lock locator and the trust anchors; every security-relevant value is read from the certified genesis and the lock event and validated cryptographically.
+Minting is permissionless: the mint key is public (Appendix~\ref{app:el-constants}). Authority comes from the token-type mint-reason check (Sec.~\ref{sec:mint-tx}, step~6): the verifier computes $\kappa$ from the certified genesis and checks a final lock at the configured chain, vault, and asset with the same identifier, recipient commitment, and value (Appendix~\ref{app:bridging-backing}).
 
-Bridge-in cannot be instantaneous. A reorganization of the external chain could undo the lock after the token is minted and in circulation, so a recipient must wait for the lock to be final on the external chain before treating the token as good. This finality wait is intrinsic to accepting a deposit from a chain with probabilistic finality. Confirming the lock requires reading external-chain state: the recipient does so either by querying an external-chain node, or by verifying an external-chain inclusion proof carried in the backing reason against a pinned external-chain anchor (Appendix~\ref{app:bridging-finality}). Either way each recipient is its own verifier, so bridge-in introduces no trusted bridge party; its only assumption is the external chain's own consensus.
+Each recipient verifies external finality by querying an external-chain node or checking a separately supplied inclusion proof against a pinned external-chain anchor (Appendix~\ref{app:bridging-finality}). Acceptance assumes the external chain's consensus and finality rule.
 
-The wait is enforced by each verifier for itself, not attached to the token as a global condition. In particular, the locker minting to a predicate it already controls needs no wait: it already knows whether its own deposit exists, so no reorganization can surprise it, and a wallet may show such a token to its own owner immediately. The wait binds the first party that did \emph{not} witness the lock --- typically the first recipient the token reaches after leaving the locker's own custody --- since only that party's own $\Call{LockFinal}{}$ check protects it from a lock later undone by a reorganization.
+The locker may display its own token before finality, bearing the reorganization risk; this does not waive any recipient's backing check.
 
 \paragraph{Security.}
 \begin{description}
 \item[No mint without a lock] The backing verifier accepts the genesis only if a matching final lock exists on the configured chain and asset; a token minted without a lock fails verification and is never accepted.
 \item[No double mint] The genesis of a token with identifier $\mathsf{id}$ is recorded at a single state determined by $\mathsf{id}$ (Sec.~\ref{sec:mint-tx},~\ref{sec:request-validation}); since the lock commits to $\mathsf{id}$, one lock funds exactly one token and cannot be replayed for a second mint.
+\item[No mint-slot blocking] Certification precedes disclosure of $\mathsf{id}$; a conflicting lock either has a distinct $\kappa$ or fully backs the certified genesis (Appendix~\ref{app:bridging-in-security}).
 \item[No theft] Although anyone may construct the genesis, $h_\mathsf{rcpt}$ binds ownership to the predicate the locker named on the external chain, so only the intended recipient can spend the minted token.
 \item[No value inflation] The declared genesis value for $\mathsf{aid}$ must equal the locked amount, so minted value never exceeds custody.
 \item[No rogue contract] The chain, vault, and asset in the reason must equal the pinned configuration, so a genesis pointing at an unauthorized contract is rejected.
@@ -940,8 +958,8 @@ The nullifier accumulator can be deterministically rebuilt by anybody based on t
 For a batch of $B$ burns, the proof attests the conjunction of the following claims:
 
 \begin{description}
-\item[Anchor.] A single recent Unicity Certificate $UC^*$ certifies an SMT root $h^* = UC^*.IR.h$ under $\mathcal{T}$, and $H(\mathcal{T}) = h_\mathcal{T}$. Because the SMT is add-only (Sec.~\ref{sec:smt}), every state a token ever occupied remains provable under any later root, so one $UC^*$ anchors entire token histories. The proof verifies this BFT certificate \emph{once} per batch, instead of one certificate per transition.
-\item[Finality.] Each burned token verifies by $\Call{VerifyToken}{}$, with every certified transaction's leaf shown included under the shared root $h^*$; in particular the final state is a burn whose auxiliary data is the encoded return reason and whose recipient predicate binds its hash. This anchored mode is restricted to predicates whose validation does not depend on the original Unicity request-validation time.
+\item[Anchor.] One seal $C^{\mathsf r,*}$ authenticates the participating shards' UCs under $\mathcal T$, with $H(\mathcal T)=h_\mathcal T$. They define a root map $\mathcal H^*[\sigma]=UC^*_\sigma.IR.h$. The seal is verified once and each shard body is verified against it (Sec.~\ref{sec:consolidation}).
+\item[Finality.] Each burned token verifies by $\Call{VerifyToken}{}$, routing every historical leaf to its authenticated shard root $\mathcal H^*[\sigma]$ and preserving its original reference time; the final state is a burn whose auxiliary data is the encoded return reason and whose recipient predicate binds its hash. This anchored mode is restricted to predicates whose validation does not depend on the original Unicity request-validation time.
 \item[Value and backing.] Each burned amount equals the token's certified value for $\mathsf{aid}$, which traces --- through split value-conservation (Sec.~\ref{sec:split-verification}) --- to a genesis whose backing proof references a lock the vault recorded at bridge-in.
 \item[Destination.] Each $\mathcal{R}$ matches the pinned configuration and yields a public \emph{release leaf} (recipient, amount, fee).
 \item[Replay.] Each nullifier is absent from the input accumulator root $A_\mathsf{old}$; inserting them yields $A_\mathsf{new}$.

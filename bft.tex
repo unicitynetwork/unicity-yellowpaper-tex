@@ -332,7 +332,7 @@ Pending Block Proposal ($pr$) must be stored in durable way before Certification
       \State $\ell_B \gets$ count of new SMT leaves added, $\ell_S \gets$ SMT memory usage
       \State $pr \gets (n, e, h', h, t, \nu_l, log, sr)$  \Comment{Pending Block Proposal}
       \If{\Call{store\_in\_durable\_way}{$pr$}}
-        \State $IR \gets (n, e, h', h, t)$
+        \State $IR \gets (n, e, h', h, v, t, h_B, f, h_E)$
         \State $\pi_{CP} \gets \Call{GenerateConsistencyProof}{h', h, \text{batch}}$ \Comment{Generate consistency proof}
         \State \Call{send\_CR}{$\alpha, \beta, \sigma, \nu, IR, \ell_B, \ell_S, \pi_{CP}$}
                  \Comment {Sign and send}
@@ -345,14 +345,14 @@ Pending Block Proposal ($pr$) must be stored in durable way before Certification
     \Function{do\_cert\_req\_against}{$sr$}  \Comment{Voting against the proposal}
       \State $h' \gets luc.IR.h$, $n \gets lte.n$, $e \gets lte.e$, $t \gets luc.C^\mathsf{r}.t$
       \State $h \gets \zerohash$
-      \State $IR \gets (n, e, h', h, t)$
+      \State $IR \gets (n, e, h', h, v, t, h_B, f, h_E)$
       \State $\ell_B \gets 0$, $\ell_S \gets 0$ \Comment{No additions when voting against}
       \State \Call{send\_CR}{$\alpha, \beta, \sigma, \nu, IR, \ell_B, \ell_S, \bot$}  \Comment{No consistency proof needed}
     \EndFunction
   \end{algorithmic}
 \end{algorithm}
 
-Please refer to Algorithm~\ref{alg:proposal} for details.
+Here $v$, $h_B$, $f$ and $h_E$ are the summary, block hash, earned fees and executed-transactions hash of the proposed update, as defined in Sec.~\ref{shard-input-record}. Please refer to Algorithm~\ref{alg:proposal} for details.
 
 Note that a block can be without any requests; however, this does not necessarily imply $h' = h$, as system-initiated ``housekeeping'' actions may have changed the state.
 
@@ -362,7 +362,7 @@ Note that a block can be without any requests; however, this does not necessaril
 
 \emph{Validating} Unicity Service Requests is performing their full verification, according to Unicity Platform Specification, section \titleref{sec:request-validation}, and performing partition specific additional checks. The requests must appear in the \emph{proposal} in the same order. Requests without interdependencies (i.e., affecting distinct state) can be executed in parallel. Invalid requests are not executed and not included into produced proposal.
 
-The expiration of Unicity Service Requests is checked relative to shard round number. Validation context includes also the time value $t$ obtained from previous UC and to be recorded as current round's $UC.IR.t$.
+The expiration of a Unicity Service Request is checked against its effective timeout $\widehat\tau_Q$ and the time value $t$ obtained from the previous UC and recorded as the current round's $UC.IR.t$. A request with $t \ge \widehat\tau_Q$ is invalid. When the requester omits an explicit timeout, $\widehat\tau_Q$ is service metadata derived from a consensus reference time as specified in Sec.~\ref{sec:request-validation}.
 
 Refer to Algorithm~\ref{alg:execute} for details.
 
@@ -693,11 +693,11 @@ If an aggregation layer node has reasons to suspect that BFT Core have generated
 
 This section extends Sec.~\ref{certification-response}, \nameref{certification-response}).
 
-CReS is asynchronous response (in the sense of data flow) to Certification Request (CR); there may be many CReS responses to one client request. $\mathsf{TE}$ stands for \nameref{technical-record}, sent from the BFT Core to aggregation layer nodes. Valid if $UC.h_t = h(\mathsf{TE})$.
+CReS is asynchronous response (in the sense of data flow) to Certification Request (CR); there may be many CReS responses to one client request. $\mathsf{TE}$ stands for \nameref{technical-record}, sent from the BFT Core to aggregation layer nodes. Valid if $UC.h_t = h(\mathsf{TE})$. A response can additionally carry the partition view defined in Sec.~\ref{sec:partition-view}; its presence does not change the certified technical record or require a response for every leaf in the view.
 
 Optional field RootTrustBaseEntry indicates, that UTB $\mathcal{T}$ have changed, e.g., have grown by the provided entry.
 
-\textbf{Message}: $\langle \texttt{CReS} \mid \alpha, \beta, \sigma, UC, \mathsf{TE}, [\textsf{RootTrustBaseEntry}]\rangle$
+\textbf{Message}: $\langle \texttt{CReS} \mid \alpha, \beta, \sigma, \mathsf{TE}; UC, [\textsf{RootTrustBaseEntry}]\rangle$
 
 
 \subsection{Protocol Subscription -- subscribing to CReS messages}
@@ -933,7 +933,7 @@ For a deployable implementation, please refer to Distributed BFT Core (Section~\
     \State $r_- \gets \NULL$: Previous round's Unicity Tree root hash
     \State $\mathcal{SI}[][]$ - shard info of every $\sigma\in\mathcal{SH}_\beta$ of every $\beta\in\mathcal{C}$
     \State \emph{Variables}:
-    \State $\forall \ \beta\in\mathcal{C}, \sigma\in\mathcal{SH}_\beta \colon \mathcal{IRT}_\beta[\sigma] \gets (\zerohash)$
+    \State $\forall \ \beta\in\mathcal{C}, \sigma\in\mathcal{SH}_\beta \colon \mathcal{IRT}_\beta[\sigma] \gets (IR_0,H(\mathcal{TE}_0),H(\mathcal{CD}[\beta,\sigma]))$
     \State $\chi_\beta$: the shard tree for every $\beta\in\mathcal{C}$  (Sec.~\ref{se:shard-tree})
     \State $\upsilon$: unicity tree (Sec.~\ref{se:unicity-tree-certificate})
     \State $changes[][] \gets \bot$ Changes to IR, applied at the end of round, indexed by partition ID and shard number
@@ -1069,20 +1069,20 @@ Periodically, do the following:
         \EndFor
       \EndFor
       \ForAll{$(\beta, \sigma, ir, te) \in changes$}   \Comment{Apply changes}
-         \State $\mathcal{IRT}_\beta[\sigma] \gets (ir, h(te))$
+         \State $\mathcal{IRT}_\beta[\sigma] \gets (ir, h(te), H(\mathcal{CD}[\beta,\sigma]))$
       \EndFor
       \ForAll{$\beta \in \mathcal{C}$}
         \State $\chi_\beta\gets\mathsf{CreateShardTree}(\mathcal{SH}_\beta,\mathcal{IRT}_\beta)$        \Comment{Sec.~\ref{se:create-shard-tree}}
         \State $\mathcal{IH}[\beta]\gets \chi_\beta(\emptystr)$
       \EndFor
-      \State $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{CD}, \mathcal{IH})$ \Comment{Sec.~\ref{se:create-unicity-tree}}
+      \State $r \gets \mathsf{CreateUnicityTree}(\mathcal{C}, \mathcal{IH})$ \Comment{Sec.~\ref{se:create-unicity-tree}}
       \State $t \gets \Call{GetUTCDateTime}$
       \State $C^\mathsf{r} \gets \Call{CreateUnicitySeal}{\alpha, n, e, t, r_-, r; \mathsf{sk}_r}$
       \ForAll{$(\beta, \sigma, ir, te) \in changes$}
         \State $req[\beta][\sigma] \gets []$
         \State $C^\mathsf{shard} \gets \Call{CreateShardTreeCert}{\sigma, \chi_\beta}$
-        \State $C^\mathsf{uni} \gets \Call{CreateUnicityTreeCert}{\beta, \mathcal{C}, \mathcal{CD}, \mathcal{IH}}$
-        \State $uc \gets (\mathcal{IRT}_\beta[\sigma].IR, \mathcal{IRT}_\beta[\sigma].h_t, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
+        \State $C^\mathsf{uni} \gets \Call{CreateUnicityTreeCert}{\beta, \mathcal{C}, \mathcal{IH}}$
+        \State $uc \gets (\mathcal{IRT}_\beta[\sigma].IR, \mathcal{IRT}_\beta[\sigma].h_t,\mathcal{IRT}_\beta[\sigma].h_c, C^\mathsf{shard}, C^\mathsf{uni}, C^\mathsf{r})$
         \State $\mathcal{SI}[\beta, \sigma].UC_- \gets uc$
         \ForAll{$connection \in conn[\beta][\sigma]$} \Comment{To all validators of the shard, in parallel}
           \State \Call{send\_CReS}{$connection; \alpha, \beta, \sigma, uc, te$} \Comment{Subscriptions expire -- see protocol desc.}
@@ -1175,7 +1175,7 @@ Next, if a particular IR has not been changed during \texttt{t2} timeout for thi
 
 In a proposal there can be up to one change request per shard.
 
-Due to the pipe-lined finality, a proposal should not include IR change requests for slots with a valid IR change request in immediately preceding round. % should: proposal would be rejected, does not break anything.
+Due to the pipe-lined finality, a proposal $B$ should not include an IR change request for a slot with a valid IR change request in an uncommitted block $B' \prec B$ (see Sec.~\ref{sec:atomic-broadcast}). % should: proposal would be rejected, does not break anything.
 
 Finally, the leader signs the proposal and broadcasts it to other BFT Core validators.
 
@@ -1216,14 +1216,19 @@ Proposal is a signed set of IR change requests, supplemented with proofs--the ne
 
 \subsubsection{State Synchronization}\label{root-recovery-procedure}
 
-A BFT Core validator must have up-to-date vector of Input Records of all shards. There is no persistent blockchain. Returned Unicity Certificates, certifying IRs, are possibly persisted by the underlying layers.
+A recovered state consists of a committed head and a sequence of pending blocks. The head contains its block, per-shard records, QC and commit QC. Each shard record carries current input data and accounting state together with its last UC and technical record (Appendix~\ref{sec:recovery-encoding}).
 
-The state includes necessary meta-data like the round number. This is provided by including the Unicity Seal, which also authenticates the IR vector.
+Before installing the state:
+\begin{enumerate}
+\item Require exactly the locally configured shards and authenticate their configuration commitments. Rebuild the shard trees and unicity tree and match the committed root and its QCs; anchor genesis to the trusted local genesis.
+\item Require both a UC and technical record for every committed shard. The UC must certify the exact current input record, and its technical-record hash must match both the retained and current technical records. An unchanged shard may retain an older seal.
+\item Validate the fee and statistical commitments against the recovered accounting state, including the deterministic initial and transition cases.
+\item In temporary state, process pending blocks in round order: check ancestry, bind each QC's round, parent, epoch, timestamp and state root to the block it certifies, execute the block, and require the requested recovery target to exist.
+\end{enumerate}
+Only after all checks succeed may recovery write persistent state. A recovered author's identity is not authenticated by the QC; an uncertified tip's timestamp is not authenticated merely because it occurs in the state message.
 
-State may include atomic broadcast module specific data, e.g. uncommitted round information.
 
-
-\subsection{Atomic Broadcast Primitive}
+\subsection{Atomic Broadcast Primitive}\label{sec:atomic-broadcast}
 
 The Atomic Broadcast primitive is instantiated using an adaptation of HotStuff consensus protocol. The adaptation is optimized towards better latency on good conditions. Therefore, a ``2-chain commit rule'' is used. Changes and tweaks wrt. the original HotStuff paper are:
 
@@ -1236,7 +1241,7 @@ The Atomic Broadcast primitive is instantiated using an adaptation of HotStuff c
 
 More formally, critical elements of the operation of a HotStuff-derived algorithm are specified by the following rules.
 
-Let $n$ denote round number, $B$ -- block of inputs, $QC$ -- Quorum Certificate, $TC$ -- Timeout Certificate.
+Let $n$ denote round number, $B$ -- block of inputs, $QC$ -- Quorum Certificate, $TC$ -- Timeout Certificate. Let $B' \prec B$ denote that $B'$ is an ancestor of $B$, i.e., $B'$ is certified by $B.QC$ or $B' \prec B''$ where $B''$ is certified by $B.QC$; and $B' \preceq B$ that $B' = B$ or $B' \prec B$.
 
 \begin{ruledef}{Voting Rule} \\
   $B.n > $ last vote round \\
@@ -1250,6 +1255,11 @@ Let $n$ denote round number, $B$ -- block of inputs, $QC$ -- Quorum Certificate,
 
 \begin{ruledef}{Commit Rule} \\
     It is safe to commit block $B$ if there exist a sequential 2-chain $B \leftarrow QC \leftarrow B' \leftarrow QC$ such that $B'.n = B.n + 1$.
+\end{ruledef}
+
+\begin{ruledef}{Retention Rule} \\
+    Both $QC$ and $TC$ with $QC.n = TC.n$ may exist. \\
+    Block $B$ may be discarded only if there exists a committed block $B'$ such that $B' \not\preceq B$.
 \end{ruledef}
 
 Please refer to the following papers for more details:
@@ -1594,7 +1604,7 @@ We start with one BFT Core validator, which does not change (and can not change 
 
 \begin{algorithmic}[0]
   \Function{VerifyUnicitySeal}{$r, C^\mathsf{r}, \mathcal{T}$}
-    \State \Return $(\mathcal{T}.\alpha = C^\mathsf{r}.\alpha \land r = C^\mathsf{r}.r  \land \mathsf{Ver}_{\mathcal{T}.\mathsf{pk}}(C^\mathsf{r}, C^\mathsf{r}.s))$  \Comment{Calculated over all fields except signature}
+    \State \Return $(\mathcal{T}.\alpha = C^\mathsf{r}.\alpha \land r = C^\mathsf{r}.r  \land \mathsf{Ver}_{\mathcal{T}.\mathsf{pk}}(\overline{C^\mathsf{r}}, C^\mathsf{r}.s))$  \Comment{Signature field replaced by $\bot$}
   \EndFunction
 \end{algorithmic}
 
@@ -1626,7 +1636,7 @@ In the case of dynamic BFT Core the validator(s) can change at epoch boundaries.
     \If{$\mathcal{T}[C^\mathsf{r}.e] = \bot$}
       \State \Return \textbf{error}  \Comment{No record in trust base for the epoch}
     \EndIf
-    \State \Return $(\mathsf{Ver}_{T.\mathsf{pk}}(C^\mathsf{r}, C^\mathsf{r}.s) = 1)$  \Comment{Calculated over all fields except signature}
+    \State \Return $(\mathsf{Ver}_{T.\mathsf{pk}}(\overline{C^\mathsf{r}}, C^\mathsf{r}.s) = 1)$  \Comment{Signature field replaced by $\bot$}
   \EndFunction
 \end{algorithmic}
 
@@ -1672,25 +1682,21 @@ Unicity Trust Base is a map of BFT Core validator identifiers to validator publi
     \item $C^\mathsf{r} = (\alpha, n_r, t_r, r_-, r; s) \quad \text{where} \quad s = \{(i, s_i) \mid i \in (1 \,.\,.\, \nu_r)  \}  \quad \text{and} \quad \lvert s \rvert \ge q$\,. \\
 \end{itemize}
 
-Unicity Trust Base does not change as the BFT Core configuration is static.
+Unicity Trust Base does not change as the BFT Core configuration is static. The algorithm uses unit voting power; for a weighted trust base, add the trusted stake of each valid signer instead. Invalid or unknown surplus signatures contribute no voting power; malformed signature containers and duplicate signer encodings are rejected.
 
 \begin{algorithmic}[0]
   \Function{VerifyUnicitySeal}{$r, C^\mathsf{r}, \mathcal{T}$}
     \If{$\mathcal{T}.\alpha \ne C^\mathsf{r}.\alpha \lor r \ne C^\mathsf{r}.r$}
         \State \Return $0$
     \EndIf
-    \If{$\lnot ( \forall\ m, n \in 1 \,.\,.\, \lvert C^\mathsf{r}.s \rvert \colon C^\mathsf{r}.s[m].i \ne C^\mathsf{r}.s[n].i )$}
-      \State \Return 0 \Comment{Duplicate signers}
-    \EndIf
-    \If{$\lvert C^\mathsf{r}.s \rvert \le \mathcal{T}.q$}
-      \State \Return 0 \Comment{No quorum}
-    \EndIf
-    \For{ $(i, s) \in  C^\mathsf{r}.s $ }
-      \If{$(\mathsf{Ver}_{\mathcal{T}.\mathsf{pk}_i}(C^\mathsf{r}, s) = 0) $}\Comment{Calculated over all fields except signature}
-         \State \Return 0   \Comment{Invalid signature}
+    \State ensure($C^\mathsf{r}.s$ is well formed and has distinct signer identifiers)
+    \State $w \gets 0$
+    \For{$(i,s_i)\in C^\mathsf{r}.s$}
+      \If{$i\in\mathcal{T}\ \land\ \mathsf{Ver}_{\mathcal{T}.\mathsf{pk}_i}(\overline{C^\mathsf{r}},s_i)=1$}
+        \State $w \gets w+1$
       \EndIf
     \EndFor
-    \State \Return 1   \Comment{Success}
+    \State \Return $(w\ge\mathcal{T}.q)$
   \EndFunction
 \end{algorithmic}
 
@@ -1735,4 +1741,3 @@ Unicity Trust Base is a tuple of aggregate public key and a numeric parameter ($
 A standardization attempt of the closest appropriate signature scheme is available from IETF --- \url{https://datatracker.ietf.org/doc/draft-irtf-cfrg-bls-signature/}.
 
 Specifically, threshold signature schemes are avoided because of 1) accountability requirement 2) complicated and security-critical key setup, and 3) missing support of non-equal voting powers.
-
