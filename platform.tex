@@ -170,6 +170,7 @@ Given a Unicity Service Request $Q = (\predi, \sthash, \txhash, \bar\tau_Q, u)$ 
 	\[
 	\predi(\tau, H(\sthash, \txhash), u) = 1
 	\]
+	For standard predicates, signature verification must use the profile of Sec.~\ref{app:signature-format}, both here and when re-validating from an inclusion proof.
 
 	\item \textbf{Uniqueness check}: Verify that the SMT does not contain a leaf with key $\mathsf{sid}$ (i.e., the state has not been spent before).
 \end{enumerate}
