@@ -1,0 +1,107 @@
+\subsection{STARK Proof Predicate}\label{app:stark-predicate}
+
+The \emph{STARK proof predicate} authorizes a spend by verifying a zero-knowledge STARK proof that an agreed computation accepts the spending message. The spender executes the computation and generates its proof off-chain. The Unicity Service and subsequent token recipients verify the proof as the unlocking argument. This follows the computational-integrity pattern of the ZK-compressed consistency proof (Appendix~\ref{app:zk-consistency-proof}): fix the computation being proved, verify its proof, and match its public inputs to independently expected values. Here the computation checks a spending policy rather than an SMT update.
+
+The predicate family uses STARKs with recursive verification so that a proof authorizing a spend can subsequently be verified inside a proof of token-history validity. Selecting STARKs alone does not establish this property: the chosen system must provide a recursive verifier for the accepted proofs, with the same acceptance conditions as ordinary verification.
+
+\paragraph{Parameters and unlocking argument.}
+Define
+\[
+\predi_\mathsf{stark}(\mathcal{S},h_P,a,\mathsf{tm};\tau,m,\Pi),
+\]
+where the immutable predicate parameters are:
+\begin{itemize}
+  \item $\mathcal{S}$: the agreed STARK verification profile, identifying the proof system, its security parameters and the supported recursive verification method;
+  \item $h_P$: a binding commitment to the authorization program $P$, or equivalently to the relation it implements and its verification parameters;
+  \item $a$: the public application parameters, such as an owner-key commitment, an allowed policy, or an authenticated external-data anchor;
+  \item $\mathsf{tm}\in\{\mathsf{independent},\mathsf{certified}\}$: whether the authorization computation uses the current certified request-validation time.
+\end{itemize}
+The unlocking argument is $u=\Pi$, a proof. The private witness $w$ used to generate it is not part of the unlocking argument. Neither $\mathcal{S}$ nor $h_P$ may be replaced by values chosen in the proof. Changing the program, policy parameters or time mode changes the ownership predicate and therefore requires an authorized transition to that new predicate.
+
+\paragraph{Public statement and private witness.}
+Let $d_\mathsf{pred}$ distinguish this proof purpose from consistency proofs, history proofs and other uses of the same proof system. The verifier constructs
+\[
+\begin{aligned}
+h_\predi & = H(\predi_\mathsf{stark}(\mathcal{S},h_P,a,\mathsf{tm})),\\
+\theta & = \begin{cases}
+  \bot, & \mathsf{tm}=\mathsf{independent},\\
+  \tau, & \mathsf{tm}=\mathsf{certified},
+\end{cases}\\
+\mathsf{x} & = (d_\mathsf{pred},h_\predi,a,m,\theta).
+\end{aligned}
+\]
+Here $m=H(\sthash,\txhash)$ is the ordinary predicate message. It binds the source state and the complete transaction commitment, including the recipient, auxiliary data and request timeout. The predicate commitment $h_\predi$ additionally binds the proof to the current ownership condition. These values come from the predicate and request being checked, not from an untrusted statement accompanying the proof.
+
+The proof establishes knowledge of a witness satisfying
+\[
+\mathfrak{R}_P(\mathsf{x},w)=1.
+\]
+The witness may contain a signature, a secret opening, private application data, or proofs of other authenticated facts. If the policy inspects transaction fields, the proved computation must reconstruct $m$ from those fields and the source state hash. If it uses external facts, it must authenticate them against anchors fixed by the policy. Merely supplying transaction data, an oracle answer or a claimed timestamp as private input does not establish its authenticity.
+
+\paragraph{Definition.}
+For the public statement constructed above,
+\[
+\predi_\mathsf{stark}(\mathcal{S},h_P,a,\mathsf{tm};\tau,m,\Pi)=1
+\quad\Longleftrightarrow\quad
+\mathsf{Verify}_{\mathcal{S}}(h_P,\mathsf{x},\Pi)=1.
+\]
+Verification must establish all of the following:
+\begin{enumerate}
+  \item The proof concerns exactly the program or relation committed by $h_P$ under the agreed profile $\mathcal{S}$.
+  \item Every public input equals the independently constructed statement $\mathsf{x}$, and the proved computation returns authorization success. Successful execution of an unrelated computation is insufficient.
+  \item The proof is complete: every deferred proof obligation or recursively assumed claim has been discharged. An execution trace without a proof, or a receipt conditional on an unverified assumption, does not authorize a spend.
+  \item The proof satisfies the profile's security and resource bounds. An unsupported profile or a failed check makes the predicate false.
+\end{enumerate}
+These checks are deterministic and apply both when the service accepts a request and when a recipient verifies the resulting token. The predicate does not replace the inclusion proof, double-spending check or token-type validation. In particular, proving knowledge of an authorization witness does not by itself prove that a token was minted correctly or that its state has been certified.
+
+\paragraph{Time dependence.}
+In certified-time mode, $\theta$ must equal the original request-validation reference time of Sec.~\ref{sec:time-extraction}. Historical verification, including recursive verification, must use that same time even if the leaf is later certified against a newer root. A proof prepared for a different reference time must be regenerated. In independent mode, the authorization relation does not use the current request-validation time; a private, prover-selected time cannot substitute for it. This distinction also determines eligibility for verification modes restricted to time-independent predicates, such as the anchored bridge relation (Appendix~\ref{app:bridging}).
+
+\paragraph{Authorization and privacy.}
+The profile must provide completeness, knowledge soundness and zero knowledge for the chosen relation, with transparent setup. Computational integrity guarantees that the policy was satisfied; the policy must still express the intended authority over this particular message. For example, a policy may fix $a=H(\mathsf{pk})$ and prove knowledge of $(\mathsf{pk},\sigma)$ such that
+\[
+H(\mathsf{pk})=a
+\quad\land\quad
+\mathsf{Verify}(\mathsf{pk},m,\sigma)=1.
+\]
+This authorizes the committed spend while keeping the public key and signature inside the witness. A proof of an unrelated calculation, or of a policy anyone can satisfy, supplies no ownership protection. Security therefore depends on both the STARK argument and the authorization relation, together with the binding properties of the program, predicate and transaction commitments. A proof observed for one message must not enable authorization of a different message without satisfying that message's policy.
+
+Zero knowledge hides the private witness beyond what the public statement reveals. It does not hide $a$, the spending message, the current predicate, or token data disclosed by the surrounding transfer protocol. The selected STARK construction must actually provide witness hiding; computational integrity alone does not imply it.
+
+\paragraph{Preserving token-history compression.}\label{sec:stark-history-compression}
+A spending proof and a history proof establish different statements. The former establishes one predicate evaluation. The latter establishes the validity of the token's provenance through a particular state. To compress a history containing this predicate, the history computation must recursively verify each relevant spending proof against the predicate, message and original reference time derived from the corresponding certified transition.
+
+The history proof's public claim must bind the network and aggregation partition, the trusted verification context, the token identity and type, its genesis commitment, and the resulting token state. That state includes the current ownership predicate, state hash and a commitment to the application state needed for subsequent token-type checks. The verifier must compare these claims with the token being accepted and with its independently trusted context; a prover-selected trust base is insufficient.
+
+A recursive history construction must enforce:
+\begin{enumerate}
+  \item \textbf{Base case.} Verify the mint transaction, its certification and all token-type rules, deriving the initial state as in Sec.~\ref{sec:token-verification}.
+  \item \textbf{Extension step.} Verify an existing history proof under the agreed history-verification program. Use its authenticated terminal state as the source of the next transition. Verify that transition's state linkage, inclusion proof, original reference time, timeout, spending predicate and token-type rules, and derive the new terminal state.
+  \item \textbf{Nested dependencies.} Verify any split ancestry or other token dependencies required by the transition. Inner proofs must be bound to their expected statements and verification programs, with no unresolved assumptions. Base cases and a decreasing history length or other agreed progress measure must prevent circular justification.
+\end{enumerate}
+At a STARK-locked transition, the spending proof $\Pi$ is an input to this recursive computation. After compression, a recipient verifies the resulting history proof without receiving every inner spending proof or the original private authorization witnesses. Extending an already compressed history requires its proof and authenticated terminal state, together with the new transition and its witnesses; it does not require reconstructing the old private witnesses.
+
+The chosen STARK profile must support this composition, either directly in the history proof system or through a specified recursive verification relation. Using compatible arithmetic and commitment primitives can reduce its cost. The composition must preserve all ordinary verification checks, and its security analysis must account for the supported history length and recursive composition. Proof size and verification work must remain succinct in the represented history; concrete size and cost targets depend on the selected history-proof construction and its bounds.
+
+\paragraph{Choices that must be fixed.}\label{sec:stark-predicate-choices}
+The following choices are required to instantiate this design. They are semantic and security parameters; their concrete representations are outside this description.
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.1cm}p{10.5cm}}
+\textbf{Choice} & \textbf{Required decision} \\
+\hline
+\endhead
+Proof profile $\mathcal{S}$ & The STARK construction and verifier, the cryptographic assumptions and target security level, and parameters sufficient to meet that target, including under recursive composition. Specify the zero-knowledge variant and its disclosure guarantees. \\
+Authorization program $h_P$ & The exact accepted relation, what counts as authorization success, and the commitment that identifies its semantics. For a zkVM this includes the execution semantics and program identity; for a direct construction it identifies the constrained relation and verification parameters. \\
+Policy parameters $a$ & The owner or authority commitments, application rules, and any external-data or network anchors required by that policy. Decide which facts are public and which remain witnesses. \\
+Statement binding & The proof-purpose domain $d_\mathsf{pred}$ and the binding to the current predicate, $m$, policy parameters and time input. Any inspected transaction fields or external facts must be checked against their authenticated commitments. \\
+Time mode $\mathsf{tm}$ & Whether the policy depends on the certified reference time. In that mode the input is the original $\tau$, with the application-specific time condition defined by $P$ and $a$. \\
+History relation & The history-verification program, its trusted context, base case, terminal-state claim, state-linkage rules and treatment of nested token dependencies. Fix how the recipient authenticates every public claim. \\
+Recursive composition & The supported inner proof profiles, the method of verifying them inside the history proof, and the rules for discharging assumptions and ensuring progress. Fix any length or depth bounds used in the security analysis. \\
+Resource bounds & The supported computation and proof-verification budgets, including bounds on nested proofs. The chosen limits must permit the intended policies while bounding service and recipient verification work. \\
+Changes to the design & How new proof profiles and program versions become supported, how existing histories remain verifiable, and how owners authorize movement to a changed predicate. An identifier must not silently acquire different semantics. \\
+\hline
+\end{longtable}
+
+The proof profile and history relation are system-level choices; $h_P$, $a$ and $\mathsf{tm}$ are fixed when a particular ownership predicate is created. The message, certified time and proof are supplied for each spend. Numerical security and resource targets still require selection before deployment; this description does not prescribe them.
+
+\paragraph{What may remain open.}
+A zkVM is a convenient way to prove execution of the authorization program, but it is not required by the predicate interface. A direct STARK construction for the relation is equally applicable. Recursive STARK receipts are one existing realization of the execution-and-composition model.\footnote{For an example, see the RISC Zero proof-system overview: \url{https://dev.risczero.com/proof-system/}. This is an implementation example, not a selection of that system or its parameters.} The choice of a universal zkVM versus a specialized relation may remain open until a profile is instantiated. Once chosen, the verifier-visible execution semantics and program identity must be fixed. Prover software, implementation language, hardware, parallelism and proving service can vary as long as they produce proofs of that same relation under the agreed profile. A separate proof wrapper for an external settlement chain is not required by this predicate and must not replace the STARK verification path needed for recursive token-history compression.

@@ -22,7 +22,7 @@ A token progresses through the following stages:
 \begin{description}
 \item[Minting]\index{mint transaction} Creates a new token with an initial state. Minting uses a publicly known minting key pair $(\mathsf{sk}_\mathsf{mint}, \mathsf{pk}_\mathsf{mint})$ which MAY be network specific.
 \item[Transfer]\index{transfer transaction} Changes ownership by spending the current state and creating a new state with a new owner predicate.
-\item[Compression]\index{token compression} Compacts the token by replacing a set of transactions with a cryptographic proof of validity of these transactions.
+\item[Compression]\index{token compression} Compacts the token by replacing a set of transactions with a cryptographic proof of validity of these transactions. See Appendix~\ref{sec:stark-history-compression} for recursive verification of STARK spending proofs.
 \item[Split]\index{split transaction} (Fungible tokens only.) Burns the original token and mints new tokens, with a cryptographic value conservation proof ensuring no value is created or destroyed. See Sec.~\ref{sec:token-splitting}.
 \item[Burn]\index{burn transaction} Permanently locks a token by transferring it to a burn predicate that cannot be unlocked. See Sec.~\ref{sec:burn-transaction}.
 \end{description}
@@ -340,6 +340,18 @@ Clause~(a) allows the recipient to claim the token before the timeout by reveali
 
 Example use-case is atomic swap, where two HTLC predicates on different ledgers/partitions share the same hash lock $y$; claiming on one ledger reveals $x$, enabling the counterparty to claim on the other. Note that this assumes ledgers to be public, which is not always the case on p2p networks.
 
+\subsubsection{STARK Proof Predicate}\label{sec:stark-predicate}
+
+\index{predicate!STARK proof ($\predi_\mathsf{stark}$)}
+The \emph{STARK proof predicate} verifies a zero-knowledge STARK proof that an agreed program authorizes the spending message, following the computational-integrity model of Appendix~\ref{app:zk-consistency-proof}.
+
+\begin{itemize}
+  \item \textbf{Parameters}: STARK verification profile $\mathcal{S}$, program commitment $h_P$, public policy parameters $a$, and time mode $\mathsf{tm}$.
+  \item \textbf{Unlocking argument}: $u=\Pi$, a proof generated using a private witness.
+  \item \textbf{Definition}: $\predi_\mathsf{stark}(\mathcal{S},h_P,a,\mathsf{tm};\tau,m,\Pi)=1$ iff $\Pi$ proves that the committed program accepts $m$ under policy $a$, bound to the current predicate and, when required by $\mathsf{tm}$, the certified time $\tau$.
+\end{itemize}
+
+Recursive verification preserves token-history compression. The detailed relation and required choices are given in Appendix~\ref{app:stark-predicate}.
 
 \section{Interaction with Unicity Service}\label{sec:el-us-interaction}
 

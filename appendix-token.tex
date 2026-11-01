@@ -155,6 +155,8 @@ By convention, a mint transaction uses $\predi' = \predi_\mathsf{sig}(\mathsf{pk
 If a sender wishes to commit only to a hash of a complex predicate (hiding its structure until spend time), they can do so explicitly by setting $\predi' = \predi_\mathsf{p2sh}(H(\mathsf{CBOR}(\predi'')))$ (Sec.~\ref{sec:p2sh}); the P2SH predicate is itself encoded as a first-class predicate in the recipient field.
 
 
+\input{appendix-predicate-stark}
+
 \section{Transaction Encoding}\label{app:transaction-encoding}
 
 \subsection{Mint Transaction}
